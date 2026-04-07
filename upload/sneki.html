@@ -1,0 +1,2395 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>СНЕКИ — Система расчёта заказа</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="storage.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f7fa; min-height: 100vh; }
+    .writing-vertical { 
+      min-height: 70px; 
+      height: auto;
+      overflow: visible; 
+      font-size: 9px; 
+      line-height: 1.3; 
+      white-space: normal;
+      word-wrap: break-word;
+      word-break: break-word;
+      text-align: center;
+      padding: 6px 4px;
+      writing-mode: horizontal-tb;
+    }
+    .store-name-header { font-size: 9px; line-height: 1.3; min-height: 70px; height: auto; overflow: visible; word-wrap: break-word; word-break: break-word; white-space: normal; text-align: center; padding: 6px 4px; }
+    .btn { display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.5rem 1rem; font-weight: 500; font-size: 0.8125rem; border-radius: 0.375rem; transition: all 0.15s ease; border: none; cursor: pointer; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary { background: #f59e0b; color: white; }
+    .btn-primary:hover:not(:disabled) { background: #d97706; }
+    .btn-secondary { background: #f1f5f9; color: #475569; }
+    .btn-secondary:hover:not(:disabled) { background: #e2e8f0; }
+    .btn-success { background: #10b981; color: white; }
+    .btn-success:hover:not(:disabled) { background: #059669; }
+    .input { padding: 0.375rem 0.5rem; border: 1px solid #e5e7eb; border-radius: 0.375rem; font-size: 0.8125rem; transition: all 0.15s ease; background: white; }
+    .input:focus { outline: none; border-color: #f59e0b; }
+    .select { padding: 0.375rem 1.75rem 0.375rem 0.5rem; border: 1px solid #e5e7eb; border-radius: 0.375rem; font-size: 0.8125rem; background: white url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e") right 0.5rem center no-repeat; background-size: 1.25em 1.25em; appearance: none; cursor: pointer; }
+    .select:focus { outline: none; border-color: #f59e0b; }
+    .table-container { overflow: auto; max-height: 70vh; border-radius: 0.5rem; border: 1px solid #e5e7eb; }
+    .table-modern { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.8125rem; }
+    .table-modern thead { position: sticky; top: 0; z-index: 30; }
+    .table-modern th { padding: 0.5rem 0.75rem; text-align: left; font-weight: 600; color: #374151; background: #f9fafb; border-bottom: 1px solid #e5e7eb; white-space: nowrap; }
+    .table-modern td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #f3f4f6; }
+    /* Закреплённые колонки */
+    .sticky-col-1 { position: sticky; left: 0; z-index: 10; background: inherit; }
+    .sticky-col-2 { position: sticky; left: 110px; z-index: 10; background: inherit; }
+    .sticky-header-col-1 { position: sticky; left: 0; z-index: 40; background: #f9fafb; }
+    .sticky-header-col-2 { position: sticky; left: 110px; z-index: 40; background: #f9fafb; }
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 1rem; }
+    .modal-content { background: white; border-radius: 0.5rem; padding: 1.5rem; width: 100%; max-width: 28rem; max-height: 90vh; overflow: auto; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  
+  <script type="text/babel">
+    const { useState, useCallback, useMemo, useEffect, useRef } = React;
+
+    const KEYS = {
+      MATRIX: 'sneki_matrix_v2',
+      PRODUCTS: 'sneki_products_v2',
+      RC_STOCKS: 'sneki_rcStocks_v2',
+      SALES: 'sneki_sales_v2',
+      STOCKS: 'sneki_stocks_v2',
+      SHELF_VALUES: 'sneki_shelfValues_v2',
+      QUANTS: 'sneki_quants_v2',
+      STORES: 'stores_data_v1',
+      GROUP_MARKUPS: 'sneki_groupMarkups_v2',
+      GROUP_QUANTS: 'sneki_groupQuants_v2',
+      MANUAL_PRICES: 'sneki_manualPrices_v2',
+      WAREHOUSE_MARKUP: 'sneki_warehouseMarkup_v2',
+      VAT_RATE: 'sneki_vatRate_v2',
+      RC_MANUAL_ORDERS: 'sneki_rcManualOrders_v2',
+      RESULTS: 'sneki_results_v2',
+      RC_RESULTS: 'sneki_rcResults_v2',
+      GROUP_DAYS: 'sneki_groupDays_v2'
+    };
+
+    const load = (key, defaultValue) => {
+      try {
+        const raw = localStorage.getItem(key);
+        if (!raw) return defaultValue;
+        if (raw.startsWith('{') || raw.startsWith('[')) {
+          return JSON.parse(raw) || defaultValue;
+        }
+        if (typeof LZString !== 'undefined') {
+          try { return JSON.parse(LZString.decompressFromUTF16(raw)) || defaultValue; } catch { return JSON.parse(raw) || defaultValue; }
+        }
+        return JSON.parse(raw) || defaultValue;
+      } catch { return defaultValue; }
+    };
+
+    const save = (key, data) => {
+      try {
+        const json = JSON.stringify(data);
+        if (typeof LZString !== 'undefined' && json.length > 500) {
+          localStorage.setItem(key, LZString.compressToUTF16(json));
+        } else {
+          localStorage.setItem(key, json);
+        }
+      } catch (e) {
+        console.error('Save error for', key, e);
+      }
+    };
+
+    const normCode = (code) => String(code || '').trim().replace(/^0+/, '') || '0';
+
+    // Icons
+    const ArrowLeftIcon = () => <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></svg>;
+    const CookieIcon = () => <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="10" /><circle cx="8" cy="9" r="1.5" fill="currentColor" /><circle cx="15" cy="8" r="1.5" fill="currentColor" /></svg>;
+    const UploadIcon = () => <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>;
+    const DownloadIcon = () => <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>;
+    const SearchIcon = () => <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>;
+    const CalculatorIcon = () => <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="4" y="2" width="16" height="20" rx="2" /><line x1="8" y1="6" x2="16" y2="6" /></svg>;
+    const GridIcon = () => <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /></svg>;
+    const ChartIcon = () => <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><line x1="18" y1="20" x2="18" y2="10" /><line x1="12" y1="20" x2="12" y2="4" /><line x1="6" y1="20" x2="6" y2="14" /></svg>;
+    const WarehouseIcon = () => <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M22 8.35V20a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8.35A2 2 0 0 1 3.26 6.5l8-3.2a2 2 0 0 1 1.48 0l8 3.2A2 2 0 0 1 22 8.35Z" /></svg>;
+    const PackageIcon = () => <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /></svg>;
+    const SalesIcon = () => <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><line x1="12" y1="1" x2="12" y2="23" /><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg>;
+    const StockIcon = () => <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /></svg>;
+    const TrashIcon = () => <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>;
+    const CloseIcon = () => <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>;
+    const RefreshIcon = () => <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polyline points="23 4 23 10 17 10" /><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" /></svg>;
+    const TableIcon = () => <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18M3 15h18" /></svg>;
+    const ChevronRightIcon = () => <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polyline points="9 18 15 12 9 6" /></svg>;
+    const ChevronDownIcon = () => <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polyline points="6 9 12 15 18 9" /></svg>;
+    const MapPinIcon = () => <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" /><circle cx="12" cy="10" r="3" /></svg>;
+    const CheckIcon = () => <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polyline points="20 6 9 17 4 12" /></svg>;
+    const DollarIcon = () => <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><line x1="12" y1="1" x2="12" y2="23" /><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg>;
+    const RulerIcon = () => <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M21.3 8.7L8.7 21.3c-.4.4-1 .4-1.4 0l-4.6-4.6c-.4-.4-.4-1 0-1.4L15.3 2.7c.4-.4 1-.4 1.4 0l4.6 4.6c.4.4.4 1 0 1.4z"/></svg>;
+    const PlusIcon = () => <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>;
+    const ScaleIcon = () => <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M16 6l3 12H5l3-12" /><path d="M12 6v12" /><circle cx="12" cy="6" r="2" /></svg>;
+
+    function createStyledSheet(data, headers, leftAlignCols) {
+        leftAlignCols = leftAlignCols || [];
+        const allData = [headers, ...data];
+        const ws = XLSX.utils.aoa_to_sheet(allData);
+
+        const range = XLSX.utils.decode_range(ws['!ref']);
+        const numRows = range.e.r + 1;
+        const numCols = range.e.c + 1;
+
+        // Вычисляем ширину колонок по содержимому (с учётом кириллицы)
+        const colWidths = new Array(numCols).fill(0);
+        for (let c = 0; c < numCols; c++) {
+            for (let r = 0; r < numRows; r++) {
+                const cellAddress = XLSX.utils.encode_cell({ r: r, c: c });
+                const cell = ws[cellAddress];
+                if (cell && cell.v !== undefined) {
+                    const cellText = String(cell.v);
+                    const cyrillicCount = (cellText.match(/[а-яА-ЯёЁ]/g) || []).length;
+                    const otherCount = cellText.length - cyrillicCount;
+                    const estimatedWidth = Math.ceil(cyrillicCount * 1.5 + otherCount * 1.0) + 2;
+                    colWidths[c] = Math.max(colWidths[c], estimatedWidth);
+                }
+            }
+            colWidths[c] = Math.max(colWidths[c], 8);
+            colWidths[c] = Math.min(colWidths[c], 60);
+        }
+        ws['!cols'] = colWidths.map(w => ({ wch: w }));
+
+        // Высота строк 15 пунктов
+        ws['!rows'] = [];
+        for (let r = 0; r < numRows; r++) {
+            ws['!rows'][r] = { hpt: 15 };
+        }
+
+        // Форматирование ячеек
+        for (let r = 0; r < numRows; r++) {
+            for (let c = 0; c < numCols; c++) {
+                const cellAddress = XLSX.utils.encode_cell({ r: r, c: c });
+                const cell = ws[cellAddress];
+                if (cell) {
+                    if (r === 0) {
+                        // Шапка — светло-голубой фон
+                        cell.s = {
+                            fill: { fgColor: { rgb: "B8CCE4" } },
+                            font: { bold: true, sz: 10 },
+                            alignment: { horizontal: "center", vertical: "center", wrapText: false },
+                            border: {
+                                top: { style: "dotted", color: { rgb: "808080" } },
+                                bottom: { style: "dotted", color: { rgb: "808080" } },
+                                left: { style: "dotted", color: { rgb: "808080" } },
+                                right: { style: "dotted", color: { rgb: "808080" } }
+                            }
+                        };
+                    } else {
+                        // Данные
+                        const isLeftAlign = leftAlignCols.includes(c);
+                        cell.s = {
+                            font: { sz: 10 },
+                            alignment: {
+                                horizontal: isLeftAlign ? "left" : "center",
+                                vertical: "center",
+                                wrapText: false
+                            },
+                            border: {
+                                top: { style: "dotted", color: { rgb: "808080" } },
+                                bottom: { style: "dotted", color: { rgb: "808080" } },
+                                left: { style: "dotted", color: { rgb: "808080" } },
+                                right: { style: "dotted", color: { rgb: "808080" } }
+                            }
+                        };
+                    }
+                }
+            }
+        }
+
+        return ws;
+    }
+
+    function App() {
+      const [tab, setTab] = useState('upload');
+      const [mounted, setMounted] = useState(false);
+
+      // Data states
+      const [products, setProducts] = useState([]);
+      const [matrix, setMatrix] = useState({});
+      const [stores, setStores] = useState([]);
+      const [sales, setSales] = useState([]);
+      const [stocks, setStocks] = useState([]);
+      const [rcStocks, setRcStocks] = useState({});
+      const [shelfValues, setShelfValues] = useState({});
+      const [quants, setQuants] = useState({});
+      const [groupMarkups, setGroupMarkups] = useState({});
+      const [groupQuants, setGroupQuants] = useState({});
+      const [manualPrices, setManualPrices] = useState({});
+      const [rcManualOrders, setRcManualOrders] = useState({});
+      const [groupDays, setGroupDays] = useState({});
+
+      // Results
+      const [results, setResults] = useState([]);
+      const [rcResults, setRcResults] = useState([]);
+
+      // UI states
+      const [period, setPeriod] = useState(14);
+      const [useShelf, setUseShelf] = useState(true);
+      const [warehouseMarkup, setWarehouseMarkup] = useState(16.5);
+      const [vatRate, setVatRate] = useState(22);
+      const [loading, setLoading] = useState(false);
+
+      const [searchMatrix, setSearchMatrix] = useState('');
+      const [searchResults, setSearchResults] = useState('');
+      const [searchPrices, setSearchPrices] = useState('');
+      const [searchShelf, setSearchShelf] = useState('');
+      const [filterTT, setFilterTT] = useState('');
+      const [filterStatus, setFilterStatus] = useState('');
+      const [filterGroup, setFilterGroup] = useState('');
+      const [collapsedGroups, setCollapsedGroups] = useState({});
+      const [collapsedTT, setCollapsedTT] = useState({});
+
+      const [showRcModal, setShowRcModal] = useState(false);
+      const [showExportModal, setShowExportModal] = useState(false);
+      const [showMassEditModal, setShowMassEditModal] = useState(false);
+      const [showAddProductModal, setShowAddProductModal] = useState(false);
+      const [showDetailModal, setShowDetailModal] = useState(false);
+      const [showSumModal, setShowSumModal] = useState(false);
+      const [selectedResult, setSelectedResult] = useState(null);
+      const [showProductDetailModal, setShowProductDetailModal] = useState(false);
+      const [selectedProductAnalytics, setSelectedProductAnalytics] = useState(null);
+      const [searchAnalytics, setSearchAnalytics] = useState('');
+      const [abcViewMode, setAbcViewMode] = useState('all'); // all, group, tt, group_tt
+      const [rcInputData, setRcInputData] = useState('');
+      const [massMultiplyValue, setMassMultiplyValue] = useState(1.5);
+      const [selectedTT, setSelectedTT] = useState([]);
+      const [newProduct, setNewProduct] = useState({ code: '', nomenclature: '', group: '', packaging: 'ШТ', weightCode: '', inPrice: 0 });
+
+      // Analytics filters
+      const [analyticsGroup, setAnalyticsGroup] = useState('');
+      const [analyticsTT, setAnalyticsTT] = useState('');
+      const [analyticsChartType, setAnalyticsChartType] = useState('sales'); // sales, abc, dynamics, stuck, low
+      
+      // Chart refs
+      const chartRef1 = useRef(null);
+      const chartRef2 = useRef(null);
+      const chartRef3 = useRef(null);
+      const chartRef4 = useRef(null);
+      const chartInstances = useRef({});
+
+      const fileInputRefs = { assortment: useRef(null), sales: useRef(null), stocks: useRef(null), matrix: useRef(null) };
+
+      // Load on mount — ждём завершения синхронизации с облаком
+      useEffect(() => {
+        const initLoad = async () => {
+          // Ждём пока storage.js завершит скачивание из облака
+          if (window.CloudStorage && window.CloudStorage.waitForReady) {
+            await window.CloudStorage.waitForReady();
+          }
+          // Теперь загружаем из localStorage (уже актуальные данные)
+          const savedStores = load(KEYS.STORES, []);
+        const savedSales = load(KEYS.SALES, []);
+        const savedStocks = load(KEYS.STOCKS, []);
+        const savedRcStocks = load(KEYS.RC_STOCKS, {});
+        const savedShelfValues = load(KEYS.SHELF_VALUES, {});
+        const savedQuants = load(KEYS.QUANTS, {});
+        const savedGroupMarkups = load(KEYS.GROUP_MARKUPS, {});
+        const savedGroupQuants = load(KEYS.GROUP_QUANTS, {});
+        const savedManualPrices = load(KEYS.MANUAL_PRICES, {});
+        const savedRcManualOrders = load(KEYS.RC_MANUAL_ORDERS, {});
+        const savedGroupDays = load(KEYS.GROUP_DAYS, {});
+        const savedResults = load(KEYS.RESULTS, []);
+        const savedRcResults = load(KEYS.RC_RESULTS, []);
+        const savedWarehouseMarkup = load(KEYS.WAREHOUSE_MARKUP, 16.5);
+        const savedVatRate = load(KEYS.VAT_RATE, 22);
+        
+        // Загружаем и обновляем matrix - удаляем старый НДС (20)
+        const savedMatrix = load(KEYS.MATRIX, {});
+        let matrixNeedsUpdate = false;
+        Object.keys(savedMatrix).forEach(code => {
+          if (savedMatrix[code].vat === 20) {
+            delete savedMatrix[code].vat;
+            matrixNeedsUpdate = true;
+          }
+        });
+        if (matrixNeedsUpdate) save(KEYS.MATRIX, savedMatrix);
+        
+        // Загружаем и обновляем products - удаляем старый НДС (20)
+        const savedProducts = load(KEYS.PRODUCTS, []);
+        let productsNeedUpdate = false;
+        savedProducts.forEach(p => {
+          if (p.vat === 20) {
+            delete p.vat;
+            productsNeedUpdate = true;
+          }
+        });
+        if (productsNeedUpdate) save(KEYS.PRODUCTS, savedProducts);
+        
+        setProducts(savedProducts);
+        setMatrix(savedMatrix);
+        setStores(savedStores);
+        setSales(savedSales);
+        setStocks(savedStocks);
+        setRcStocks(savedRcStocks);
+        setShelfValues(savedShelfValues);
+        setQuants(savedQuants);
+        setGroupMarkups(savedGroupMarkups);
+        setGroupQuants(savedGroupQuants);
+        setManualPrices(savedManualPrices);
+        setRcManualOrders(savedRcManualOrders);
+        setGroupDays(savedGroupDays);
+        setResults(savedResults);
+        setRcResults(savedRcResults);
+        setWarehouseMarkup(savedWarehouseMarkup);
+        setVatRate(savedVatRate);
+        setMounted(true);
+        };
+        initLoad();
+      }, []);
+
+      // Save on change
+      useEffect(() => { if (mounted && products.length) save(KEYS.PRODUCTS, products); }, [products, mounted]);
+      useEffect(() => { if (mounted && Object.keys(matrix).length) save(KEYS.MATRIX, matrix); }, [matrix, mounted]);
+      useEffect(() => { if (mounted && sales.length) save(KEYS.SALES, sales); }, [sales, mounted]);
+      useEffect(() => { if (mounted && stocks.length) save(KEYS.STOCKS, stocks); }, [stocks, mounted]);
+      useEffect(() => { if (mounted && Object.keys(rcStocks).length) save(KEYS.RC_STOCKS, rcStocks); }, [rcStocks, mounted]);
+      useEffect(() => { if (mounted && Object.keys(shelfValues).length) save(KEYS.SHELF_VALUES, shelfValues); }, [shelfValues, mounted]);
+      useEffect(() => { if (mounted && Object.keys(quants).length) save(KEYS.QUANTS, quants); }, [quants, mounted]);
+      useEffect(() => { if (mounted && Object.keys(groupMarkups).length) save(KEYS.GROUP_MARKUPS, groupMarkups); }, [groupMarkups, mounted]);
+      useEffect(() => { if (mounted && Object.keys(groupQuants).length) save(KEYS.GROUP_QUANTS, groupQuants); }, [groupQuants, mounted]);
+      useEffect(() => { if (mounted && Object.keys(manualPrices).length) save(KEYS.MANUAL_PRICES, manualPrices); }, [manualPrices, mounted]);
+      useEffect(() => { if (mounted && Object.keys(rcManualOrders).length) save(KEYS.RC_MANUAL_ORDERS, rcManualOrders); }, [rcManualOrders, mounted]);
+      useEffect(() => { if (mounted) save(KEYS.WAREHOUSE_MARKUP, warehouseMarkup); }, [warehouseMarkup, mounted]);
+      useEffect(() => { if (mounted) save(KEYS.VAT_RATE, vatRate); }, [vatRate, mounted]);
+      useEffect(() => { if (mounted && results.length > 0) save(KEYS.RESULTS, results); }, [results, mounted]);
+      useEffect(() => { if (mounted && rcResults.length > 0) save(KEYS.RC_RESULTS, rcResults); }, [rcResults, mounted]);
+      useEffect(() => { if (mounted && Object.keys(groupDays).length) save(KEYS.GROUP_DAYS, groupDays); }, [groupDays, mounted]);
+
+      // Parse assortment file
+      // Структура: Да | Группа | Код | Упаковка | Номенклатура | Код(повтор) | Код весовой | Вход пивной | Вход РЦ | Цена | Полка
+      const parseAssortment = useCallback((json) => {
+        const items = [];
+        const newShelf = {};
+        const newQuants = {};
+        let skipped = 0;
+        
+        for (let i = 2; i < json.length; i++) {
+          const r = json[i];
+          if (!r || r.length < 5) continue;
+          
+          const working = String(r[0] || '').trim().toLowerCase();
+          if (working !== 'да') { skipped++; continue; }
+          
+          const code = normCode(r[2]);
+          const name = String(r[4] || '').trim();
+          if (!code || !name) continue;
+          
+          const group = String(r[1] || '').trim();
+          const packaging = String(r[3] || 'ШТ').toUpperCase();
+          // Код весового товара - колонка 6
+          const weightCode = r[6] ? normCode(r[6]) : '';
+          // Входная цена от РЦ - колонка 8
+          const inPrice = parseFloat(String(r[8]).replace(',', '.')) || 0;
+          // Выходная цена - колонка 9
+          const outPrice = parseFloat(String(r[9]).replace(',', '.')) || 0;
+          // Полка - колонка 10
+          const shelf = parseFloat(String(r[10]).replace(',', '.')) || 0;
+          const quant = 1;
+
+          items.push({ code, nomenclature: name, group, packaging, weightCode, inPrice, outPrice, shelf, quant });
+          if (shelf > 0) newShelf[code] = shelf;
+        }
+        
+        console.log(`Парсинг ассортимента: ${items.length} товаров, пропущено ${skipped}`);
+        return { items, newShelf, newQuants: {} };
+      }, []);
+
+      // Parse sales file
+      const parseSales = useCallback((json) => {
+        const items = [];
+        const foundTTs = new Set();
+        let curTT = '';
+        
+        for (let i = 2; i < json.length; i++) {
+          const r = json[i];
+          if (!r || r.length === 0) continue;
+          
+          const c0 = String(r[0] || '').trim();
+          const qty = parseFloat(String(r[1])) || 0;
+          
+          const isTT = /склад|магазин|основной/i.test(c0) && !/^\d/.test(c0);
+          const isProductCode = /^\d/.test(c0);
+          
+          if (isTT) { curTT = c0; foundTTs.add(curTT); }
+          else if (isProductCode && curTT && qty > 0) { items.push({ tt: curTT, code: normCode(c0), quantity: qty }); }
+        }
+        
+        console.log(`Парсинг продаж: ${items.length} записей, ${foundTTs.size} ТТ`);
+        return { items, foundTTs };
+      }, []);
+
+      // Parse stocks file
+      const parseStocks = useCallback((json) => {
+        const items = [];
+        const foundTTs = new Set();
+        let curTT = '';
+        let lastCol = 0;
+        
+        for (let i = 0; i < json.length; i++) { if (json[i]) lastCol = Math.max(lastCol, json[i].length - 1); }
+        
+        for (let i = 3; i < json.length; i++) {
+          const r = json[i];
+          if (!r || r.length < 3) continue;
+          
+          const c0 = String(r[0] || '').trim();
+          const code = String(r[1] || '').trim();
+          
+          const isTT = /склад|магазин|основной/i.test(c0) && !/^\d/.test(code);
+          const isProductCode = /^\d/.test(code) || code.length >= 5;
+          
+          if (isTT) { curTT = c0; foundTTs.add(curTT); }
+          else if (isProductCode && curTT && c0) {
+            let daysPresent = 0, totalDays = 0;
+            for (let col = 2; col <= lastCol; col++) {
+              const val = r[col];
+              if (val !== undefined && val !== null && val !== '') { totalDays++; if ((parseFloat(String(val)) || 0) > 0) daysPresent++; }
+            }
+            items.push({ tt: curTT, code: normCode(code), productName: c0, currentStock: parseFloat(String(r[lastCol])) || 0, daysPresent, totalDays });
+          }
+        }
+        
+        console.log(`Парсинг остатков: ${items.length} записей, ${foundTTs.size} ТТ`);
+        return { items, foundTTs };
+      }, []);
+
+      // File upload handler
+      const handleFile = useCallback((file, type) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const data = new Uint8Array(e.target.result);
+            const wb = XLSX.read(data, { type: 'array' });
+            const json = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
+
+            if (type === 'assortment') {
+              const { items, newShelf, newQuants } = parseAssortment(json);
+              if (items.length === 0) { alert('Не найдено товаров! Проверьте файл: в первой колонке должно быть "Да" для рабочих товаров.'); return; }
+              
+              setProducts(items);
+              setShelfValues(prev => ({ ...prev, ...newShelf }));
+              setQuants(prev => ({ ...prev, ...newQuants }));
+              
+              setMatrix(prev => {
+                const storeList = stores.length > 0 ? stores.map(s => s.tt) : 
+                  [...new Set(Object.values(prev).flatMap(p => Object.keys(p).filter(k => !['code','nomenclature','group','packaging','weightCode','inPrice','outPrice','vat','shelf','quant'].includes(k))))];
+                
+                const updated = {};
+                items.forEach(p => {
+                  if (prev[p.code]) { updated[p.code] = { ...prev[p.code], ...p }; }
+                  else { updated[p.code] = { ...p }; storeList.forEach(tt => { updated[p.code][tt] = 'НЕТ'; }); }
+                });
+                return updated;
+              });
+              alert(`Загружено ${items.length} товаров`);
+            }
+            else if (type === 'sales') {
+              const { items, foundTTs } = parseSales(json);
+              setSales(items);
+              // НЕ добавляем новые ТТ автоматически - используем только те, что есть в списке магазинов
+              alert(`Загружено ${items.length} продаж, найдено ${foundTTs.size} ТТ\n(расчёт только по магазинам из списка)`);
+            }
+            else if (type === 'stocks') {
+              const { items, foundTTs } = parseStocks(json);
+              setStocks(items);
+              // НЕ добавляем новые ТТ автоматически - используем только те, что есть в списке магазинов
+              alert(`Загружено ${items.length} остатков, найдено ${foundTTs.size} ТТ\n(расчёт только по магазинам из списка)`);
+            }
+          } catch (err) { console.error('Parse error:', err); alert('Ошибка: ' + err.message); }
+        };
+        reader.readAsArrayBuffer(file);
+      }, [stores, parseAssortment, parseSales, parseStocks]);
+
+      // Parse RC input
+      // Формат: Наименование \t Код \t Остаток (разделитель - табуляция)
+      const parseRcInput = useCallback(() => {
+        const lines = rcInputData.trim().split('\n');
+        const newRc = {};
+        const newProducts = [];
+        let count = 0;
+        let addedToMatrix = 0;
+        
+        lines.forEach(line => {
+          // Разбиваем по табам, а не по пробелам
+          const parts = line.split('\t').map(p => p.trim()).filter(p => p);
+          
+          // Пропускаем заголовки типа "Склад РЦ Крым"
+          if (parts.length < 2) return;
+          if (parts[0].toLowerCase().includes('склад') || parts[0].toLowerCase().includes('rc')) return;
+          
+          // Формат: Наименование | Код | Остаток
+          if (parts.length >= 3) {
+            const name = parts[0];
+            const code = normCode(parts[1]);
+            // Остаток может быть с запятой как десятичный разделитель
+            const stock = parseFloat(parts[2].replace(',', '.').replace(/\s/g, '')) || 0;
+            if (code && stock > 0) {
+              newRc[code] = stock;
+              count++;
+              if (!matrix[code]) {
+                const newProduct = { code, nomenclature: name, group: 'есть на РЦ', packaging: 'ШТ', weightCode: '', inPrice: 0, outPrice: 0, shelf: 0, quant: 1 };
+                stores.forEach(s => { newProduct[s.tt] = 'НЕТ'; });
+                newProducts.push(newProduct);
+                addedToMatrix++;
+              }
+            }
+          } else if (parts.length === 2) {
+            // Формат: Код | Остаток (без наименования)
+            const code = normCode(parts[0]);
+            const stock = parseFloat(parts[1].replace(',', '.').replace(/\s/g, '')) || 0;
+            if (code && stock > 0) { newRc[code] = stock; count++; }
+          }
+        });
+        
+        if (count > 0) {
+          setRcStocks(newRc);
+          if (newProducts.length > 0) {
+            setMatrix(prev => { const updated = { ...prev }; newProducts.forEach(p => { updated[p.code] = p; }); return updated; });
+            setProducts(prev => [...prev, ...newProducts]);
+          }
+          setShowRcModal(false);
+          setRcInputData('');
+          alert(`Загружено ${count} остатков РЦ${addedToMatrix > 0 ? `, добавлено в матрицу: ${addedToMatrix}` : ''}`);
+        } else { alert('Ошибка формата. Используйте: Наименование(таб)Код(таб)Остаток'); }
+      }, [rcInputData, matrix, stores]);
+
+      // Create matrix
+      const createMatrix = useCallback(() => {
+        if (products.length === 0) { alert('Загрузите ассортимент!'); return; }
+        const storeList = stores.map(s => s.tt);
+        const salesMap = new Map();
+        sales.forEach(s => { const key = `${s.tt}_${s.code}`; salesMap.set(key, (salesMap.get(key) || 0) + s.quantity); });
+        const newMatrix = {};
+        products.forEach(p => {
+          newMatrix[p.code] = { ...p };
+          storeList.forEach(tt => { const key = `${tt}_${p.code}`; newMatrix[p.code][tt] = (salesMap.get(key) || 0) > 0 ? 'ДА' : 'НЕТ'; });
+        });
+        setMatrix(newMatrix);
+        setTab('matrix');
+        alert(`Матрица создана: ${Object.keys(newMatrix).length} × ${storeList.length} ТТ`);
+      }, [products, stores, sales]);
+
+      // Toggle matrix value
+      const toggleMatrix = useCallback((code, tt) => {
+        setMatrix(prev => ({ ...prev, [code]: { ...prev[code], [tt]: prev[code]?.[tt] === 'ДА' ? 'НЕТ' : 'ДА' } }));
+      }, []);
+
+      // Remove product from matrix
+      const removeProductFromMatrix = useCallback((code) => {
+        if (confirm(`Удалить товар "${matrix[code]?.nomenclature || code}" из матрицы?`)) {
+          setMatrix(prev => {
+            const updated = { ...prev };
+            delete updated[code];
+            return updated;
+          });
+          setProducts(prev => prev.filter(p => p.code !== code));
+        }
+      }, [matrix]);
+
+      // Update product field
+      const updateProduct = useCallback((code, field, value) => {
+        setMatrix(prev => {
+          const updated = { ...prev, [code]: { ...prev[code] } };
+          if (value === undefined) {
+            delete updated[code][field];
+          } else {
+            updated[code][field] = value;
+          }
+          return updated;
+        });
+      }, []);
+
+      // Update shelf value
+      const updateShelfValue = useCallback((code, tt, value) => {
+        const key = `${code}_${tt}`;
+        setShelfValues(prev => {
+          if (value === '' || value === null) { const updated = { ...prev }; delete updated[key]; return updated; }
+          return { ...prev, [key]: parseFloat(value) || 0 };
+        });
+      }, []);
+
+      // Calculate order
+      const calcOrder = useCallback((packaging, stock, avgDay, period, shelf, quant = 0.5) => {
+        // shelf = null когда useShelf=false (не учитывать полку)
+        // shelf = число когда useShelf=true (учитывать полку)
+        const minStock = shelf != null ? shelf : 0;
+        const prelim = stock - (avgDay * period) - minStock;
+        if (prelim > 1) return 0;
+        if (prelim < 0) { 
+          const need = Math.abs(prelim); 
+          if (packaging === 'КГ') {
+            // Округляем до кванта из группы
+            return Math.ceil(need / quant) * quant;
+          }
+          return Math.ceil(need); 
+        }
+        if (packaging === 'КГ') return prelim <= 0.6 ? quant : 0;
+        return 1;
+      }, []);
+
+      // Run calculation
+      const runCalculation = useCallback(() => {
+        if (!Object.keys(matrix).length) { alert('Создайте матрицу!'); return; }
+        if (stocks.length === 0) { alert('Загрузите остатки!'); return; }
+        setLoading(true);
+        setTimeout(() => {
+          const stockMap = new Map();
+          stocks.forEach(s => { stockMap.set(`${s.tt}_${s.code}`, s); });
+          const salesMap = new Map();
+          sales.forEach(s => { const key = `${s.tt}_${s.code}`; salesMap.set(key, (salesMap.get(key) || 0) + s.quantity); });
+          const res = [];
+          stores.forEach(store => {
+            Object.entries(matrix).forEach(([code, p]) => {
+              const inMatrix = p[store.tt] === 'ДА';
+              const key = `${store.tt}_${code}`;
+              const stockData = stockMap.get(key);
+              const rcStock = rcStocks[code] || 0;
+              const shelfVal = shelfValues[key];
+              const shelf = useShelf ? (shelfVal !== undefined ? shelfVal : (p.packaging === 'КГ' ? 1 : 4)) : null;
+
+              if (!inMatrix) { res.push({ tt: store.tt, code, nomenclature: p.nomenclature, group: p.group || '', currentStock: 0, sales: 0, daysPresent: 0, shelf, order: 0, packaging: p.packaging, orderStatus: 'нет в матрице', rcStock, manualEdit: false, avgSalesPerDay: 0 }); return; }
+              if (rcStock <= 0) { res.push({ tt: store.tt, code, nomenclature: p.nomenclature, group: p.group || '', currentStock: stockData?.currentStock || 0, sales: 0, daysPresent: 0, shelf, order: 0, packaging: p.packaging, orderStatus: 'нет на РЦ', rcStock: 0, manualEdit: false, avgSalesPerDay: 0 }); return; }
+              // Товар в матрице, есть на РЦ, но нет на точке (нет данных остатков или остаток = 0)
+              if (!stockData || stockData.currentStock <= 0) {
+                const minOrder = p.packaging === 'КГ' ? 0.5 : 2;
+                res.push({ tt: store.tt, code, nomenclature: p.nomenclature, group: p.group || '', currentStock: stockData?.currentStock || 0, sales: 0, daysPresent: 0, shelf, order: minOrder, packaging: p.packaging, orderStatus: `заказ ${minOrder} (мин.)`, rcStock, manualEdit: true, avgSalesPerDay: 0 });
+                return;
+              }
+
+              const salesQty = salesMap.get(key) || 0;
+              const avgSales = stockData.daysPresent > 0 ? salesQty / stockData.daysPresent : 0;
+              // Получаем квант из группы для КГ товаров
+              const groupQuant = p.packaging === 'КГ' ? (groupQuants[p.group || ''] || 0.5) : 1;
+              // Передаём shelf (который null если useShelf=false), а не shelfVal
+              const order = calcOrder(p.packaging, stockData.currentStock, avgSales, period, shelf, groupQuant);
+              // Возможные продажи = средние продажи * период
+              const possibleSales = avgSales * period;
+              res.push({ tt: store.tt, code, nomenclature: p.nomenclature, group: p.group || '', currentStock: stockData.currentStock, sales: salesQty, possibleSales, daysPresent: stockData.daysPresent, shelf, order, packaging: p.packaging, orderStatus: order > 0 ? `заказ ${order}` : 'достаточно', rcStock, manualEdit: false, avgSalesPerDay: avgSales });
+            });
+          });
+          setResults(res);
+          save(KEYS.RESULTS, res);
+          setLoading(false);
+          setTab('results');
+          alert(`Готово! К заказу: ${res.filter(r => r.order > 0).length}`);
+        }, 100);
+      }, [matrix, stores, stocks, sales, rcStocks, period, useShelf, shelfValues, calcOrder, groupQuants]);
+
+      // Update result order
+      const updateResultOrder = useCallback((tt, code, newOrder) => {
+        const order = parseFloat(newOrder) || 0;
+        setResults(prev => {
+          const updated = prev.map(r => r.tt === tt && r.code === code ? { ...r, order, manualEdit: true, orderStatus: order > 0 ? `заказ ${order}` : 'достаточно' } : r);
+          save(KEYS.RESULTS, updated);
+          return updated;
+        });
+      }, []);
+
+      // Calculate RC
+      const calcRc = useCallback(() => {
+        const totalSalesMap = new Map();
+        sales.forEach(s => { totalSalesMap.set(s.code, (totalSalesMap.get(s.code) || 0) + s.quantity); });
+        const avgDaysMap = new Map();
+        const daysCountMap = new Map();
+        stocks.forEach(s => { if (s.daysPresent > 0) { avgDaysMap.set(s.code, (avgDaysMap.get(s.code) || 0) + s.daysPresent); daysCountMap.set(s.code, (daysCountMap.get(s.code) || 0) + 1); } });
+        const res = [];
+        Object.entries(matrix).forEach(([code, p]) => {
+          const rcStock = rcStocks[code] || 0;
+          const totalSales = totalSalesMap.get(code) || 0;
+          const totalDays = avgDaysMap.get(code) || 0;
+          const storeCount = daysCountMap.get(code) || 1;
+          const avgDaysPresent = totalDays / storeCount;
+          const avgSalesPerDay = avgDaysPresent > 0 ? totalSales / avgDaysPresent : 0;
+          const daysForGroup = groupDays[p.group || ''] || 30;
+          const monthlyNeed = avgSalesPerDay * daysForGroup;
+          let autoOrder = 0;
+          if (monthlyNeed > rcStock) { const need = monthlyNeed - rcStock; autoOrder = p.packaging === 'КГ' ? Math.ceil(need * 2) / 2 : Math.ceil(need); }
+          const manualOrder = rcManualOrders[code];
+          res.push({ code, nomenclature: p.nomenclature, group: p.group || '', packaging: p.packaging, rcStock, totalSales, avgSalesPerDay, monthlyNeed: monthlyNeed.toFixed(2), autoOrder, order: manualOrder !== undefined ? manualOrder : autoOrder, manualEdit: manualOrder !== undefined, inPrice: p.inPrice || 0, quant: p.quant || 1 });
+        });
+        setRcResults(res.sort((a, b) => (a.group || '').localeCompare(b.group || '', 'ru')));
+        save(KEYS.RC_RESULTS, res.sort((a, b) => (a.group || '').localeCompare(b.group || '', 'ru')));
+      }, [matrix, sales, stocks, rcStocks, rcManualOrders, groupDays]);
+
+      // Update RC order
+      const updateRcOrder = useCallback((code, value) => {
+        const order = parseFloat(value) || 0;
+        setRcManualOrders(prev => {
+          let updated;
+          if (order === 0 || value === '') { updated = { ...prev }; delete updated[code]; }
+          else { updated = { ...prev, [code]: order }; }
+          // Сохраняем rcResults с обновлённым заказом
+          setRcResults(rcPrev => {
+            const updatedRc = rcPrev.map(r => r.code === code ? { ...r, order, manualEdit: order !== 0, ...(order === 0 ? {} : { autoOrder: order }) } : r);
+            save(KEYS.RC_RESULTS, updatedRc);
+            return updatedRc;
+          });
+          return updated;
+        });
+      }, []);
+
+      // Export functions
+      const exportExcel = useCallback(() => {
+        if (results.length === 0) { alert('Нет данных!'); return; }
+        const headers = ['№ Маг.', 'ТТ', 'Наименование', 'Код', 'Остаток', 'Продажи', 'Дней', 'Полка', 'Заказ', 'Упак', 'Статус', 'Ост. РЦ'];
+        const storeNumMap = {};
+        stores.forEach(s => { storeNumMap[s.tt] = s.storeNumber || s.tt2 || s.tt || ''; });
+        const data = results.map(r => [storeNumMap[r.tt] || '', r.tt, r.nomenclature, r.code, r.currentStock.toFixed(2), r.sales.toFixed(2), r.daysPresent || '-', r.shelf ?? '', r.order, r.packaging, r.orderStatus, r.rcStock]);
+        const ws = createStyledSheet(data, headers, [0, 1, 2]);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Заказ');
+        XLSX.writeFile(wb, `sneki_order_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      }, [results]);
+
+      const exportMatrix = useCallback(() => {
+        if (Object.keys(matrix).length === 0) { alert('Нет матрицы!'); return; }
+        const storeList = stores.map(s => s.tt);
+        const headers = ['Группа', 'Наименование', 'Код товара', 'Упак', 'Вес. код', ...storeList];
+        const data = Object.entries(matrix).map(([code, p]) => [p.group || '', p.nomenclature || '', code, p.packaging || 'ШТ', p.weightCode || '', ...storeList.map(tt => p[tt] === 'ДА' ? 'Да' : 'Нет')]);
+        const ws = createStyledSheet(data, headers, [0, 1]);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Матрица');
+        XLSX.writeFile(wb, `sneki_matrix_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      }, [matrix, stores]);
+
+      const exportPrices = useCallback(() => {
+        if (Object.keys(matrix).length === 0) { alert('Нет данных!'); return; }
+        const headers = ['Группа', 'Наименование', 'Код', 'НДС %', 'Вход. цена', 'Выход с РЦ', 'Наценка %', 'Полка'];
+        const data = Object.entries(matrix).map(([code, p]) => { 
+          const productMarkup = p.markup ?? groupMarkups[p.group || ''] ?? warehouseMarkup;
+          const rcOutput = (p.inPrice || 0) * (1 + warehouseMarkup / 100);
+          const shelfPrice = Math.round((p.inPrice || 0) * (1 + productMarkup / 100));
+          return [p.group || '', p.nomenclature || '', code, p.vat ?? vatRate, p.inPrice || 0, rcOutput.toFixed(2), productMarkup, shelfPrice]; 
+        });
+        const ws = createStyledSheet(data, headers, [0, 1]);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Цены');
+        XLSX.writeFile(wb, `sneki_prices_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      }, [matrix, vatRate, groupMarkups, warehouseMarkup]);
+
+      const exportShelf = useCallback(() => {
+        if (Object.keys(matrix).length === 0 || stores.length === 0) { alert('Нет данных!'); return; }
+        const headers = ['Код товара', 'Наименование', 'Группа', 'Упак.', ...stores.map(s => s.tt)];
+        const data = [];
+        Object.entries(matrix).forEach(([code, p]) => { const row = [code, p.nomenclature, p.group || '', p.packaging || 'ШТ']; stores.forEach(store => { const key = `${code}_${store.tt}`; row.push(shelfValues[key] !== undefined ? String(shelfValues[key]) : ''); }); data.push(row); });
+        const ws = createStyledSheet(data, headers, [0, 1, 2]);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Полка');
+        XLSX.writeFile(wb, `sneki_shelf_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      }, [matrix, stores, shelfValues]);
+
+      const importShelf = useCallback((file) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const data = new Uint8Array(e.target.result);
+            const wb = XLSX.read(data, { type: 'array' });
+            const json = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
+            if (json.length < 2) { alert('Пустой файл!'); return; }
+            const header = json[0];
+            const storeColumns = header.slice(4);
+            const newShelfValues = {};
+            let count = 0;
+            for (let i = 1; i < json.length; i++) {
+              const row = json[i];
+              if (!row || !row[0]) continue;
+              const code = normCode(String(row[0]));
+              storeColumns.forEach((store, idx) => { const value = row[4 + idx]; if (value !== undefined && value !== '' && value !== null) { const key = `${code}_${store}`; newShelfValues[key] = parseFloat(String(value)) || 0; count++; } });
+            }
+            setShelfValues(newShelfValues);
+            alert(`Импортировано ${count} значений полки`);
+          } catch (err) { alert('Ошибка: ' + err.message); }
+        };
+        reader.readAsArrayBuffer(file);
+      }, []);
+
+      const exportByTT = useCallback((selectedTT) => {
+        const filtered = results.filter(r => selectedTT.length === 0 || selectedTT.includes(r.tt));
+        if (filtered.length === 0) { alert('Нет данных!'); return; }
+        const headers = ['ТТ', 'Код', 'Наименование', 'Группа', 'Остаток', 'Продажи', 'Дней', 'Полка', 'Заказ', 'Упак', 'Статус', 'Ост. РЦ'];
+        const data = filtered.map(r => [r.tt, r.code, r.nomenclature, r.group, r.currentStock.toFixed(2), r.sales.toFixed(2), r.daysPresent, r.shelf ?? '', r.order, r.packaging, r.orderStatus, r.rcStock]);
+        const ws = createStyledSheet(data, headers, [0, 1, 2, 3]);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Заказ');
+        XLSX.writeFile(wb, `sneki_order_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      }, [results]);
+
+      const exportRcOrder = useCallback(() => {
+        if (rcResults.length === 0) { alert('Нет данных!'); return; }
+        const headers = ['Код', 'Наименование', 'Группа', 'Упак', 'Ост. РЦ', 'Продажи', 'Ср.прод/день', 'Потр.', 'Заказ РЦ'];
+        const data = rcResults.filter(r => r.order > 0).map(r => [r.code, r.nomenclature, r.group, r.packaging, r.rcStock, r.totalSales.toFixed(2), r.avgSalesPerDay.toFixed(2), r.monthlyNeed, r.order]);
+        const ws = createStyledSheet(data, headers, [1, 2]);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Заказ РЦ');
+        XLSX.writeFile(wb, `sneki_rc_order_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      }, [rcResults]);
+
+      const exportAnalytics = useCallback(() => {
+        const wb = XLSX.utils.book_new();
+        
+        // Фильтруем данные
+        const filteredSales = sales.filter(s => {
+          const product = Object.values(matrix).find(p => p.code === s.code);
+          if (!product) return false;
+          if (analyticsGroup && product.group !== analyticsGroup) return false;
+          if (analyticsTT && s.tt !== analyticsTT) return false;
+          return true;
+        });
+
+        // ABC анализ
+        const productSalesMap = new Map();
+        filteredSales.forEach(s => {
+          productSalesMap.set(s.code, (productSalesMap.get(s.code) || 0) + s.quantity);
+        });
+        
+        const abcData = Object.values(matrix)
+          .map(p => ({
+            code: p.code,
+            name: p.nomenclature,
+            group: p.group || '',
+            sales: productSalesMap.get(p.code) || 0
+          }))
+          .filter(i => i.sales > 0)
+          .sort((a, b) => b.sales - a.sales);
+        
+        let cumulative = 0;
+        const totalSales = abcData.reduce((sum, i) => sum + i.sales, 0);
+        const abcWithClass = abcData.map(item => {
+          cumulative += item.sales;
+          const pct = totalSales > 0 ? (cumulative / totalSales) * 100 : 0;
+          return { ...item, cumulative, pct: pct.toFixed(1), abcClass: pct <= 80 ? 'A' : pct <= 95 ? 'B' : 'C' };
+        });
+
+        const abcHeaders = ['Ранг', 'Наименование', 'Код', 'Группа', 'Продажи', 'Накопительно', '% накопительно', 'ABC'];
+        const abcRows = abcWithClass.map((i, idx) => [idx + 1, i.name, i.code, i.group, i.sales.toFixed(1), i.cumulative.toFixed(1), i.pct + '%', i.abcClass]);
+        const wsABC = createStyledSheet(abcRows, abcHeaders, [1, 3]);
+        XLSX.utils.book_append_sheet(wb, wsABC, 'ABC анализ');
+
+        // Зависшие товары
+        const stuckData = [];
+        stocks.forEach(s => {
+          if (s.currentStock > 0) {
+            const hasSales = filteredSales.some(sale => sale.tt === s.tt && sale.code === s.code);
+            if (!hasSales) {
+              const product = Object.values(matrix).find(p => p.code === s.code);
+              if (analyticsGroup && product?.group !== analyticsGroup) return;
+              if (analyticsTT && s.tt !== analyticsTT) return;
+              stuckData.push([
+                s.tt,
+                s.code,
+                product?.nomenclature || s.code,
+                product?.group || '',
+                s.currentStock.toFixed(2),
+                s.daysPresent || 0
+              ]);
+            }
+          }
+        });
+        
+        if (stuckData.length > 0) {
+          const wsStuck = createStyledSheet(stuckData, ['ТТ', 'Код', 'Наименование', 'Группа', 'Остаток', 'Дней'], [0, 2, 3]);
+          XLSX.utils.book_append_sheet(wb, wsStuck, 'Зависшие');
+        }
+
+        // Плохо продающиеся
+        const lowData = [];
+        const productAvgMap = new Map();
+        filteredSales.forEach(s => {
+          if (!productAvgMap.has(s.code)) productAvgMap.set(s.code, { total: 0, days: 0 });
+          productAvgMap.get(s.code).total += s.quantity;
+        });
+        stocks.forEach(s => {
+          if (productAvgMap.has(s.code) && s.daysPresent > 0) {
+            const data = productAvgMap.get(s.code);
+            if (s.daysPresent > data.days) data.days = s.daysPresent;
+          }
+        });
+        productAvgMap.forEach((data, code) => {
+          const avgPerDay = data.days > 0 ? data.total / data.days : 0;
+          if (avgPerDay > 0 && avgPerDay < 0.5) {
+            const product = Object.values(matrix).find(p => p.code === code);
+            lowData.push([
+              code,
+              product?.nomenclature || code,
+              product?.group || '',
+              data.total.toFixed(1),
+              data.days,
+              avgPerDay.toFixed(3)
+            ]);
+          }
+        });
+        lowData.sort((a, b) => parseFloat(a[5]) - parseFloat(b[5]));
+        
+        if (lowData.length > 0) {
+          const wsLow = createStyledSheet(lowData, ['Код', 'Наименование', 'Группа', 'Продажи', 'Дней', 'Ср/день'], [1, 2]);
+          XLSX.utils.book_append_sheet(wb, wsLow, 'Плохие продажи');
+        }
+
+        // Продажи по группам
+        const groupSalesMap = new Map();
+        filteredSales.forEach(s => {
+          const product = Object.values(matrix).find(p => p.code === s.code);
+          const group = product?.group || 'Без группы';
+          groupSalesMap.set(group, (groupSalesMap.get(group) || 0) + s.quantity);
+        });
+        const groupData = Array.from(groupSalesMap.entries())
+          .sort((a, b) => b[1] - a[1])
+          .map(([group, sales]) => [group, sales.toFixed(1)]);
+        
+        if (groupData.length > 0) {
+          const wsGroups = createStyledSheet(groupData, ['Группа', 'Продажи'], [0]);
+          XLSX.utils.book_append_sheet(wb, wsGroups, 'По группам');
+        }
+
+        // Продажи по ТТ
+        const ttSalesMap = new Map();
+        filteredSales.forEach(s => {
+          ttSalesMap.set(s.tt, (ttSalesMap.get(s.tt) || 0) + s.quantity);
+        });
+        const ttData = Array.from(ttSalesMap.entries())
+          .sort((a, b) => b[1] - a[1])
+          .map(([tt, sales]) => [tt, sales.toFixed(1)]);
+        
+        if (ttData.length > 0) {
+          const wsTT = createStyledSheet(ttData, ['ТТ', 'Продажи'], [0]);
+          XLSX.utils.book_append_sheet(wb, wsTT, 'По ТТ');
+        }
+
+        XLSX.writeFile(wb, `sneki_analytics_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      }, [sales, matrix, stocks, analyticsGroup, analyticsTT]);
+
+      // Reset all data
+      const resetAllData = useCallback(() => {
+        if (!confirm('Удалить все загруженные данные?')) return;
+        Object.values(KEYS).forEach(key => localStorage.removeItem(key));
+        setProducts([]); setMatrix({}); setStores([]); setSales([]); setStocks([]); setRcStocks({}); setShelfValues({}); setQuants({}); setGroupMarkups({}); setGroupQuants({}); setManualPrices({}); setRcManualOrders({}); setResults([]); setRcResults([]); setGroupDays({});
+        alert('Все данные удалены');
+      }, []);
+
+      // Add new product
+      const addNewProduct = useCallback(() => {
+        if (!newProduct.code || !newProduct.nomenclature) {
+          alert('Заполните код и наименование товара');
+          return;
+        }
+        const code = normCode(newProduct.code);
+        if (matrix[code]) {
+          alert('Товар с таким кодом уже существует');
+          return;
+        }
+        const product = {
+          code,
+          nomenclature: newProduct.nomenclature,
+          group: newProduct.group,
+          packaging: newProduct.packaging,
+          weightCode: newProduct.weightCode,
+          inPrice: newProduct.inPrice,
+          outPrice: 0,
+          shelf: 0,
+          quant: 1
+        };
+        stores.forEach(s => { product[s.tt] = 'НЕТ'; });
+
+        setMatrix(prev => ({ ...prev, [code]: product }));
+        setProducts(prev => [...prev, product]);
+        setShowAddProductModal(false);
+        setNewProduct({ code: '', nomenclature: '', group: '', packaging: 'ШТ', weightCode: '', inPrice: 0 });
+        alert('Товар добавлен');
+      }, [newProduct, matrix, stores]);
+
+      // Export weight table (КГ products)
+      const exportWeightTable = useCallback(() => {
+        const weightProducts = Object.values(matrix).filter(p => p.packaging === 'КГ');
+        if (weightProducts.length === 0) {
+          alert('Нет товаров с упаковкой КГ');
+          return;
+        }
+        const weightHeaders = ['Категория', 'Наименование', 'Код весового товара'];
+        const weightRows = weightProducts.map(p => [p.group || '', p.nomenclature || '', p.weightCode || '']);
+        const wb = XLSX.utils.book_new();
+        const ws = createStyledSheet(weightRows, weightHeaders, [0, 1]);
+        XLSX.utils.book_append_sheet(wb, ws, 'Весовые товары');
+        XLSX.writeFile(wb, 'weight_products.xlsx');
+      }, [matrix]);
+
+      // Import matrix from Excel
+      const importMatrix = useCallback((file) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const data = new Uint8Array(e.target.result);
+            const wb = XLSX.read(data, { type: 'array' });
+            const json = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
+            
+            const header = json[0];
+            const ttColumns = [];
+            for (let col = 5; col < header.length; col++) {
+              const val = String(header[col] || '').trim();
+              if (val) ttColumns.push({ tt: val, col });
+            }
+            
+            let updated = 0;
+            for (let i = 1; i < json.length; i++) {
+              const row = json[i];
+              if (!row || !row[2]) continue;
+              const code = normCode(String(row[2]));
+              if (!matrix[code]) continue;
+              
+              ttColumns.forEach(({ tt, col }) => {
+                const val = String(row[col] || '').trim().toUpperCase();
+                if (val === 'ДА' || val === 'НЕТ') {
+                  setMatrix(prev => ({
+                    ...prev,
+                    [code]: { ...prev[code], [tt]: val }
+                  }));
+                  updated++;
+                }
+              });
+            }
+            alert(`Обновлено ${updated} значений матрицы`);
+          } catch (err) { alert('Ошибка: ' + err.message); }
+        };
+        reader.readAsArrayBuffer(file);
+      }, [matrix]);
+
+      // Mass update orders
+      const massUpdateOrders = useCallback((action, value) => {
+        if (action === 'clear') { setResults(prev => { const updated = prev.map(r => ({ ...r, order: 0, orderStatus: 'достаточно', manualEdit: false })); save(KEYS.RESULTS, updated); return updated; }); }
+        else if (action === 'recalc') { 
+          setResults(prev => { 
+            const updated = prev.map(r => { 
+              if (r.orderStatus.includes('нет')) return r; 
+              // Получаем квант для КГ товаров
+              const product = matrix[r.code];
+              const groupQuant = r.packaging === 'КГ' ? (groupQuants[r.group || ''] || 0.5) : 1;
+              // r.shelf уже содержит null если useShelf=false
+              const newOrder = calcOrder(r.packaging, r.currentStock, r.avgSalesPerDay, period, r.shelf, groupQuant); 
+              return { ...r, order: newOrder, orderStatus: newOrder > 0 ? `заказ ${newOrder}` : 'достаточно', manualEdit: false }; 
+            }); 
+            save(KEYS.RESULTS, updated);
+            return updated;
+          }); 
+        }
+        else if (action === 'multiply' && value) { setResults(prev => { const updated = prev.map(r => { if (r.order === 0) return r; const newOrder = Math.round(r.order * value * (r.packaging === 'КГ' ? 2 : 1)) / (r.packaging === 'КГ' ? 2 : 1); return { ...r, order: newOrder, orderStatus: `заказ ${newOrder}`, manualEdit: true }; }); save(KEYS.RESULTS, updated); return updated; }); }
+      }, [calcOrder, period, matrix, groupQuants]);
+
+      // Get all groups
+      const allGroups = useMemo(() => { const g = new Set(); Object.values(matrix).forEach(p => { if (p.group) g.add(p.group); }); return Array.from(g).sort((a, b) => a.localeCompare(b, 'ru')); }, [matrix]);
+
+      // Filtered results
+      const filteredResults = useMemo(() => {
+        const search = searchResults.toLowerCase().trim();
+        return results.filter(r => {
+          if (search && !r.nomenclature?.toLowerCase().includes(search) && !r.code.includes(search)) return false;
+          if (filterTT && !r.tt.toLowerCase().includes(filterTT.toLowerCase())) return false;
+          if (filterGroup && r.group !== filterGroup) return false;
+          if (filterStatus === 'orders' && r.order === 0) return false;
+          if (filterStatus === 'noMatrix' && r.orderStatus !== 'нет в матрице') return false;
+          if (filterStatus === 'noRC' && r.rcStock > 0) return false;
+          if (filterStatus === 'hasRC' && r.rcStock <= 0) return false;
+          if (filterStatus === 'lowRC' && (r.rcStock <= 0 || r.rcStock >= 5)) return false;
+          return true;
+        });
+      }, [results, searchResults, filterTT, filterStatus, filterGroup]);
+
+      // Grouped matrix
+      const groupedMatrix = useMemo(() => {
+        const g = {};
+        const search = searchMatrix.toLowerCase().trim();
+        Object.entries(matrix).forEach(([code, p]) => { if (search && !p.nomenclature?.toLowerCase().includes(search) && !code.includes(search)) return; const group = p.group || 'Без группы'; if (!g[group]) g[group] = []; g[group].push({ code, ...p }); });
+        Object.keys(g).forEach(group => { g[group].sort((a, b) => (a.nomenclature || '').localeCompare(b.nomenclature || '', 'ru')); });
+        return g;
+      }, [matrix, searchMatrix]);
+
+      // Grouped results
+      const groupedResults = useMemo(() => {
+        const g = {};
+        filteredResults.forEach(r => { if (!g[r.tt]) g[r.tt] = []; g[r.tt].push(r); });
+        Object.keys(g).forEach(tt => { g[tt].sort((a, b) => { const gc = (a.group || '').localeCompare(b.group || '', 'ru'); return gc !== 0 ? gc : (a.nomenclature || '').localeCompare(b.nomenclature || '', 'ru'); }); });
+        return g;
+      }, [filteredResults]);
+
+      // Grouped shelf
+      const groupedShelf = useMemo(() => {
+        const g = {};
+        const search = searchShelf.toLowerCase().trim();
+        Object.entries(matrix).forEach(([code, p]) => { if (search && !p.nomenclature?.toLowerCase().includes(search) && !code.includes(search)) return; const group = p.group || 'Без группы'; if (!g[group]) g[group] = []; g[group].push({ code, ...p }); });
+        Object.keys(g).forEach(group => { g[group].sort((a, b) => (a.nomenclature || '').localeCompare(b.nomenclature || '', 'ru')); });
+        return g;
+      }, [matrix, searchShelf]);
+
+      // Stats
+      const stats = useMemo(() => ({ products: Object.keys(matrix).length, stores: stores.length, sales: sales.reduce((s, x) => s + x.quantity, 0), toOrder: results.filter(r => r.order > 0).length, orderSum: results.filter(r => r.order > 0).reduce((s, r) => s + r.order * (matrix[r.code]?.inPrice || 0), 0) }), [matrix, stores, sales, results]);
+
+      // Price stats
+      const priceStats = useMemo(() => {
+        let currentRevenue = 0;
+        let newRevenue = 0;
+        let individualMarkups = 0;
+        sales.forEach(s => { 
+          const product = matrix[s.code]; 
+          if (!product) return; 
+          const inPrice = product.inPrice || 0; 
+          // Приоритет наценки: индивидуальная → групповая → глобальная
+          const productMarkup = product.markup ?? groupMarkups[product.group || ''] ?? warehouseMarkup;
+          const outPrice = inPrice * (1 + productMarkup / 100);
+          currentRevenue += s.quantity * (product.outPrice || inPrice); 
+          newRevenue += s.quantity * outPrice; 
+        });
+        // Считаем количество индивидуальных наценок
+        Object.values(matrix).forEach(p => {
+          if (p.markup !== undefined && p.markup !== null) individualMarkups++;
+        });
+        return { currentRevenue, newRevenue, diff: newRevenue - currentRevenue, activeMarkups: Object.keys(groupMarkups).length, individualMarkups };
+      }, [sales, matrix, groupMarkups, warehouseMarkup]);
+
+      const hasMatrix = Object.keys(matrix).length > 0;
+
+      // Analytics data
+      const analyticsData = useMemo(() => {
+        // Фильтруем продажи по выбранным фильтрам
+        const filteredSales = sales.filter(s => {
+          const product = Object.values(matrix).find(p => p.code === s.code);
+          if (!product) return false;
+          if (analyticsGroup && product.group !== analyticsGroup) return false;
+          if (analyticsTT && s.tt !== analyticsTT) return false;
+          return true;
+        });
+
+        // Продажи по товарам
+        const productSales = new Map();
+        filteredSales.forEach(s => {
+          if (!productSales.has(s.code)) productSales.set(s.code, 0);
+          productSales.set(s.code, productSales.get(s.code) + s.quantity);
+        });
+
+        // Продажи по группам
+        const groupSales = new Map();
+        filteredSales.forEach(s => {
+          const product = Object.values(matrix).find(p => p.code === s.code);
+          const group = product?.group || 'Без группы';
+          groupSales.set(group, (groupSales.get(group) || 0) + s.quantity);
+        });
+
+        // Продажи по ТТ
+        const ttSales = new Map();
+        filteredSales.forEach(s => {
+          ttSales.set(s.tt, (ttSales.get(s.tt) || 0) + s.quantity);
+        });
+
+        // ABC-анализ
+        const abcItems = Array.from(productSales.entries())
+          .map(([code, sales]) => {
+            const product = Object.values(matrix).find(p => p.code === code);
+            return { code, name: product?.nomenclature || code, group: product?.group || '', sales };
+          })
+          .sort((a, b) => b.sales - a.sales);
+
+        const totalSales = abcItems.reduce((sum, i) => sum + i.sales, 0);
+        let cumulative = 0;
+        const abcWithClass = abcItems.map(item => {
+          cumulative += item.sales;
+          const cumulativePercent = totalSales > 0 ? (cumulative / totalSales) * 100 : 0;
+          const abcClass = cumulativePercent <= 80 ? 'A' : cumulativePercent <= 95 ? 'B' : 'C';
+          return { ...item, cumulative, cumulativePercent, abcClass };
+        });
+
+        // Зависшие товары (остаток есть, продаж нет)
+        const stuckItems = [];
+        stocks.forEach(s => {
+          if (s.currentStock > 0) {
+            const hasSales = filteredSales.some(sale => sale.tt === s.tt && sale.code === s.code);
+            if (!hasSales) {
+              const product = Object.values(matrix).find(p => p.code === s.code);
+              if (analyticsGroup && product?.group !== analyticsGroup) return;
+              if (analyticsTT && s.tt !== analyticsTT) return;
+              stuckItems.push({
+                tt: s.tt,
+                code: s.code,
+                name: product?.nomenclature || s.code,
+                group: product?.group || '',
+                stock: s.currentStock,
+                days: s.daysPresent || 0
+              });
+            }
+          }
+        });
+
+        // Плохо продающиеся (< 0.5 в день в среднем)
+        const lowSellers = [];
+        const productAvgSales = new Map();
+        filteredSales.forEach(s => {
+          if (!productAvgSales.has(s.code)) productAvgSales.set(s.code, { total: 0, days: 0, tt: s.tt });
+          const data = productAvgSales.get(s.code);
+          data.total += s.quantity;
+        });
+        stocks.forEach(s => {
+          if (productAvgSales.has(s.code)) {
+            const data = productAvgSales.get(s.code);
+            if (s.daysPresent > 0) {
+              data.days = Math.max(data.days, s.daysPresent);
+            }
+          }
+        });
+        productAvgSales.forEach((data, code) => {
+          const avgPerDay = data.days > 0 ? data.total / data.days : 0;
+          if (avgPerDay > 0 && avgPerDay < 0.5) {
+            const product = Object.values(matrix).find(p => p.code === code);
+            lowSellers.push({
+              code,
+              name: product?.nomenclature || code,
+              group: product?.group || '',
+              totalSales: data.total,
+              days: data.days,
+              avgPerDay
+            });
+          }
+        });
+        lowSellers.sort((a, b) => a.avgPerDay - b.avgPerDay);
+
+        return {
+          productSales,
+          groupSales,
+          ttSales,
+          abcItems: abcWithClass,
+          stuckItems,
+          lowSellers,
+          totalSales,
+          countA: abcWithClass.filter(i => i.abcClass === 'A').length,
+          countB: abcWithClass.filter(i => i.abcClass === 'B').length,
+          countC: abcWithClass.filter(i => i.abcClass === 'C').length
+        };
+      }, [sales, matrix, stocks, analyticsGroup, analyticsTT]);
+
+      // Render charts when tab is analytics
+      useEffect(() => {
+        if (tab !== 'analytics' || !hasMatrix) return;
+
+        // Destroy old charts
+        Object.values(chartInstances.current).forEach(chart => chart?.destroy());
+        chartInstances.current = {};
+
+        const createChart = (ref, key, config) => {
+          if (ref.current) {
+            chartInstances.current[key] = new Chart(ref.current, config);
+          }
+        };
+
+        const data = analyticsData;
+
+        // Chart 1: Продажи по группам
+        const groupData = Array.from(data.groupSales.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10);
+        createChart(chartRef1, 'chart1', {
+          type: 'bar',
+          data: {
+            labels: groupData.map(g => g[0].length > 12 ? g[0].slice(0, 11) + '…' : g[0]),
+            datasets: [{
+              label: 'Продажи',
+              data: groupData.map(g => g[1]),
+              backgroundColor: ['#f59e0b', '#10b981', '#3b82f6', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16', '#f97316', '#6366f1']
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: { 
+              y: { beginAtZero: true },
+              x: { ticks: { maxRotation: 45, minRotation: 25, font: { size: 9 } } }
+            }
+          }
+        });
+
+        // Chart 2: ABC распределение (pie)
+        createChart(chartRef2, 'chart2', {
+          type: 'doughnut',
+          data: {
+            labels: ['A (80% продаж)', 'B (15% продаж)', 'C (5% продаж)'],
+            datasets: [{
+              data: [data.countA, data.countB, data.countC],
+              backgroundColor: ['#10b981', '#f59e0b', '#ef4444']
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } } }
+          }
+        });
+
+        // Chart 3: Топ-10 товаров
+        const top10 = data.abcItems.slice(0, 10);
+        createChart(chartRef3, 'chart3', {
+          type: 'bar',
+          data: {
+            labels: top10.map(i => i.name.length > 18 ? i.name.slice(0, 17) + '…' : i.name),
+            datasets: [{
+              label: 'Продажи',
+              data: top10.map(i => i.sales),
+              backgroundColor: '#3b82f6'
+            }]
+          },
+          options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: { x: { beginAtZero: true } }
+          }
+        });
+
+        // Chart 4: Продажи по ТТ
+        const ttData = Array.from(data.ttSales.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10);
+        createChart(chartRef4, 'chart4', {
+          type: 'bar',
+          data: {
+            labels: ttData.map(t => t[0].length > 12 ? t[0].slice(0, 11) + '…' : t[0]),
+            datasets: [{
+              label: 'Продажи',
+              data: ttData.map(t => t[1]),
+              backgroundColor: '#8b5cf6'
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: { 
+              y: { beginAtZero: true },
+              x: { ticks: { maxRotation: 45, minRotation: 25, font: { size: 9 } } }
+            }
+          }
+        });
+
+        return () => {
+          Object.values(chartInstances.current).forEach(chart => chart?.destroy());
+        };
+      }, [tab, analyticsData, hasMatrix]);
+
+      const tabs = [
+        { id: 'upload', label: 'Загрузка', icon: <UploadIcon /> },
+        { id: 'matrix', label: 'Матрица', disabled: !hasMatrix, icon: <GridIcon /> },
+        { id: 'prices', label: 'Цены', disabled: !hasMatrix, icon: <DollarIcon /> },
+        { id: 'shelf', label: 'Полка', disabled: !hasMatrix, icon: <RulerIcon /> },
+        { id: 'results', label: 'Результаты', disabled: results.length === 0, icon: <TableIcon /> },
+        { id: 'rc', label: 'Расчёт РЦ', disabled: results.length === 0, icon: <WarehouseIcon /> },
+        { id: 'analytics', label: 'Аналитика', disabled: !hasMatrix, icon: <ChartIcon /> }
+      ];
+
+      return (
+        <div className="min-h-screen bg-[#f5f7fa]">
+          {/* Header */}
+          <div className="bg-white border-b border-gray-200">
+            <div className="px-3 py-2">
+              <div className="flex items-center gap-2">
+                <a href="index.html" className="btn btn-secondary text-sm"><ArrowLeftIcon /><span>Назад</span></a>
+                <div className="flex items-center gap-2"><CookieIcon /><h1 className="text-base font-semibold text-gray-900">СНЕКИ — Расчёт заказа</h1></div>
+                <div className="flex gap-0.5 bg-gray-100 rounded-md p-0.5 ml-2">
+                  {tabs.map(t => (
+                    <button key={t.id} onClick={() => !t.disabled && setTab(t.id)} className={`flex items-center gap-1 px-2.5 py-1.5 rounded font-medium text-xs transition-colors ${tab === t.id ? 'bg-gray-800 text-white' : t.disabled ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-200'}`} disabled={t.disabled}>
+                      {t.icon}<span className="hidden sm:inline">{t.label}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="ml-auto flex gap-2">
+                  <span className="bg-gray-100 px-2 py-1 rounded-md text-xs text-gray-600">{products.length} тов.</span>
+                  <span className="bg-gray-100 px-2 py-1 rounded-md text-xs text-gray-600">{stores.length} ТТ</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Content */}
+          <div className="px-2 py-2">
+            {/* Upload Tab */}
+            {tab === 'upload' && (
+              <div className="space-y-2">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                  <div onClick={() => fileInputRefs.assortment.current?.click()} className="bg-white rounded-lg border border-gray-200 p-4 cursor-pointer hover:border-gray-400 transition-colors">
+                    <div className="flex flex-col items-center text-center">
+                      <div className="p-3 bg-amber-50 rounded-lg text-amber-600 mb-3"><PackageIcon /></div>
+                      <h3 className="font-medium text-gray-800 mb-1">Ассортимент</h3>
+                      <p className="text-xs text-gray-400">Да | Группа | Код | Упак | Наим.</p>
+                      <input ref={fileInputRefs.assortment} type="file" accept=".xlsx,.xls" onChange={e => e.target.files?.[0] && handleFile(e.target.files[0], 'assortment')} className="hidden" />
+                      {products.length > 0 && <p className="mt-2 text-sm text-amber-600 font-medium">{products.length} товаров</p>}
+                    </div>
+                  </div>
+                  <div onClick={() => fileInputRefs.sales.current?.click()} className="bg-white rounded-lg border border-gray-200 p-4 cursor-pointer hover:border-gray-400 transition-colors">
+                    <div className="flex flex-col items-center text-center">
+                      <div className="p-3 bg-emerald-50 rounded-lg text-emerald-600 mb-3"><SalesIcon /></div>
+                      <h3 className="font-medium text-gray-800 mb-1">Продажи</h3>
+                      <p className="text-xs text-gray-400">ТТ | Код | Кол-во</p>
+                      <input ref={fileInputRefs.sales} type="file" accept=".xlsx,.xls" onChange={e => e.target.files?.[0] && handleFile(e.target.files[0], 'sales')} className="hidden" />
+                      {sales.length > 0 && <p className="mt-2 text-sm text-emerald-600 font-medium">{sales.length} записей</p>}
+                    </div>
+                  </div>
+                  <div onClick={() => fileInputRefs.stocks.current?.click()} className="bg-white rounded-lg border border-gray-200 p-4 cursor-pointer hover:border-gray-400 transition-colors">
+                    <div className="flex flex-col items-center text-center">
+                      <div className="p-3 bg-sky-50 rounded-lg text-sky-600 mb-3"><StockIcon /></div>
+                      <h3 className="font-medium text-gray-800 mb-1">Остатки на ТТ</h3>
+                      <p className="text-xs text-gray-400">ТТ | Код | ... | Ост.</p>
+                      <input ref={fileInputRefs.stocks} type="file" accept=".xlsx,.xls" onChange={e => e.target.files?.[0] && handleFile(e.target.files[0], 'stocks')} className="hidden" />
+                      {stocks.length > 0 && <p className="mt-2 text-sm text-sky-600 font-medium">{stocks.length} записей</p>}
+                    </div>
+                  </div>
+                  <div onClick={() => setShowRcModal(true)} className="bg-white rounded-lg border border-gray-200 p-4 cursor-pointer hover:border-gray-400 transition-colors">
+                    <div className="flex flex-col items-center text-center">
+                      <div className="p-3 bg-orange-50 rounded-lg text-orange-600 mb-3"><WarehouseIcon /></div>
+                      <h3 className="font-medium text-gray-800 mb-1">Остатки РЦ</h3>
+                      <p className="text-xs text-gray-400">Ввести вручную</p>
+                      {Object.keys(rcStocks).length > 0 && <p className="mt-2 text-sm text-orange-600 font-medium">{Object.keys(rcStocks).length} тов.</p>}
+                    </div>
+                  </div>
+                </div>
+                <div className="bg-white rounded-lg border border-gray-200 p-3">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button onClick={createMatrix} disabled={products.length === 0} className="btn btn-success">{hasMatrix ? <RefreshIcon /> : <GridIcon />}<span>{hasMatrix ? 'Обновить матрицу' : 'Создать матрицу'}</span></button>
+                    <div className="flex items-center gap-2 bg-gray-50 px-3 py-2 rounded-md border border-gray-200">
+                      <label className="text-sm text-gray-600">Период:</label>
+                      <input type="number" value={period} onChange={e => setPeriod(parseInt(e.target.value) || 14)} className="input w-14 text-center" min="1" max="60" />
+                      <span className="text-sm text-gray-500">дней</span>
+                    </div>
+                    <label className="flex items-center gap-2 cursor-pointer bg-gray-50 px-3 py-2 rounded-md border border-gray-200 hover:bg-gray-100 transition-colors">
+                      <input type="checkbox" checked={useShelf} onChange={e => setUseShelf(e.target.checked)} className="w-4 h-4 rounded border-gray-300 text-amber-500" />
+                      <span className="text-sm text-gray-600">Учитывать полку</span>
+                    </label>
+                    <button onClick={runCalculation} disabled={loading || !hasMatrix || stocks.length === 0} className="btn btn-primary"><CalculatorIcon /><span>{loading ? 'Расчёт...' : 'Рассчитать заказ'}</span></button>
+                    <button onClick={resetAllData} className="btn btn-secondary ml-auto"><TrashIcon /><span>Сброс</span></button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Matrix Tab */}
+            {tab === 'matrix' && (
+              <div className="bg-white rounded-lg border border-gray-200 p-2">
+                <div className="flex justify-between items-center mb-2">
+                  <h2 className="text-sm font-semibold text-gray-800 flex items-center gap-2"><GridIcon />Матрица товаров</h2>
+                  <div className="flex gap-2 flex-wrap">
+                    <div className="relative"><div className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"><SearchIcon /></div><input type="text" placeholder="Поиск..." value={searchMatrix} onChange={e => setSearchMatrix(e.target.value)} className="input pl-8 w-48" /></div>
+                    <select value={filterGroup} onChange={e => setFilterGroup(e.target.value)} className="select"><option value="">Все группы</option>{allGroups.map(g => <option key={g} value={g}>{g}</option>)}</select>
+                    <input ref={fileInputRefs.matrix} type="file" accept=".xlsx,.xls" onChange={e => e.target.files?.[0] && importMatrix(e.target.files[0])} className="hidden" />
+                    <button onClick={() => fileInputRefs.matrix.current?.click()} className="btn btn-secondary"><UploadIcon /><span>Импорт</span></button>
+                    <button onClick={() => setShowAddProductModal(true)} className="btn btn-secondary"><PlusIcon /><span>Добавить товар</span></button>
+                    <button onClick={exportWeightTable} className="btn btn-secondary"><ScaleIcon /><span>Таблица весовой</span></button>
+                    <button onClick={exportMatrix} className="btn btn-success"><DownloadIcon /><span>Экспорт</span></button>
+                  </div>
+                </div>
+                <div className="table-container">
+                  <table className="table-modern">
+                    <thead>
+                      <tr>
+                        <th className="sticky-header-col-1 text-left" style={{minWidth: '100px'}}>Группа / Квант</th>
+                        <th className="sticky-header-col-2 text-left" style={{minWidth: '180px'}}>Наименование</th>
+                        <th className="text-left">Код</th>
+                        <th className="text-center">Упак.</th>
+                        <th className="text-center">Вес. код</th>
+                        {stores.map(s => <th key={s.tt} className="text-center min-w-[80px]"><div className="writing-vertical" title={s.tt}>{s.tt}</div></th>)}
+                        <th className="text-center w-10"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(groupedMatrix).sort((a, b) => a[0].localeCompare(b[0], 'ru')).map(([group, items]) => (
+                        <React.Fragment key={group}>
+                          <tr className="bg-amber-50 cursor-pointer hover:bg-amber-100 transition-colors" onClick={() => setCollapsedGroups(p => ({ ...p, [group]: !p[group] }))}>
+                            <td colSpan={6 + stores.length} className="font-semibold text-amber-800 sticky-col-1 bg-amber-50">
+                              <span className="flex items-center gap-2">
+                                {collapsedGroups[group] ? <ChevronRightIcon /> : <ChevronDownIcon />}
+                                {group} ({items.length})
+                                <span className="text-xs font-normal text-amber-600 ml-2">Квант:</span>
+                                <input 
+                                  type="number" 
+                                  value={groupQuants[group] || ''} 
+                                  onChange={e => {
+                                    const v = e.target.value;
+                                    if (v === '' || v === null) {
+                                      const { [group]: _, ...rest } = groupQuants;
+                                      setGroupQuants(rest);
+                                    } else {
+                                      setGroupQuants({ ...groupQuants, [group]: parseFloat(v) || 0 });
+                                    }
+                                  }}
+                                  onClick={e => e.stopPropagation()}
+                                  placeholder="0.5"
+                                  step="0.1"
+                                  min="0.1"
+                                  className="input w-14 text-xs py-0.5 px-1"
+                                />
+                                <span className="text-xs text-gray-500">кг</span>
+                              </span>
+                            </td>
+                          </tr>
+                          {!collapsedGroups[group] && items.map(p => (
+                            <tr key={p.code} className="hover:bg-gray-50 transition-colors">
+                              <td className="sticky-col-1 bg-white text-xs text-gray-500">{p.group || ''}</td>
+                              <td className="sticky-col-2 bg-white">{p.nomenclature}</td>
+                              <td className="font-mono text-sm">{p.code}</td>
+                              <td className="text-center">{p.packaging}</td>
+                              <td className="text-center font-mono text-xs">{p.weightCode || ''}</td>
+                              {stores.map(s => <td key={s.tt} onClick={() => toggleMatrix(p.code, s.tt)} className={`text-center cursor-pointer font-medium transition-colors ${p[s.tt] === 'ДА' ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200' : 'bg-rose-50 text-rose-600 hover:bg-rose-100'}`}>{p[s.tt] === 'ДА' ? 'Да' : 'Нет'}</td>)}
+                              <td className="text-center"><button onClick={() => removeProductFromMatrix(p.code)} className="text-red-500 hover:text-red-700 p-1" title="Удалить из матрицы"><TrashIcon /></button></td>
+                            </tr>
+                          ))}
+                        </React.Fragment>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Prices Tab */}
+            {tab === 'prices' && (
+              <div className="space-y-2">
+                {/* Верхняя панель: два блока рядом */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {/* Левая часть: Влияние наценок + Настройки */}
+                  <div className="space-y-3">
+                    {/* Влияние наценок на выручку */}
+                    <div className="bg-gradient-to-r from-violet-50 to-indigo-50 rounded-lg border border-violet-200 p-3">
+                      <div className="flex items-center gap-2 mb-2"><ChartIcon /><h2 className="text-sm font-semibold text-violet-800">Влияние наценок на выручку</h2></div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="bg-white rounded-lg p-2 border border-violet-100 text-center"><div className="text-[10px] text-gray-500">Групповых наценок</div><div className="text-xl font-bold text-violet-700">{priceStats.activeMarkups}</div></div>
+                        <div className="bg-white rounded-lg p-2 border border-violet-100 text-center"><div className="text-[10px] text-gray-500">Индивид. наценок</div><div className="text-xl font-bold text-purple-700">{priceStats.individualMarkups}</div></div>
+                        <div className="bg-white rounded-lg p-2 border border-violet-100 text-center"><div className="text-[10px] text-gray-500">Текущая выручка</div><div className="text-base font-bold text-gray-800">{priceStats.currentRevenue.toLocaleString('ru-RU')} ₽</div></div>
+                        <div className="bg-white rounded-lg p-2 border border-violet-100 text-center"><div className="text-[10px] text-gray-500">С наценками</div><div className="text-base font-bold text-gray-800">{priceStats.newRevenue.toLocaleString('ru-RU')} ₽</div></div>
+                      </div>
+                    </div>
+                    {/* Настройки наценок */}
+                    <div className="bg-white rounded-lg border border-gray-200 p-3">
+                      <h3 className="text-sm font-semibold text-gray-800 mb-3 flex items-center gap-2"><DollarIcon />Настройки наценок</h3>
+                      <div className="flex gap-3">
+                        <div className="flex-1 flex items-center justify-between bg-gray-50 px-3 py-2 rounded-lg border">
+                          <label className="text-sm font-medium text-gray-600">Наценка склада (РЦ):</label>
+                          <div className="flex items-center gap-1">
+                            <input type="number" value={warehouseMarkup} onChange={e => setWarehouseMarkup(parseFloat(e.target.value) || 0)} className="input w-16 text-center text-sm font-bold text-blue-700" step="0.1" />
+                            <span className="text-sm text-gray-500">%</span>
+                          </div>
+                        </div>
+                        <div className="flex-1 flex items-center justify-between bg-blue-50 px-3 py-2 rounded-lg border border-blue-200">
+                          <label className="text-sm font-medium text-blue-700">НДС (по умолчанию):</label>
+                          <div className="flex items-center gap-1">
+                            <input type="number" value={vatRate} onChange={e => {
+                              const newVat = parseFloat(e.target.value) || 22;
+                              setVatRate(newVat);
+                            }} className="input w-14 text-center text-sm font-bold text-blue-700" />
+                            <span className="text-sm text-gray-500">%</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  {/* Правая часть: Наценки по категориям */}
+                  <div className="bg-white rounded-lg border border-gray-200 p-3">
+                    <h3 className="text-sm font-semibold text-gray-800 mb-3">Наценки по категориям</h3>
+                    <div className="grid grid-cols-3 gap-2 max-h-[200px] overflow-auto">
+                      {allGroups.map(group => {
+                        const markup = groupMarkups[group] ?? '';
+                        return (
+                          <div key={group} className="bg-gray-50 rounded px-2 py-2 text-xs border">
+                            <div className="font-medium text-gray-700 break-words leading-tight" title={group} style={{minHeight: '32px', wordBreak: 'break-word'}}>{group}</div>
+                            <div className="flex items-center gap-1 mt-1">
+                              <input type="number" value={markup} onChange={e => { const v = e.target.value; if (v === '' || v === null) { const { [group]: _, ...rest } = groupMarkups; setGroupMarkups(rest); } else { setGroupMarkups({ ...groupMarkups, [group]: parseFloat(v) || 0 }); } }} placeholder={String(warehouseMarkup)} className="input w-14 text-center text-xs font-bold py-0.5" step="0.1" />
+                              <span className="text-gray-400 text-[10px]">%</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+                {/* Таблица цен */}
+                <div className="bg-white rounded-lg border border-gray-200 p-2">
+                  <div className="flex justify-between items-center mb-2">
+                    <h3 className="text-sm font-semibold text-gray-700">Цены товаров</h3>
+                    <div className="flex gap-2">
+                      <div className="relative"><div className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"><SearchIcon /></div><input type="text" placeholder="Поиск..." value={searchPrices} onChange={e => setSearchPrices(e.target.value)} className="input pl-8 w-48" /></div>
+                      <button onClick={exportPrices} className="btn btn-success"><DownloadIcon /><span>Экспорт</span></button>
+                    </div>
+                  </div>
+                  <div className="table-container max-h-[55vh]">
+                    <table className="table-modern">
+                      <thead>
+                        <tr>
+                          <th className="text-left sticky left-0 bg-gray-50 z-20">Группа</th>
+                          <th className="text-left">Наименование</th>
+                          <th className="text-left">Код</th>
+                          <th className="text-center bg-blue-50">НДС %</th>
+                          <th className="text-right bg-yellow-50">Вх. цена</th>
+                          <th className="text-right bg-emerald-100">Выход РЦ</th>
+                          <th className="text-right bg-green-100">Полка ₽</th>
+                          <th className="text-right bg-orange-100">Наценка %</th>
+                          <th className="text-right">Ост. РЦ</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Object.entries(groupedMatrix).sort((a, b) => a[0].localeCompare(b[0], 'ru')).map(([group, items]) => {
+                          const isCollapsed = collapsedGroups[group];
+                          return (
+                            <React.Fragment key={group}>
+                              <tr className="bg-amber-50 cursor-pointer hover:bg-amber-100 transition-colors" onClick={() => setCollapsedGroups(p => ({ ...p, [group]: !p[group] }))}>
+                                <td colSpan={9} className="font-semibold text-amber-800"><span className="flex items-center gap-2">{isCollapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}{group} ({items.length})</span></td>
+                              </tr>
+                              {!isCollapsed && items.map(p => {
+                                // Приоритет наценки: индивидуальная → групповая → глобальная
+                                const productMarkup = p.markup ?? groupMarkups[p.group || ''] ?? warehouseMarkup;
+                                const rcOutput = (p.inPrice || 0) * (1 + warehouseMarkup / 100);
+                                const shelfPrice = Math.round((p.inPrice || 0) * (1 + productMarkup / 100));
+                                const rcStock = rcStocks[p.code] || 0;
+                                const productVat = p.vat ?? vatRate;
+                                const hasIndividualMarkup = p.markup !== undefined && p.markup !== null;
+                                return (
+                                  <tr key={p.code} className="hover:bg-gray-50 transition-colors">
+                                    <td className="sticky left-0 bg-white text-xs text-gray-500">{p.group || ''}</td>
+                                    <td className="text-sm">{p.nomenclature}</td>
+                                    <td className="font-mono text-sm">{p.code}</td>
+                                    <td className="text-center bg-blue-50">
+                                      <input type="number" value={productVat} onChange={e => updateProduct(p.code, 'vat', parseFloat(e.target.value) ?? vatRate)} className="input w-12 text-center text-xs font-bold text-blue-700" />
+                                    </td>
+                                    <td className="text-right bg-yellow-50"><input type="number" value={p.inPrice || 0} onChange={e => updateProduct(p.code, 'inPrice', parseFloat(e.target.value) || 0)} className="input w-20 text-right text-xs font-mono" min="0" step="0.01" /></td>
+                                    <td className="text-right bg-emerald-100 font-mono text-sm font-medium text-emerald-700">{rcOutput.toFixed(2)}</td>
+                                    <td className="text-right bg-green-100 font-mono text-sm font-bold text-green-700">{shelfPrice}</td>
+                                    <td className="text-right bg-orange-100">
+                                      <input 
+                                        type="number" 
+                                        value={hasIndividualMarkup ? p.markup : (groupMarkups[p.group || ''] ?? '')} 
+                                        onChange={e => { 
+                                          const v = e.target.value;
+                                          if (v === '' || v === null) {
+                                            // Удаляем индивидуальную наценку
+                                            updateProduct(p.code, 'markup', undefined);
+                                          } else {
+                                            // Устанавливаем индивидуальную наценку
+                                            updateProduct(p.code, 'markup', parseFloat(v) || 0);
+                                          }
+                                        }} 
+                                        placeholder={String(groupMarkups[p.group || ''] ?? warehouseMarkup)} 
+                                        className={`input w-14 text-right text-xs font-bold ${hasIndividualMarkup ? 'text-purple-700 bg-purple-50' : 'text-orange-700'}`} 
+                                        step="0.1" 
+                                      />
+                                    </td>
+                                    <td className={`text-right font-mono text-sm ${rcStock > 0 ? 'text-emerald-600' : 'text-rose-500'}`}>{rcStock}</td>
+                                  </tr>
+                                );
+                              })}
+                            </React.Fragment>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Shelf Tab */}
+            {tab === 'shelf' && (
+              <div className="bg-white rounded-lg border border-gray-200 p-2">
+                <div className="flex justify-between items-center mb-2">
+                  <div>
+                    <h2 className="text-sm font-semibold text-gray-800 flex items-center gap-2"><RulerIcon />Индивидуальные значения полки по ТТ</h2>
+                    <p className="text-xs text-gray-500">Пустое поле = значение по умолчанию (ШТ: 4, КГ: 1)</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <div className="relative"><div className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"><SearchIcon /></div><input type="text" placeholder="Поиск..." value={searchShelf} onChange={e => setSearchShelf(e.target.value)} className="input pl-8 w-48" /></div>
+                    <label className="btn btn-secondary cursor-pointer"><UploadIcon /><span>Импорт</span><input type="file" accept=".xlsx,.xls" onChange={e => e.target.files?.[0] && importShelf(e.target.files[0])} className="hidden" /></label>
+                    <button onClick={exportShelf} className="btn btn-success"><DownloadIcon /><span>Экспорт</span></button>
+                    <button onClick={() => { if (confirm('Очистить все индивидуальные значения полки?')) { setShelfValues({}); localStorage.removeItem(KEYS.SHELF_VALUES); } }} className="btn btn-secondary"><TrashIcon /><span>Очистить</span></button>
+                  </div>
+                </div>
+                <div className="table-container">
+                  <table className="table-modern">
+                    <thead>
+                      <tr>
+                        <th className="sticky-header-col-1 text-left">Группа</th>
+                        <th className="sticky-header-col-2 text-left">Наименование</th>
+                        <th className="text-left">Код</th>
+                        <th className="text-center">Упак.</th>
+                        <th className="text-center bg-gray-100">По умолч.</th>
+                        {stores.map(s => <th key={s.tt} className="text-center min-w-[80px]"><div className="writing-vertical" title={s.tt}>{s.tt}</div></th>)}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(groupedShelf).sort((a, b) => a[0].localeCompare(b[0], 'ru')).map(([group, items]) => (
+                        <React.Fragment key={group}>
+                          <tr className="bg-amber-50 cursor-pointer hover:bg-amber-100 transition-colors" onClick={() => setCollapsedGroups(p => ({ ...p, [group]: !p[group] }))}>
+                            <td colSpan={5 + stores.length} className="font-semibold text-amber-800"><span className="flex items-center gap-2">{collapsedGroups[group] ? <ChevronRightIcon /> : <ChevronDownIcon />}{group} ({items.length})</span></td>
+                          </tr>
+                          {!collapsedGroups[group] && items.map(p => (
+                            <tr key={p.code} className="hover:bg-gray-50 transition-colors">
+                              <td className="sticky-col-1 bg-white text-xs text-gray-500">{p.group || ''}</td>
+                              <td className="sticky-col-2 bg-white text-sm">{p.nomenclature}</td>
+                              <td className="font-mono text-sm">{p.code}</td>
+                              <td className="text-center">{p.packaging}</td>
+                              <td className="text-center bg-gray-100 font-medium">{p.packaging === 'КГ' ? 1 : 4}</td>
+                              {stores.map(s => {
+                                const key = `${p.code}_${s.tt}`;
+                                const current = shelfValues[key];
+                                const isCustom = current !== undefined;
+                                return (
+                                  <td key={s.tt} className={`text-center ${isCustom ? 'bg-yellow-50' : ''}`}>
+                                    <input type="number" value={current ?? ''} onChange={e => updateShelfValue(p.code, s.tt, e.target.value)} placeholder={p.packaging === 'КГ' ? '1' : '4'} className="input w-12 text-center text-xs" min="0" step={p.packaging === 'КГ' ? '0.5' : '1'} />
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </React.Fragment>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Results Tab */}
+            {tab === 'results' && (
+              <div className="space-y-2">
+                <div className="bg-white rounded-lg border border-gray-200 p-2">
+                  <div className="flex flex-wrap justify-between items-center gap-2">
+                    <div className="flex flex-wrap gap-2">
+                      <div className="bg-sky-100 text-sky-800 rounded-md px-3 py-1.5 min-w-[80px]"><div className="text-[10px] opacity-70">ПОЗИЦИЙ</div><div className="text-lg font-bold">{filteredResults.length}</div></div>
+                      <div className="bg-amber-100 text-amber-800 rounded-md px-3 py-1.5 min-w-[80px]"><div className="text-[10px] opacity-70">НЕТ В МАТРИЦЕ</div><div className="text-lg font-bold">{filteredResults.filter(r => r.orderStatus === 'нет в матрице').length}</div></div>
+                      <div className="bg-rose-100 text-rose-800 rounded-md px-3 py-1.5 min-w-[80px]"><div className="text-[10px] opacity-70">НЕТ НА РЦ</div><div className="text-lg font-bold">{filteredResults.filter(r => r.orderStatus === 'нет на РЦ').length}</div></div>
+                      <div className="bg-emerald-100 text-emerald-800 rounded-md px-3 py-1.5 min-w-[80px] cursor-pointer hover:bg-emerald-200 transition-colors" onClick={() => setShowSumModal(true)}><div className="text-[10px] opacity-70">СУММА</div><div className="text-lg font-bold">{stats.orderSum.toLocaleString('ru-RU')} ₽</div></div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <div className="relative"><div className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"><SearchIcon /></div><input type="text" placeholder="Поиск..." value={searchResults} onChange={e => setSearchResults(e.target.value)} className="input pl-8 w-40" /></div>
+                      <select value={filterGroup} onChange={e => setFilterGroup(e.target.value)} className="select text-xs">
+                        <option value="">Все категории</option>
+                        {allGroups.map(g => <option key={g} value={g}>{g}</option>)}
+                      </select>
+                      <select value={filterTT} onChange={e => setFilterTT(e.target.value)} className="select text-xs">
+                        <option value="">Все ТТ</option>
+                        {stores.map(s => <option key={s.tt} value={s.tt}>{s.tt}</option>)}
+                      </select>
+                      <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="select text-xs"><option value="">Все статусы</option><option value="orders">С заказом</option><option value="noMatrix">Нет в матрице</option><option value="noRC">Нет на РЦ</option><option value="hasRC">Есть на РЦ</option><option value="lowRC">Мало на РЦ</option></select>
+                    </div>
+                  </div>
+                </div>
+                <div className="bg-white rounded-lg border border-gray-200 p-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button onClick={() => setShowMassEditModal(true)} className="btn btn-secondary">Массовое ред.</button>
+                    <button onClick={() => massUpdateOrders('recalc')} className="btn btn-secondary">Пересчитать</button>
+                    <button onClick={() => massUpdateOrders('clear')} className="btn btn-secondary">Очистить</button>
+                    <div className="ml-auto flex gap-2">
+                      <button onClick={() => setShowExportModal(true)} className="btn btn-primary"><DownloadIcon /><span>По ТТ</span></button>
+                      <button onClick={exportExcel} className="btn btn-success"><DownloadIcon /><span>Экспорт</span></button>
+                    </div>
+                  </div>
+                </div>
+                <div className="bg-white rounded-lg border border-gray-200 p-2">
+                  <div className="table-container">
+                    <table className="table-modern">
+                      <thead>
+                        <tr>
+                          <th className="text-left sticky left-0 bg-gray-50 z-20">Наименование</th>
+                          <th className="text-left">Код</th>
+                          <th className="text-right">Остаток</th>
+                          <th className="text-right cursor-pointer hover:bg-gray-100" onClick={() => alert('Нажмите на значение продаж для детализации')}>Продажи ℹ</th>
+                          <th className="text-center">Дней</th>
+                          <th className="text-right">Полка</th>
+                          <th className="text-right bg-emerald-100 min-w-[80px]">Заказ</th>
+                          <th className="text-center">Упак.</th>
+                          <th className="text-center">Статус</th>
+                          <th className="text-right">Ост. РЦ</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Object.entries(groupedResults).map(([tt, items]) => (
+                          <React.Fragment key={tt}>
+                            <tr className="bg-amber-50 cursor-pointer hover:bg-amber-100 transition-colors" onClick={() => setCollapsedTT(p => ({ ...p, [tt]: !p[tt] }))}>
+                              <td colSpan={10} className="font-semibold text-amber-800"><span className="flex items-center gap-2">{collapsedTT[tt] ? <ChevronRightIcon /> : <ChevronDownIcon />}<MapPinIcon />{tt}<span className="font-normal text-amber-600">({items.length} поз.)</span></span></td>
+                            </tr>
+                            {!collapsedTT[tt] && items.map((r, idx) => (
+                              <tr key={idx} className={`${r.order > 0 ? 'bg-emerald-50' : r.orderStatus.includes('нет') ? 'bg-rose-50' : ''} transition-colors`}>
+                                <td className="sticky left-0 bg-white">{r.nomenclature}</td>
+                                <td className="font-mono text-sm">{r.code}</td>
+                                <td className="text-right">{r.currentStock.toFixed(2)}</td>
+                                <td className="text-right cursor-pointer hover:bg-blue-100 underline decoration-dotted text-blue-700" onClick={() => { setSelectedResult(r); setShowDetailModal(true); }}>{r.sales.toFixed(2)}</td>
+                                <td className="text-center text-xs text-gray-600">{r.daysPresent || '-'}</td>
+                                <td className="text-right">{r.shelf ?? ''}</td>
+                                <td className="bg-emerald-100"><input type="number" value={r.order} onChange={e => updateResultOrder(r.tt, r.code, e.target.value)} className="input w-20 text-right font-bold" min="0" step={r.packaging === 'КГ' ? '0.5' : '1'} /></td>
+                                <td className="text-center">{r.packaging}</td>
+                                <td className={`text-center text-xs font-medium px-2 py-1 rounded ${r.orderStatus === 'нет в матрице' ? 'bg-rose-100 text-rose-700' : r.orderStatus === 'нет на РЦ' ? 'bg-amber-100 text-amber-700' : r.order > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-600'}`}>{r.orderStatus}</td>
+                                <td className={`text-right font-medium ${r.rcStock > 0 ? 'text-emerald-600' : 'text-rose-500'}`}>{r.rcStock}</td>
+                              </tr>
+                            ))}
+                          </React.Fragment>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* RC Tab */}
+            {tab === 'rc' && (
+              <div className="space-y-2">
+                <div className="bg-white rounded-lg border border-gray-200 p-2">
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <h2 className="text-sm font-semibold text-gray-800 flex items-center gap-2"><WarehouseIcon />Расчёт заказа для РЦ (30 дней)</h2>
+                      <p className="text-xs text-gray-500">На основе суммарных продаж всех ТТ</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={calcRc} className="btn btn-primary"><CalculatorIcon /><span>Рассчитать</span></button>
+                      <button onClick={exportRcOrder} disabled={rcResults.length === 0} className="btn btn-success"><DownloadIcon /><span>Экспорт</span></button>
+                    </div>
+                  </div>
+                </div>
+                {/* Дни расчёта по группам */}
+                {Object.keys(matrix).length > 0 && (
+                  <div className="bg-white rounded-lg border border-gray-200 p-2">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-xs font-semibold text-gray-700">Дни расчёта по группам:</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        {[...new Set(Object.values(matrix).map(p => p.group || '').filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ru')).map(group => (
+                          <div key={group} className="flex items-center gap-1 bg-gray-50 rounded px-2 py-1">
+                            <span className="text-xs text-gray-600">{group}:</span>
+                            <input type="number" value={groupDays[group] || ''} placeholder="30"
+                              onChange={e => setGroupDays(prev => {
+                                const val = parseInt(e.target.value) || 0;
+                                const updated = { ...prev };
+                                if (val > 0) updated[group] = val;
+                                else delete updated[group];
+                                return updated;
+                              })}
+                              className="input w-14 text-center text-xs" min="1" />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                )}
+                {rcResults.length > 0 && (
+                  <>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="bg-sky-100 rounded-lg p-2 border border-sky-200"><div className="text-xs text-gray-600">Товаров</div><div className="text-xl font-bold text-sky-700">{rcResults.length}</div></div>
+                      <div className="bg-emerald-100 rounded-lg p-2 border border-emerald-200"><div className="text-xs text-gray-600">К заказу</div><div className="text-xl font-bold text-emerald-700">{rcResults.filter(r => r.order > 0).length}</div></div>
+                      <div className="bg-violet-100 rounded-lg p-2 border border-violet-200"><div className="text-xs text-gray-600">Сумма</div><div className="text-xl font-bold text-violet-700">{rcResults.filter(r => r.order > 0).reduce((s, r) => s + r.order * r.inPrice, 0).toLocaleString('ru-RU')} ₽</div></div>
+                    </div>
+                    <div className="bg-white rounded-lg border border-gray-200 p-2">
+                      <div className="table-container">
+                        <table className="table-modern">
+                          <thead>
+                            <tr>
+                              <th className="text-left sticky left-0 bg-gray-50">Наименование</th>
+                              <th className="text-left">Код</th>
+                              <th className="text-center">Упак.</th>
+                              <th className="text-right">Ост. РЦ</th>
+                              <th className="text-right">Продажи</th>
+                              <th className="text-right bg-amber-50">Потр. 30д</th>
+                              <th className="text-right bg-emerald-100">Заказ РЦ</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {rcResults.map((r, idx) => (
+                              <tr key={idx} className={`${r.order > 0 ? 'bg-emerald-50' : r.rcStock === 0 ? 'bg-rose-50' : ''} transition-colors`}>
+                                <td className="sticky left-0 bg-white">{r.group && <span className="text-gray-400 text-xs mr-1">[{r.group}]</span>}{r.nomenclature}</td>
+                                <td className="font-mono text-sm">{r.code}</td>
+                                <td className="text-center">{r.packaging}</td>
+                                <td className={`text-right ${r.rcStock === 0 ? 'text-rose-600 font-medium' : ''}`}>{r.rcStock}</td>
+                                <td className="text-right">{r.totalSales.toFixed(2)}</td>
+                                <td className="text-right bg-amber-50">{r.monthlyNeed}</td>
+                                <td className="bg-emerald-100"><input type="number" value={r.order} onChange={e => updateRcOrder(r.code, e.target.value)} className="input w-14 text-right font-bold" min="0" step={r.packaging === 'КГ' ? '0.5' : '1'} /></td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* Analytics Tab */}
+            {tab === 'analytics' && (
+              <div className="space-y-2">
+                {/* Фильтры */}
+                <div className="bg-white rounded-lg border border-gray-200 p-3">
+                  <div className="flex flex-wrap gap-3 items-center">
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-gray-500">Категория:</label>
+                      <select value={analyticsGroup} onChange={e => setAnalyticsGroup(e.target.value)} className="select text-xs">
+                        <option value="">Все категории</option>
+                        {allGroups.map(g => <option key={g} value={g}>{g}</option>)}
+                      </select>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-gray-500">ТТ:</label>
+                      <select value={analyticsTT} onChange={e => setAnalyticsTT(e.target.value)} className="select text-xs">
+                        <option value="">Все ТТ</option>
+                        {stores.map(s => <option key={s.tt} value={s.tt}>{s.tt}</option>)}
+                      </select>
+                    </div>
+                    <button onClick={() => { setAnalyticsGroup(''); setAnalyticsTT(''); }} className="btn btn-secondary text-xs py-1">
+                      <RefreshIcon /><span>Сброс</span>
+                    </button>
+                    <button onClick={exportAnalytics} className="btn btn-success text-xs py-1 ml-auto">
+                      <DownloadIcon /><span>Экспорт в Excel</span>
+                    </button>
+                    <div className="text-xs text-gray-400">
+                      {analyticsData.abcItems.length} тов., {analyticsData.totalSales.toFixed(0)} прод.
+                    </div>
+                  </div>
+                </div>
+
+                {/* KPI карточки */}
+                <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
+                  <div className="bg-sky-100 rounded-lg p-2 border border-sky-200">
+                    <div className="text-[10px] text-sky-600 uppercase">Товаров</div>
+                    <div className="text-lg font-bold text-sky-700">{stats.products}</div>
+                  </div>
+                  <div className="bg-emerald-100 rounded-lg p-2 border border-emerald-200">
+                    <div className="text-[10px] text-emerald-600 uppercase">Класс A</div>
+                    <div className="text-lg font-bold text-emerald-700">{analyticsData.countA}</div>
+                  </div>
+                  <div className="bg-amber-100 rounded-lg p-2 border border-amber-200">
+                    <div className="text-[10px] text-amber-600 uppercase">Класс B</div>
+                    <div className="text-lg font-bold text-amber-700">{analyticsData.countB}</div>
+                  </div>
+                  <div className="bg-rose-100 rounded-lg p-2 border border-rose-200">
+                    <div className="text-[10px] text-rose-600 uppercase">Класс C</div>
+                    <div className="text-lg font-bold text-rose-700">{analyticsData.countC}</div>
+                  </div>
+                  <div className="bg-orange-100 rounded-lg p-2 border border-orange-200">
+                    <div className="text-[10px] text-orange-600 uppercase">Зависших</div>
+                    <div className="text-lg font-bold text-orange-700">{analyticsData.stuckItems.length}</div>
+                  </div>
+                  <div className="bg-violet-100 rounded-lg p-2 border border-violet-200">
+                    <div className="text-[10px] text-violet-600 uppercase">Плохие</div>
+                    <div className="text-lg font-bold text-violet-700">{analyticsData.lowSellers.length}</div>
+                  </div>
+                </div>
+
+                {/* Графики */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <div className="bg-white rounded-lg border border-gray-200 p-3">
+                    <h3 className="text-sm font-semibold text-gray-700 mb-2">📊 Продажи по категориям</h3>
+                    <div className="h-48"><canvas ref={chartRef1}></canvas></div>
+                  </div>
+                  <div className="bg-white rounded-lg border border-gray-200 p-3">
+                    <h3 className="text-sm font-semibold text-gray-700 mb-2">🥧 ABC распределение</h3>
+                    <div className="h-48"><canvas ref={chartRef2}></canvas></div>
+                  </div>
+                  <div className="bg-white rounded-lg border border-gray-200 p-3">
+                    <h3 className="text-sm font-semibold text-gray-700 mb-2">🏆 Топ-10 товаров</h3>
+                    <div className="h-48"><canvas ref={chartRef3}></canvas></div>
+                  </div>
+                  <div className="bg-white rounded-lg border border-gray-200 p-3">
+                    <h3 className="text-sm font-semibold text-gray-700 mb-2">🏪 Продажи по ТТ</h3>
+                    <div className="h-48"><canvas ref={chartRef4}></canvas></div>
+                  </div>
+                </div>
+
+                {/* ABC таблица */}
+                <div className="bg-white rounded-lg border border-gray-200 p-3">
+                  <h3 className="text-sm font-semibold text-gray-700 mb-2">📈 ABC-анализ товаров</h3>
+                  <div className="flex gap-4 mb-2 text-xs">
+                    <div className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-emerald-500"></span><span><b>A</b> — 80% продаж</span></div>
+                    <div className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-amber-500"></span><span><b>B</b> — 15% продаж</span></div>
+                    <div className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-rose-500"></span><span><b>C</b> — 5% продаж</span></div>
+                  </div>
+                  <div className="table-container max-h-60">
+                    <table className="table-modern text-xs">
+                      <thead>
+                        <tr>
+                          <th className="text-left bg-gray-50 w-10">#</th>
+                          <th className="text-left bg-gray-50">Наименование</th>
+                          <th className="text-left bg-gray-50">Группа</th>
+                          <th className="text-right bg-gray-50">Продажи</th>
+                          <th className="text-right bg-gray-50">Накопит.</th>
+                          <th className="text-right bg-gray-50">%</th>
+                          <th className="text-center bg-gray-50 w-12">ABC</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {analyticsData.abcItems.slice(0, 50).map((item, idx) => (
+                          <tr key={item.code} className={item.abcClass === 'A' ? 'bg-emerald-50' : item.abcClass === 'B' ? 'bg-amber-50' : 'bg-rose-50'}>
+                            <td className="text-gray-400">{idx + 1}</td>
+                            <td className="truncate max-w-[200px]" title={item.name}>{item.name}</td>
+                            <td className="text-gray-500 truncate">{item.group}</td>
+                            <td className="text-right font-medium">{item.sales.toFixed(1)}</td>
+                            <td className="text-right text-gray-500">{item.cumulative.toFixed(1)}</td>
+                            <td className="text-right">{item.cumulativePercent.toFixed(1)}%</td>
+                            <td className="text-center">
+                              <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${item.abcClass === 'A' ? 'bg-emerald-500 text-white' : item.abcClass === 'B' ? 'bg-amber-500 text-white' : 'bg-rose-500 text-white'}`}>
+                                {item.abcClass}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Проблемные товары */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {/* Зависшие товары */}
+                  <div className="bg-white rounded-lg border border-gray-200 p-3">
+                    <h3 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                      <span className="text-orange-500">⚠️</span>
+                      Зависшие товары ({analyticsData.stuckItems.length})
+                      <span className="text-[10px] text-gray-400 font-normal">(остаток есть, продаж нет)</span>
+                    </h3>
+                    <div className="space-y-1 max-h-48 overflow-auto">
+                      {analyticsData.stuckItems.slice(0, 20).map((item, idx) => (
+                        <div key={idx} className="flex justify-between items-center py-1 border-b border-gray-50 text-xs">
+                          <div className="truncate flex-1">
+                            <span className="text-gray-400 mr-1">{idx + 1}.</span>
+                            <span className="font-medium">{item.name}</span>
+                            <span className="text-gray-400 ml-1 truncate max-w-[100px] inline-block">({item.tt})</span>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-orange-600 font-medium">{item.stock.toFixed(1)}</span>
+                            <span className="text-gray-400">{item.days}дн</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Плохо продающиеся */}
+                  <div className="bg-white rounded-lg border border-gray-200 p-3">
+                    <h3 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                      <span className="text-red-500">📉</span>
+                      Плохо продающиеся ({analyticsData.lowSellers.length})
+                      <span className="text-[10px] text-gray-400 font-normal">(ср. &lt; 0.5/день)</span>
+                    </h3>
+                    <div className="space-y-1 max-h-48 overflow-auto">
+                      {analyticsData.lowSellers.slice(0, 20).map((item, idx) => (
+                        <div key={idx} className="flex justify-between items-center py-1 border-b border-gray-50 text-xs">
+                          <div className="truncate flex-1">
+                            <span className="text-gray-400 mr-1">{idx + 1}.</span>
+                            <span className="font-medium">{item.name}</span>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-red-600 font-medium">{item.avgPerDay.toFixed(2)}/дн</span>
+                            <span className="text-gray-400">{item.totalSales.toFixed(0)} шт</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Modals */}
+          {showRcModal && (
+            <div className="modal-overlay" onClick={() => setShowRcModal(false)}>
+              <div className="modal-content" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2"><WarehouseIcon />Остатки на РЦ</h3>
+                  <button onClick={() => setShowRcModal(false)} className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100"><CloseIcon /></button>
+                </div>
+                <p className="text-sm text-gray-500 mb-3">Формат: Наименование Код Остаток (по строке)</p>
+                <textarea value={rcInputData} onChange={e => setRcInputData(e.target.value)} placeholder="Сникерс 20986 50" className="w-full h-40 px-3 py-2 border border-gray-200 rounded-md font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500" />
+                <div className="flex gap-2 mt-4">
+                  <button onClick={() => setShowRcModal(false)} className="btn btn-secondary flex-1">Отмена</button>
+                  <button onClick={parseRcInput} className="btn btn-primary flex-1">OK</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showExportModal && (
+            <div className="modal-overlay" onClick={() => setShowExportModal(false)}>
+              <div className="modal-content" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-gray-800">Экспорт по ТТ</h3>
+                  <button onClick={() => setShowExportModal(false)} className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100"><CloseIcon /></button>
+                </div>
+                <div className="max-h-64 overflow-auto space-y-1 mb-4">
+                  <label className="flex items-center gap-2 p-2 hover:bg-gray-50 rounded cursor-pointer">
+                    <input type="checkbox" checked={selectedTT.length === 0} onChange={() => setSelectedTT([])} className="w-4 h-4 rounded border-gray-300 text-amber-500" />
+                    <span className="text-sm">Все ТТ</span>
+                  </label>
+                  {Array.from(new Set(results.map(r => r.tt))).map(tt => (
+                    <label key={tt} className="flex items-center gap-2 p-2 hover:bg-gray-50 rounded cursor-pointer">
+                      <input type="checkbox" checked={selectedTT.includes(tt)} onChange={() => { setSelectedTT(prev => prev.includes(tt) ? prev.filter(t => t !== tt) : [...prev, tt]); }} className="w-4 h-4 rounded border-gray-300 text-amber-500" />
+                      <span className="text-sm">{tt}</span>
+                    </label>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setShowExportModal(false)} className="btn btn-secondary flex-1">Отмена</button>
+                  <button onClick={() => { exportByTT(selectedTT); setShowExportModal(false); }} className="btn btn-success flex-1">Экспорт</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showMassEditModal && (
+            <div className="modal-overlay" onClick={() => setShowMassEditModal(false)}>
+              <div className="modal-content" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-gray-800">Массовое редактирование</h3>
+                  <button onClick={() => setShowMassEditModal(false)} className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100"><CloseIcon /></button>
+                </div>
+                <div className="space-y-3">
+                  <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                    <label className="text-sm text-gray-700">Умножить заказы на:</label>
+                    <input type="number" value={massMultiplyValue} onChange={e => setMassMultiplyValue(parseFloat(e.target.value) || 1)} className="input w-20 text-center" step="0.1" min="0.1" max="10" />
+                    <button onClick={() => { massUpdateOrders('multiply', massMultiplyValue); setShowMassEditModal(false); }} className="btn btn-primary">Применить</button>
+                  </div>
+                </div>
+                <div className="flex gap-2 mt-4">
+                  <button onClick={() => setShowMassEditModal(false)} className="btn btn-secondary flex-1">Закрыть</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showAddProductModal && (
+            <div className="modal-overlay" onClick={() => setShowAddProductModal(false)}>
+              <div className="modal-content" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2"><PlusIcon />Добавить товар</h3>
+                  <button onClick={() => setShowAddProductModal(false)} className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100"><CloseIcon /></button>
+                </div>
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-gray-500 block mb-1">Код товара *</label>
+                      <input type="text" value={newProduct.code} onChange={e => setNewProduct(prev => ({ ...prev, code: e.target.value }))} className="input w-full" placeholder="12345" />
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-500 block mb-1">Наименование *</label>
+                      <input type="text" value={newProduct.nomenclature} onChange={e => setNewProduct(prev => ({ ...prev, nomenclature: e.target.value }))} className="input w-full" placeholder="Наименование товара" />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-gray-500 block mb-1">Группа</label>
+                      <input type="text" value={newProduct.group} onChange={e => setNewProduct(prev => ({ ...prev, group: e.target.value }))} className="input w-full" placeholder="Название группы" />
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-500 block mb-1">Упаковка</label>
+                      <select value={newProduct.packaging} onChange={e => setNewProduct(prev => ({ ...prev, packaging: e.target.value }))} className="select w-full">
+                        <option value="ШТ">ШТ</option>
+                        <option value="КГ">КГ</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-gray-500 block mb-1">Код весовой</label>
+                      <input type="text" value={newProduct.weightCode} onChange={e => setNewProduct(prev => ({ ...prev, weightCode: e.target.value }))} className="input w-full" placeholder="Код для весового товара" />
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-500 block mb-1">Входная цена</label>
+                      <input type="number" value={newProduct.inPrice} onChange={e => setNewProduct(prev => ({ ...prev, inPrice: parseFloat(e.target.value) || 0 }))} className="input w-full" step="0.01" min="0" />
+                    </div>
+                  </div>
+                </div>
+                <div className="flex gap-2 mt-4">
+                  <button onClick={() => setShowAddProductModal(false)} className="btn btn-secondary flex-1">Отмена</button>
+                  <button onClick={addNewProduct} className="btn btn-primary flex-1"><PlusIcon /><span>Добавить</span></button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Detail Modal - детализация расчёта */}
+          {showDetailModal && selectedResult && (
+            <div className="modal-overlay" onClick={() => setShowDetailModal(false)}>
+              <div className="modal-content" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-gray-800">Детализация расчёта</h3>
+                  <button onClick={() => setShowDetailModal(false)} className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100"><CloseIcon /></button>
+                </div>
+                <div className="space-y-2 text-sm">
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <div className="text-xs text-gray-500 mb-1">Товар</div>
+                    <div className="font-medium">{selectedResult.nomenclature}</div>
+                    <div className="text-xs text-gray-500">Код: {selectedResult.code}</div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="bg-sky-50 rounded-lg p-3 border border-sky-200">
+                      <div className="text-xs text-gray-500">Текущий остаток</div>
+                      <div className="text-xl font-bold text-sky-700">{selectedResult.currentStock.toFixed(2)} {selectedResult.packaging}</div>
+                    </div>
+                    <div className="bg-violet-50 rounded-lg p-3 border border-violet-200">
+                      <div className="text-xs text-gray-500">Продажи за период</div>
+                      <div className="text-xl font-bold text-violet-700">{selectedResult.sales.toFixed(2)} {selectedResult.packaging}</div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="bg-amber-50 rounded-lg p-3 border border-amber-200">
+                      <div className="text-xs text-gray-500">Дней на остатках</div>
+                      <div className="text-xl font-bold text-amber-700">{selectedResult.daysPresent || '-'}</div>
+                    </div>
+                    <div className="bg-blue-50 rounded-lg p-3 border border-blue-200">
+                      <div className="text-xs text-gray-500">Ср. продажи в день</div>
+                      <div className="text-xl font-bold text-blue-700">{selectedResult.avgSalesPerDay?.toFixed(3) || '-'} {selectedResult.packaging}</div>
+                    </div>
+                  </div>
+                  <div className="bg-emerald-50 rounded-lg p-3 border border-emerald-200">
+                    <div className="text-xs text-gray-500 mb-1">К заказу</div>
+                    <div className="text-2xl font-bold text-emerald-700">{selectedResult.order} {selectedResult.packaging}</div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      {selectedResult.shelf != null 
+                        ? `Полка: ${selectedResult.shelf}` 
+                        : 'Полка: не учитывается'}
+                    </div>
+                    {(() => {
+                      const avgSales = selectedResult.avgSalesPerDay || 0;
+                      const stock = selectedResult.currentStock;
+                      const shelf = selectedResult.shelf || 0;
+                      const prelim = stock - (avgSales * period) - shelf;
+                      return (
+                        <div className="mt-2 p-2 bg-white/60 rounded text-[10px] text-gray-600 font-mono">
+                          <div>Остаток - (Ср.прод × Период) - Полка = Предв.</div>
+                          <div>{stock.toFixed(2)} - ({avgSales.toFixed(3)} × {period}) - {shelf} = {prelim.toFixed(2)}</div>
+                          {prelim > 1 && <div className="text-emerald-600">Предв. &gt; 1 → заказ = 0</div>}
+                          {prelim < 0 && <div className="text-amber-600">Предв. &lt; 0 → заказ = |{Math.abs(prelim).toFixed(2)}| ≈ {selectedResult.order}</div>}
+                          {prelim >= 0 && prelim <= 1 && <div className="text-blue-600">0 ≤ Предв. ≤ 1 → заказ = 1</div>}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+                <div className="flex gap-2 mt-4">
+                  <button onClick={() => setShowDetailModal(false)} className="btn btn-secondary flex-1">Закрыть</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Sum Modal - детализация суммы по ТТ */}
+          {showSumModal && (
+            <div className="modal-overlay" onClick={() => setShowSumModal(false)}>
+              <div className="modal-content max-w-lg" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-gray-800">Сумма заказов по ТТ</h3>
+                  <button onClick={() => setShowSumModal(false)} className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100"><CloseIcon /></button>
+                </div>
+                <div className="space-y-2 max-h-96 overflow-auto">
+                  {Object.entries(
+                    filteredResults.filter(r => r.order > 0).reduce((acc, r) => {
+                      if (!acc[r.tt]) acc[r.tt] = 0;
+                      const product = Object.values(matrix).find(p => normCode(p.code) === r.code);
+                      const price = product?.inPrice || 0;
+                      acc[r.tt] += r.order * price;
+                      return acc;
+                    }, {})
+                  ).sort((a, b) => b[1] - a[1]).map(([tt, sum]) => (
+                    <div key={tt} className="flex justify-between items-center p-2 bg-gray-50 rounded-lg">
+                      <span className="text-sm font-medium truncate flex-1 mr-2" title={tt}>{tt}</span>
+                      <span className="text-sm font-bold text-emerald-700">{sum.toLocaleString('ru-RU')} ₽</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex gap-2 mt-4">
+                  <button onClick={() => setShowSumModal(false)} className="btn btn-secondary flex-1">Закрыть</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Product Detail Modal - продажи товара по ТТ */}
+          {showProductDetailModal && selectedProductAnalytics && (
+            <div className="modal-overlay" onClick={() => setShowProductDetailModal(false)}>
+              <div className="modal-content max-w-2xl" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-gray-800">Продажи по ТТ</h3>
+                  <button onClick={() => setShowProductDetailModal(false)} className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100"><CloseIcon /></button>
+                </div>
+                {(() => {
+                  const product = Object.values(matrix).find(p => p.code === selectedProductAnalytics);
+                  const productSales = sales.filter(s => s.code === selectedProductAnalytics);
+                  const productStocks = stocks.filter(s => s.code === selectedProductAnalytics);
+                  
+                  return (
+                    <div className="space-y-3">
+                      <div className="bg-gray-50 rounded-lg p-3">
+                        <div className="font-medium">{product?.nomenclature || 'Товар не найден'}</div>
+                        <div className="text-xs text-gray-500">Код: {selectedProductAnalytics} | Группа: {product?.group || '-'}</div>
+                      </div>
+                      
+                      <div className="grid grid-cols-3 gap-2">
+                        <div className="bg-sky-50 rounded-lg p-2 text-center border border-sky-200">
+                          <div className="text-[10px] text-sky-600">Всего продаж</div>
+                          <div className="text-lg font-bold text-sky-700">{productSales.reduce((s, x) => s + x.quantity, 0).toFixed(1)}</div>
+                        </div>
+                        <div className="bg-emerald-50 rounded-lg p-2 text-center border border-emerald-200">
+                          <div className="text-[10px] text-emerald-600">ТТ с продажами</div>
+                          <div className="text-lg font-bold text-emerald-700">{new Set(productSales.map(s => s.tt)).size}</div>
+                        </div>
+                        <div className="bg-amber-50 rounded-lg p-2 text-center border border-amber-200">
+                          <div className="text-[10px] text-amber-600">Остаток РЦ</div>
+                          <div className="text-lg font-bold text-amber-700">{rcStocks[selectedProductAnalytics] || 0}</div>
+                        </div>
+                      </div>
+                      
+                      <div className="max-h-64 overflow-auto">
+                        <table className="table-modern text-xs">
+                          <thead>
+                            <tr>
+                              <th className="text-left bg-gray-50">ТТ</th>
+                              <th className="text-right bg-gray-50">Продажи</th>
+                              <th className="text-right bg-gray-50">Остаток</th>
+                              <th className="text-right bg-gray-50">Дней</th>
+                              <th className="text-right bg-gray-50">Ср/день</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {stores.map(store => {
+                              const ttSales = productSales.filter(s => s.tt === store.tt);
+                              const totalSales = ttSales.reduce((sum, s) => sum + s.quantity, 0);
+                              const stockData = productStocks.find(s => s.tt === store.tt);
+                              const days = stockData?.daysPresent || 0;
+                              const avgPerDay = days > 0 ? totalSales / days : 0;
+                              const currentStock = stockData?.currentStock || 0;
+                              
+                              return (
+                                <tr key={store.tt} className={totalSales > 0 ? '' : 'bg-gray-50'}>
+                                  <td className="truncate max-w-[200px]" title={store.tt}>{store.tt}</td>
+                                  <td className="text-right font-medium">{totalSales.toFixed(1)}</td>
+                                  <td className="text-right">{currentStock.toFixed(1)}</td>
+                                  <td className="text-right text-gray-500">{days}</td>
+                                  <td className="text-right">{avgPerDay.toFixed(2)}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })()}
+                <div className="flex gap-2 mt-4">
+                  <button onClick={() => setShowProductDetailModal(false)} className="btn btn-secondary flex-1">Закрыть</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
