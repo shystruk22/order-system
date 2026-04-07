@@ -147,19 +147,44 @@
 
         function loadStoresFromHTML() {
             try {
-                const data = localStorage.getItem(KEYS.STORES);
-                if (data) {
-                    // Магазины хранятся в формате JSON (не сжатом)
-                    const parsed = JSON.parse(data);
-                    if (Array.isArray(parsed) && parsed.length > 0) {
-                        stores = parsed.map(s => ({ tt: s.tt || s.name || s }));
-                        return;
-                    }
+                const data = load(KEYS.STORES, []);
+                if (Array.isArray(data) && data.length > 0) {
+                    // Сохраняем полные объекты магазинов (tt, tt2, storeNumber, oldName и др.)
+                    stores = data;
+                    console.log(`[Matrix] Загружено ${stores.length} магазинов из stores.html`);
+                    return;
                 }
             } catch (e) { 
                 console.error('Load stores error:', e); 
             }
             stores = [];
+        }
+
+        // Проверяет, соответствует ли ТТ из данных (продажи/остатки) магазину из stores.html
+        // Учитывает tt, tt2, storeNumber, oldName — точное совпадение и вхождение
+        function storeMatches(dataTT) {
+            if (stores.length === 0) return true; // Список магазинов не загружен = не фильтруем
+            if (!dataTT) return false;
+            const t = dataTT.trim();
+            return stores.some(s => {
+                const tt = (s.tt || '').trim();
+                const tt2 = (s.tt2 || '').trim();
+                const num = String(s.storeNumber || '').trim();
+                const old = (s.oldName || '').trim();
+                // Точное совпадение
+                if (tt && tt === t) return true;
+                if (tt2 && tt2 === t) return true;
+                // stores.html: "ТТ Аптека" → данные: "ТТ Аптека Магазин" (tt — префикс)
+                if (tt && tt.length >= 5 && t.startsWith(tt)) return true;
+                if (tt && t.length >= 5 && tt.startsWith(t)) return true;
+                // Вхождение tt2
+                if (tt2 && tt2.length >= 3 && t.includes(tt2)) return true;
+                // Вхождение номера магазина
+                if (num && num.length >= 1 && t.includes(num)) return true;
+                // Вхождение старого названия
+                if (old && old.length >= 5 && t.includes(old)) return true;
+                return false;
+            });
         }
 
         function init() {
@@ -1031,11 +1056,11 @@
             const tts = [...new Set(results.map(r => r.tt))].sort((a, b) => a.localeCompare(b, 'ru'));
 
             // Filter results — фильтруем только если справочник магазинов/ассортимент загружен
-            const storeTTs = new Set(stores.map(s => s.tt));
+            const hasStores = stores.length > 0;
             const productCodes = new Set(products.map(p => p.code));
             const filteredResults = results.filter(r => {
-                // Фильтруем по магазинам только если список не пустой
-                if (storeTTs.size > 0 && !storeTTs.has(r.tt)) return false;
+                // Фильтруем по магазинам из stores.html
+                if (hasStores && !storeMatches(r.tt)) return false;
                 // Фильтруем по ассортименту только если список не пустой
                 if (products.length > 0 && !productCodes.has(r.code)) return false;
                 if (selectedTT && r.tt !== selectedTT) return false;
@@ -1434,10 +1459,10 @@
                 </div>`;
             }
 
-            // Фильтруем только по магазинам из списка
-            const storeTTs = new Set(stores.map(s => s.tt));
-            const filteredResults = storeTTs.size > 0
-                ? results.filter(r => storeTTs.has(r.tt))
+            // Фильтруем только по магазинам из stores.html
+            const hasStores = stores.length > 0;
+            const filteredResults = hasStores
+                ? results.filter(r => storeMatches(r.tt))
                 : results;
 
             // Get unique TTs and products (только из отфильтрованных)
@@ -1682,10 +1707,10 @@
                 return;
             }
 
-            // Фильтруем только по магазинам из списка
-            const storeTTs = new Set(stores.map(s => s.tt));
-            const filteredResults = storeTTs.size > 0
-                ? results.filter(r => storeTTs.has(r.tt))
+            // Фильтруем только по магазинам из stores.html
+            const hasStores = stores.length > 0;
+            const filteredResults = hasStores
+                ? results.filter(r => storeMatches(r.tt))
                 : results;
 
             // Get unique TTs and products
@@ -1755,10 +1780,10 @@
         function exportMatrix() {
             if (results.length === 0) { alert('Нет данных'); return; }
 
-            // Фильтруем только по магазинам из списка
-            const storeTTs = new Set(stores.map(s => s.tt));
-            const filteredResults = storeTTs.size > 0
-                ? results.filter(r => storeTTs.has(r.tt))
+            // Фильтруем только по магазинам из stores.html
+            const hasStores = stores.length > 0;
+            const filteredResults = hasStores
+                ? results.filter(r => storeMatches(r.tt))
                 : results;
 
             const tts = [...new Set(filteredResults.map(r => r.tt))].sort((a, b) => a.localeCompare(b, 'ru'));
@@ -1812,10 +1837,10 @@
         function exportAnalysis() {
             if (results.length === 0) { alert('Нет данных'); return; }
 
-            // Фильтруем только по магазинам из списка
-            const storeTTs = new Set(stores.map(s => s.tt));
-            const filteredResults = storeTTs.size > 0
-                ? results.filter(r => storeTTs.has(r.tt))
+            // Фильтруем только по магазинам из stores.html
+            const hasStores = stores.length > 0;
+            const filteredResults = hasStores
+                ? results.filter(r => storeMatches(r.tt))
                 : results;
 
             // Сортируем: ТТ → Группа → ABC (A,B,C)
@@ -2034,17 +2059,16 @@
                 allPairs.add(`${w.tt}_${code}`);
             });
 
-            // Фильтруем только товары из ассортимента (если ассортимент не пустой)
+            // Фильтруем только товары из ассортимента и магазины из stores.html
             const productCodes = new Set(products.map(p => p.code));
-            const storeTTs = new Set(stores.map(s => s.tt));
+            const hasStores = stores.length > 0;
 
-            if (products.length > 0 || storeTTs.size > 0) {
+            if (products.length > 0 || hasStores) {
                 const filteredPairs = new Set();
                 allPairs.forEach(pair => {
                     const [tt, code] = pair.split('_');
-                    // Проверяем: товар в ассортименте (или ассортимент пуст) И магазин в списке (или список пуст)
                     const productOk = products.length === 0 || productCodes.has(code);
-                    const storeOk = storeTTs.size === 0 || storeTTs.has(tt);
+                    const storeOk = !hasStores || storeMatches(tt);
                     if (productOk && storeOk) {
                         filteredPairs.add(pair);
                     }
@@ -2264,10 +2288,10 @@
                 return;
             }
 
-            // Фильтруем только по магазинам из списка (если список не пустой)
-            const storeTTs = new Set(stores.map(s => s.tt));
-            const filteredStocks = storeTTs.size > 0 ? stocks.filter(s => storeTTs.has(s.tt)) : stocks;
-            const filteredSales = storeTTs.size > 0 ? sales.filter(s => storeTTs.has(s.tt)) : sales;
+            // Фильтруем только по магазинам из stores.html
+            const hasStores = stores.length > 0;
+            const filteredStocks = hasStores ? stocks.filter(s => storeMatches(s.tt)) : stocks;
+            const filteredSales = hasStores ? sales.filter(s => storeMatches(s.tt)) : sales;
 
             // Создаём маппинг: название товара -> код (из stocks) - как ВПР
             const nameToCode = new Map();
@@ -2379,11 +2403,11 @@
                 return;
             }
             
-            // Фильтруем только магазины из списка (если загружен) и товары из ассортимента (если загружен)
-            const storeTTs = new Set(stores.map(s => s.tt));
+            // Фильтруем только магазины из stores.html и товары из ассортимента
+            const hasStores = stores.length > 0;
             const productCodes = new Set(products.map(p => p.code));
             const matrixResults = results.filter(r => {
-                if (storeTTs.size > 0 && !storeTTs.has(r.tt)) return false;
+                if (hasStores && !storeMatches(r.tt)) return false;
                 if (products.length > 0 && !productCodes.has(r.code)) return false;
                 return r.inMatrix === 'ДА';
             });
