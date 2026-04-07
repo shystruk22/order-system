@@ -197,7 +197,7 @@
             const record = saved.find(s => s.name === name);
             if (!record || !record.matrixData) { alert('Матрица не найдена'); return; }
             const md = record.matrixData || {};
-            const CATALOG_FIELDS = ['code','nomenclature','name','group','packaging','supplier','quant','price','inPrice','shelf','markup','inMatrix'];
+            const CATALOG_FIELDS = ['code','nomenclature','name','group','packaging','supplier','quant','price','inPrice','shelfPrice','shelf','markup','inMatrix'];
             let count = 0;
             Object.entries(md).forEach(([code, item]) => {
                 if (!code) return;
@@ -420,7 +420,7 @@
             const p = products.find(x => normCode(x.code) === nc);
             if (!p) return;
             // Для числовых полей — парсим число
-            if (['price','inPrice','shelf','quant','volume'].includes(field)) {
+            if (['price','inPrice','shelfPrice','shelf','quant','volume'].includes(field)) {
                 p[field] = value !== '' && value !== '-' ? parseFloat(value) || 0 : '';
             } else {
                 p[field] = value;
@@ -431,7 +431,7 @@
             // Сохраняем и синхронизируем
             save(KEYS.PRODUCTS, products);
             // Для числовых полей — быстрое обновление ячейки без полного рендера
-            if (!fullRender && ['price','inPrice','shelf','quant','volume','packaging'].includes(field)) {
+            if (!fullRender && ['price','inPrice','shelfPrice','shelf','quant','volume','packaging'].includes(field)) {
                 // Обновляем только значения в текущей строке таблицы
                 const row = document.getElementById('ar-' + nc);
                 if (row) {
@@ -467,7 +467,7 @@
             // Для volume/quant/shelf берём raw p.volume (без 'л' суффикса)
             let oldVal = p[field] || '';
             if (field === 'volume' && !oldVal) oldVal = getProductVolume(p) || '';
-            const isNum = ['price','inPrice','shelf','quant','volume'].includes(field);
+            const isNum = ['price','inPrice','shelfPrice','shelf','quant','volume'].includes(field);
             const w = isNum ? 'w-12' : 'w-full';
             const jsCode = `editProductField('${nc.replace(/'/g, "\\'")}','${field}',this.value,${!isNum})`;
             cell.innerHTML = `<input type="${isNum ? 'number' : 'text'}" step="any" value="${String(oldVal).replace(/"/g, '&quot;')}" class="${w} px-1 py-0 text-[10px] border border-emerald-400 rounded bg-white focus:outline-none focus:border-emerald-600" onblur="${jsCode}" onkeydown="if(event.key==='Enter'){${jsCode}}if(event.key==='Escape'){render();}">`;
@@ -528,6 +528,7 @@
                                 <th class="px-2 py-2 font-medium text-[10px] text-center">Продажи</th>
                                 <th class="px-2 py-2 font-medium text-[10px] text-center">Цена</th>
                                 <th class="px-2 py-2 font-medium text-[10px] text-center">Закупка</th>
+                                <th class="px-2 py-2 font-medium text-[10px] text-center">Цена на полке</th>
                                 <th class="px-2 py-2 font-medium text-[10px] text-center">Дом. полка</th>
                                 <th class="px-2 py-2 font-medium text-[10px] text-center">Маржа</th>
                                 <th class="px-2 py-2 font-medium text-[10px] text-center">Квант</th>
@@ -537,7 +538,7 @@
                         <tbody class="divide-y divide-gray-100">
                             ${sortedGroups.map(gr => `
                                 <tr class="bg-emerald-100">
-                                    <td colspan="12" class="px-2 py-1 font-medium text-emerald-800 text-xs">${gr} (${grouped[gr].length})</td>
+                                    <td colspan="13" class="px-2 py-1 font-medium text-emerald-800 text-xs">${gr} (${grouped[gr].length})</td>
                                 </tr>
                                 ${grouped[gr].map(p => {
                                     const nc = normCode(p.code);
@@ -555,6 +556,7 @@
                                         <td class="px-2 py-1 text-[10px] text-center font-medium ${totalSales > 0 ? 'text-green-700' : 'text-gray-400'}">${totalSales > 0 ? totalSales : '-'}</td>
                                         <td ${ce('price')} ${df('price')} onclick="startEditProduct('ac-${nc}-price','${nc.replace(/'/g, "\\'" )}','price')" class="px-2 py-1 text-[10px] text-center text-gray-600 cursor-pointer hover:bg-emerald-50 hover:ring-1 hover:ring-emerald-300 rounded" title="Клик для редактирования">${p.price || '-'}</td>
                                         <td ${ce('inPrice')} ${df('inPrice')} onclick="startEditProduct('ac-${nc}-inPrice','${nc.replace(/'/g, "\\'" )}','inPrice')" class="px-2 py-1 text-[10px] text-center text-gray-600 cursor-pointer hover:bg-emerald-50 hover:ring-1 hover:ring-emerald-300 rounded" title="Клик для редактирования">${p.inPrice || '-'}</td>
+                                        <td ${ce('shelfPrice')} ${df('shelfPrice')} onclick="startEditProduct('ac-${nc}-shelfPrice','${nc.replace(/'/g, "\\'" )}','shelfPrice')" class="px-2 py-1 text-[10px] text-center text-gray-600 cursor-pointer hover:bg-emerald-50 hover:ring-1 hover:ring-emerald-300 rounded" title="Клик для редактирования">${p.shelfPrice || '-'}</td>
                                         <td ${ce('shelf')} ${df('shelf')} onclick="startEditProduct('ac-${nc}-shelf','${nc.replace(/'/g, "\\'" )}','shelf')" class="px-2 py-1 text-[10px] text-center text-gray-600 cursor-pointer hover:bg-emerald-50 hover:ring-1 hover:ring-emerald-300 rounded" title="Клик для редактирования">${p.shelf || '-'}</td>
                                         <td ${df('margin')} class="px-2 py-1 text-[10px] text-center font-medium ${margin > 0 ? 'text-emerald-600' : margin < 0 ? 'text-red-500' : 'text-gray-400'}">${margin !== 0 ? margin.toFixed(2) : '-'}</td>
                                         <td ${ce('quant')} ${df('quant')} onclick="startEditProduct('ac-${nc}-quant','${nc.replace(/'/g, "\\'" )}','quant')" class="px-2 py-1 text-[10px] text-center text-gray-600 cursor-pointer hover:bg-emerald-50 hover:ring-1 hover:ring-emerald-300 rounded" title="Клик для редактирования">${p.quant || 1}</td>
@@ -1529,7 +1531,7 @@
                         render();
                         alert(`Загружено ${items.length} товаров в ассортимент`);
                     } else if (type === 'matrix') {
-                        const CATALOG_FIELDS = ['code','nomenclature','name','group','packaging','supplier','quant','price','inPrice','shelf','markup','inMatrix'];
+                        const CATALOG_FIELDS = ['code','nomenclature','name','group','packaging','supplier','quant','price','inPrice','shelfPrice','shelf','markup','inMatrix'];
                         const headers = json[0] || [];
                         const tts = [];
                         for (let c = 3; c < headers.length; c++) {

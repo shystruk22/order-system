@@ -202,3 +202,22 @@ Stage Summary:
 - equalizeShelfHeights() measures natural content heights and syncs them across all doors
 - Result: perfectly horizontal shelves across all doors, even with different content lengths
 ---
+---
+Task ID: 1
+Agent: main
+Task: Добавить колонку "Цена на полке" в ассортимент во всех файлах (Universal, Matrix, Fridges)
+
+Work Log:
+- Обновил parseAssortment в shared-utils.js: добавил shelfPrice на позицию col 6 (между price и shelf)
+- Обновил universal.html: importAssortment теперь парсит shelfPrice и shelf из Excel по именам колонок
+- Обновил matrix-calc.html v7.5: добавил колонку "Цена на полке" в таблицу ассортимента перед "Дом. полка", обновил форму добавления товара (3 поля в ряд), экспорт и generateAssortment
+- Обновил fridges.html v4.17: добавил колонку "Цена на полке" в таблицу ассортимента перед "Дом. полка", обновил editProductField и startEditProduct для shelfPrice, обновил CATALOG_FIELDS
+- Версии: universal v1.4, matrix-calc v7.5, fridges v4.17
+- Все файлы залиты на catbox.moe
+
+Stage Summary:
+- shelfPrice теперь есть во всех трёх инструментах (Universal, Matrix, Fridges)
+- Порядок колонок во всех файлах: Цена → Цена на полке → Дом. полка
+- Ассортимент единый для всех инструментов через shared storage
+- shared-utils.js обновлён для парсинга новой колонки из Excel
+
