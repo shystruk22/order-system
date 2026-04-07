@@ -623,6 +623,26 @@
 
         // === СОХРАНЕНИЕ И ЗАГРУЗКА АССОРТИМЕНТА ===
         const ASSORTMENTS_KEY = SharedUtils.STORAGE_KEYS.SAVED_ASSORTMENTS;
+        let currentLoadedAssortment = null; // Имя загруженного сохранённого списка (для авто-синхронизации)
+
+        function syncToSavedAssortment() {
+            if (!currentLoadedAssortment) return;
+            const saved = getSavedAssortments();
+            const idx = saved.findIndex(s => s.name === currentLoadedAssortment);
+            if (idx < 0) return;
+            const mandatory = {};
+            products.forEach(p => {
+                if (p.code && mandatoryProducts[p.code]) mandatory[p.code] = true;
+            });
+            saved[idx] = {
+                ...saved[idx],
+                date: new Date().toISOString(),
+                count: products.length,
+                data: JSON.parse(JSON.stringify(products)),
+                mandatory: mandatory
+            };
+            SharedUtils.save(ASSORTMENTS_KEY, saved);
+        }
 
         function getSavedAssortments() {
             return SharedUtils.load(ASSORTMENTS_KEY, []);
@@ -735,7 +755,8 @@
             }
             
             save(KEYS.PRODUCTS, products);
-            
+            currentLoadedAssortment = name;
+
             // Закрываем модальное окно
             const modal = document.getElementById('loadAssortmentModal');
             if (modal) modal.remove();
@@ -935,7 +956,10 @@
             const scrollTop = container ? container.scrollTop : 0;
             
             products = products.filter(p => p.code !== code);
+            delete mandatoryProducts[code];
             save(KEYS.PRODUCTS, products);
+            save(KEYS.MANDATORY, mandatoryProducts);
+            syncToSavedAssortment();
             render();
             
             // Восстанавливаем скролл после перерисовки
@@ -1075,7 +1099,8 @@
             
             products.push(newProduct);
             save(KEYS.PRODUCTS, products);
-            
+            syncToSavedAssortment();
+
             document.getElementById('addProductModal').remove();
             render();
         }
@@ -1873,6 +1898,7 @@
                         writeoffs = items;
                         save(KEYS.WRITEOFFS, writeoffs);
                     } else if (type === 'assortment') {
+                        currentLoadedAssortment = null;
                         const { items, newShelf } = SharedUtils.parseAssortment(json);
                         products = items;
                         save(KEYS.PRODUCTS, products);
@@ -2332,6 +2358,7 @@
         }
 
         function generateAssortment() {
+            currentLoadedAssortment = null;
             if (sales.length === 0 && stocks.length === 0) {
                 alert('Загрузите файлы продаж и/или остатков!');
                 return;

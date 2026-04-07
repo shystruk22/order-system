@@ -127,6 +127,27 @@
 
         // === ЗАГРУЗКА СОХРАНЁННЫХ АССОРТИМЕНТОВ И МАТРИЦ ===
         const ASSORTMENTS_KEY = SharedUtils.STORAGE_KEYS.SAVED_ASSORTMENTS;
+        let currentLoadedAssortment = null; // Имя загруженного сохранённого списка (для авто-синхронизации)
+
+        function syncToSavedAssortment() {
+            if (!currentLoadedAssortment) return;
+            const saved = getSavedAssortments();
+            const idx = saved.findIndex(s => s.name === currentLoadedAssortment);
+            if (idx < 0) return;
+            saved[idx] = {
+                ...saved[idx],
+                date: new Date().toISOString(),
+                count: Object.keys(matrix).length,
+                data: Object.values(matrix).map(p => ({
+                    code: p.code, nomenclature: p.nomenclature || '',
+                    group: p.group || '', packaging: p.packaging || 'ШТ',
+                    supplier: p.supplier || '', price: p.price || 0,
+                    inPrice: p.inPrice || 0, shelfPrice: p.shelfPrice || 0,
+                    shelf: p.shelf || 0, quant: p.quant || 1, markup: p.markup || 0
+                }))
+            };
+            SharedUtils.save(ASSORTMENTS_KEY, saved);
+        }
         const MATRICES_KEY = SharedUtils.STORAGE_KEYS.SAVED_MATRICES;
         // Fallback на старые ключи (если матрикс сохранял до обновления)
         const OLD_ASSORTMENTS_KEY = 'matrixcalc_saved_assortments_v2';
@@ -196,6 +217,7 @@
             });
             
             save(KEYS.ASSORTMENT, matrix);
+            currentLoadedAssortment = name;
             render();
             alert(`Загружено: ${Object.keys(matrix).length} товаров из "${name}"\nОтметки матрицы: ${Object.keys(matrixMarks).length} товаров`);
         }
@@ -913,6 +935,7 @@
                 delete matrixMarks[code];
                 save(KEYS.ASSORTMENT, matrix);
                 save(KEYS.MATRIX_MARKS, matrixMarks);
+                syncToSavedAssortment();
                 render();
             }
         }
@@ -943,12 +966,14 @@
                 markup: defaultMarkup
             };
             save(KEYS.ASSORTMENT, matrix);
+            syncToSavedAssortment();
             hideAddProductModal();
             render();
         }
 
         function importAssortment(input) {
             resetSavedOrders();
+            currentLoadedAssortment = null;
             const file = input.files[0];
             if (!file) return;
             const reader = new FileReader();
@@ -2358,6 +2383,7 @@
         function clearAll() {
             [KEYS.ASSORTMENT, KEYS.MATRIX_MARKS, KEYS.SALES, KEYS.STOCKS, KEYS.GROUP_MARKUPS].forEach(k => localStorage.removeItem(k));
             matrix = {}; matrixMarks = {}; sales = []; stocks = []; groupMarkups = {};
+            currentLoadedAssortment = null;
             resetSavedOrders();
             render();
             alert('Данные очищены');
