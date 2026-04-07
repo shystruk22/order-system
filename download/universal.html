@@ -87,8 +87,9 @@
         let filterAnalyticsGroup = '';
         let savedOrderResults = null; // Сохранённые результаты расчёта заказа
         let savedOrderStats = null;   // Сохранённая статистика заказа
+        let orderEdits = {};          // Ручные правки заказа: {"tt_code": value}
 
-        function resetSavedOrders() { savedOrderResults = null; savedOrderStats = null; }
+        function resetSavedOrders() { savedOrderResults = null; savedOrderStats = null; orderEdits = {}; }
 
         const KEYS = {
             ASSORTMENT: SharedUtils.STORAGE_KEYS.UNIV_PRODUCTS,
@@ -1515,7 +1516,9 @@
                     if (!stockData) {
                         if (matrixDA) {
                             // Товар в матрице (ДА) но нет данных остатков — минимальный заказ 2 шт
-                            results.push({ tt: store.tt, code, nomenclature: p.nomenclature || '', group: p.group || '', currentStock: 0, sales: salesByTTCode[key] || 0, daysPresent: 0, avgSalesPerDay: 0, order: 2, quant: p.quant || 1, shelf: p.shelf || 0, packaging: p.packaging || 'ШТ', inPrice: p.inPrice || 0, sum: 2 * (p.inPrice || 0), status: 'заказ 2 (мин.)', statusType: 'order', isAssortment: false });
+                            const editKey = `${store.tt}_${code}`;
+                            const editedOrder = orderEdits[editKey] !== undefined ? orderEdits[editKey] : 2;
+                            results.push({ tt: store.tt, code, nomenclature: p.nomenclature || '', group: p.group || '', currentStock: 0, sales: salesByTTCode[key] || 0, daysPresent: 0, avgSalesPerDay: 0, order: editedOrder, quant: p.quant || 1, shelf: p.shelf || 0, packaging: p.packaging || 'ШТ', inPrice: p.inPrice || 0, sum: editedOrder * (p.inPrice || 0), status: editedOrder > 0 ? `заказ ${editedOrder} (мин.)` : 'достаточно', statusType: 'order', isAssortment: false });
                         }
                         return;
                     }
@@ -1527,7 +1530,9 @@
                     const quant = p.quant || 1;
                     const shelf = p.shelf || 0;
                     const packaging = p.packaging || 'ШТ';
-                    const order = calcOrder(currentStock, avgSalesPerDay, period, quant, shelf, packaging);
+                    let order = calcOrder(currentStock, avgSalesPerDay, period, quant, shelf, packaging);
+                    const editKey = `${store.tt}_${code}`;
+                    if (orderEdits[editKey] !== undefined) order = orderEdits[editKey];
                     const sum = order * (p.inPrice || 0);
 
                     if (matrixDA) {
@@ -1682,6 +1687,8 @@
             const newOrder = parseFloat(input.value) || 0;
             const tt = input.dataset.tt;
             const code = input.dataset.code;
+            const editKey = `${tt}_${code}`;
+            orderEdits[editKey] = newOrder;
             const p = matrix[code];
             const newSum = newOrder * (p ? p.inPrice || 0 : 0);
             const row = input.closest('tr');
@@ -2232,7 +2239,9 @@
                     if (!matrixDA && !stockData) return;
                     if (!stockData) {
                         // Товар в матрице (ДА) но нет данных остатков — минимальный заказ 2 шт
-                        rows.push([store.storeNumber || store.tt2 || '', store.tt, code, p.nomenclature || '', p.group || '', salesByTTCode[key] || 0, 0, 0, 0, 2, (2 * (p.inPrice || 0)).toFixed(2), 'мин. заказ']);
+                        const editKey = `${store.tt}_${code}`;
+                        const expOrder = orderEdits[editKey] !== undefined ? orderEdits[editKey] : 2;
+                        rows.push([store.storeNumber || store.tt2 || '', store.tt, code, p.nomenclature || '', p.group || '', salesByTTCode[key] || 0, 0, 0, 0, expOrder, (expOrder * (p.inPrice || 0)).toFixed(2), 'мин. заказ']);
                         return;
                     }
 
@@ -2243,7 +2252,9 @@
                     const quant = p.quant || 1;
                     const shelf = p.shelf || 0;
                     const packaging = p.packaging || 'ШТ';
-                    const order = calcOrder(currentStock, avgSalesPerDay, period, quant, shelf, packaging);
+                    let order = calcOrder(currentStock, avgSalesPerDay, period, quant, shelf, packaging);
+                    const editKey = `${store.tt}_${code}`;
+                    if (orderEdits[editKey] !== undefined) order = orderEdits[editKey];
 
                     let status;
                     if (matrixDA) {
