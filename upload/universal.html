@@ -7,6 +7,10 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
+    <script src="shared-utils.js"></script>
+    <script src="config.js"></script>
+    <script src="storage.js"></script>
+    <script src="shared-data.js"></script>
     <style>
         * { font-family: system-ui, -apple-system, sans-serif; box-sizing: border-box; }
         .btn { transition: all 0.2s; }
@@ -82,7 +86,7 @@
             MATRIX: 'univ_matrix_v8',
             SALES: 'univ_sales_v8',
             STOCKS: 'univ_stocks_v8',
-            STORES: 'stores_data_v1',
+            STORES: window.SharedUtils ? SharedUtils.STORAGE_KEYS.STORES : 'shared_stores_v1',
             SUPPLIERS: 'univ_suppliers_v8',
             CURRENT_SUPPLIER: 'univ_currentSupplier_v8',
             DEFAULT_MARKUP: 'univ_defaultMarkup_v8',
@@ -240,14 +244,16 @@
 
         function loadStoresFromHTML() {
             try {
-                const data = localStorage.getItem(KEYS.STORES);
-                if (data) {
-                    const parsed = JSON.parse(data);
-                    if (Array.isArray(parsed) && parsed.length > 0) {
-                        stores = parsed.map(s => ({ tt: s.tt || s.name || s }));
-                    }
+                // Используем load() для корректного чтения LZ-сжатых данных
+                const data = load(KEYS.STORES, []);
+                if (Array.isArray(data) && data.length > 0) {
+                    // Сохраняем полные объекты (tt, tt2, storeNumber и др.)
+                    stores = data;
+                    console.log(`[Universal] Загружено ${stores.length} магазинов из stores.html`);
+                    return;
                 }
             } catch (e) { console.error('Load stores error:', e); }
+            stores = [];
         }
 
         function render() {
@@ -1330,7 +1336,21 @@
             alert('Данные очищены');
         }
 
-        init();
+        // Инициализация с ожиданием облачного хранилища
+        if (window.CloudStorage && !window.CloudStorage.isReady()) {
+            window.addEventListener('cloudStorageReady', () => { try { init(); } catch(e) { console.error('Init error:', e); } });
+        } else {
+            try { init(); } catch(e) { console.error('Init error:', e); }
+        }
+
+        // После загрузки из облака — перечитываем данные и перерисовываем
+        window.addEventListener('cloudStorageReady', () => {
+            loadStoresFromHTML();
+            matrix = load(KEYS.MATRIX, {});
+            sales = load(KEYS.SALES, []);
+            stocks = load(KEYS.STOCKS, []);
+            render();
+        });
     </script>
 </body>
 </html>
