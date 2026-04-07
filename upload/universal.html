@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Универсальный расчёт</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
-    <script src="shared-utils.js"></script>
     <script src="config.js"></script>
+    <script src="shared-utils.js"></script>
     <script src="storage.js"></script>
     <script src="shared-data.js"></script>
     <style>
@@ -17,7 +17,7 @@
         .btn:hover { opacity: 0.9; }
         input:focus, select:focus { outline: none; }
         .input { padding: 0.35rem 0.4rem; border: 1px solid #d1d5db; border-radius: 0.375rem; font-size: 0.75rem; background: white; }
-        .input:focus { border-color: #8b5cf6; }
+        .input:focus { border-color: #0ea5e9; }
         .table-container { overflow: auto; max-height: 75vh; border-radius: 0.5rem; border: 1px solid #e5e7eb; }
         .table-modern { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
         .table-modern thead { position: sticky; top: 0; z-index: 30; }
@@ -30,8 +30,8 @@
         .col-group { min-width: 70px; max-width: 90px; }
         .col-name { min-width: 160px; }
         .cell-wrap { white-space: normal; word-wrap: break-word; }
-        .group-header { background: #e0e7ff; font-weight: 600; color: #3730a3; }
-        .store-header { min-height: 60px; max-height: 80px; writing-mode: vertical-rl; text-orientation: mixed; transform: rotate(180deg); font-size: 9px; line-height: 1.2; overflow: hidden; word-wrap: break-word; padding: 4px 2px; }
+        .group-header { background: #e0f2fe; font-weight: 600; color: #0c4a6e; }
+        .store-header { height: auto; max-width: 80px; white-space: normal; word-wrap: break-word; word-break: break-word; font-size: 9px; line-height: 1.2; padding: 2px 3px; text-align: center; }
         .abc-a { background: #dcfce7; color: #166534; }
         .abc-b { background: #fef9c3; color: #854d0e; }
         .abc-c { background: #fee2e2; color: #991b1b; }
@@ -46,7 +46,7 @@
                     <span>Назад</span>
                 </a>
                 <div class="flex items-center gap-2 px-2">
-                    <div class="p-1.5 bg-amber-100 rounded-lg text-amber-600">
+                    <div class="p-1.5 bg-sky-100 rounded-lg text-sky-600">
                         <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
                     </div>
                     <h1 class="text-base font-semibold text-gray-900">Универсальный расчёт</h1>
@@ -63,7 +63,8 @@
 
     <script>
         let tab = 'upload';
-        let matrix = {}; // Ключ = КОД, содержит {code, nomenclature, group, packaging, inPrice, quant, markup, [ТТ]: ДА/НЕТ}
+        let matrix = {}; // Ассортимент (каталог): {code, nomenclature, group, packaging, supplier, price, shelf, quant, inPrice, markup}
+        let matrixMarks = {}; // Отметки матрицы: {[code]: {[tt]: 'ДА'/'НЕТ', ...}}
         let sales = []; // {tt, name, quantity, group} - продажи С ТТ
         let stocks = []; // {tt, name, code, currentStock, daysPresent, totalDays}
         let stores = []; // [{tt}]
@@ -81,47 +82,84 @@
         let collapsedG = {};
         let collapsedTT = {};
         let groupMarkups = {};
+        let searchAnalytics = '';
+        let filterAnalyticsGroup = '';
+        let savedOrderResults = null; // Сохранённые результаты расчёта заказа
+        let savedOrderStats = null;   // Сохранённая статистика заказа
+
+        function resetSavedOrders() { savedOrderResults = null; savedOrderStats = null; }
 
         const KEYS = {
-            MATRIX: 'univ_matrix_v8',
-            SALES: 'univ_sales_v8',
-            STOCKS: 'univ_stocks_v8',
-            STORES: window.SharedUtils ? SharedUtils.STORAGE_KEYS.STORES : 'shared_stores_v1',
-            SUPPLIERS: 'univ_suppliers_v8',
-            CURRENT_SUPPLIER: 'univ_currentSupplier_v8',
-            DEFAULT_MARKUP: 'univ_defaultMarkup_v8',
-            GROUP_MARKUPS: 'univ_groupMarkups_v8'
+            ASSORTMENT: SharedUtils.STORAGE_KEYS.UNIV_PRODUCTS,
+            MATRIX_MARKS: SharedUtils.STORAGE_KEYS.UNIV_MATRIX,
+            SALES: SharedUtils.STORAGE_KEYS.UNIV_OWN_SALES,
+            STOCKS: SharedUtils.STORAGE_KEYS.UNIV_OWN_STOCKS,
+            STORES: SharedUtils.STORAGE_KEYS.STORES,
+            SUPPLIERS: SharedUtils.STORAGE_KEYS.UNIV_SUPPLIERS,
+            CURRENT_SUPPLIER: SharedUtils.STORAGE_KEYS.UNIV_CURRENT_SUPPLIER,
+            DEFAULT_MARKUP: SharedUtils.STORAGE_KEYS.UNIV_DEFAULT_MARKUP,
+            GROUP_MARKUPS: SharedUtils.STORAGE_KEYS.UNIV_GROUP_MARKUPS
         };
+
+        // Поля каталога товаров (не ДА/НЕТ)
+        const CATALOG_FIELDS = ['code','nomenclature','name','group','packaging','supplier','quant','price','inPrice','shelf','markup'];
 
         const normCode = (code) => String(code || '').trim().replace(/^0+/, '') || '0';
 
-        const load = (key, def) => {
-            try {
-                const data = localStorage.getItem(key);
-                if (!data) return def;
-                if (data.startsWith('{') || data.startsWith('[')) return JSON.parse(data) || def;
-                return JSON.parse(LZString.decompressFromUTF16(data)) || def;
-            } catch { return def; }
-        };
+        const load = (key, def) => SharedUtils.load(key, def);
         
         const save = (key, data) => {
             try {
-                const compressed = LZString.compressToUTF16(JSON.stringify(data));
-                localStorage.setItem(key, compressed);
+                SharedUtils.save(key, data);
+                // Cross-tab sync
+                if (key === KEYS.ASSORTMENT) { try { syncToMatrixCalc(); } catch(e) {} }
+                if (key === KEYS.MATRIX_MARKS) {
+                    try {
+                        SharedUtils.save(SharedUtils.STORAGE_KEYS.MATRIX, data);
+                        if (window.SharedData) SharedData.saveMatrixMarks(data, 'universal');
+                    } catch(e) {}
+                }
             } catch (e) { console.error('Save error:', e); }
         };
 
-        // === ЗАГРУЗКА СОХРАНЁННЫХ АССОРТИМЕНТОВ ===
-        const ASSORTMENTS_KEY = 'matrixcalc_saved_assortments_v2';
+        const esc = SharedUtils.esc;
+
+        // === ЗАГРУЗКА СОХРАНЁННЫХ АССОРТИМЕНТОВ И МАТРИЦ ===
+        const ASSORTMENTS_KEY = SharedUtils.STORAGE_KEYS.SAVED_ASSORTMENTS;
+        const MATRICES_KEY = SharedUtils.STORAGE_KEYS.SAVED_MATRICES;
+        // Fallback на старые ключи (если матрикс сохранял до обновления)
+        const OLD_ASSORTMENTS_KEY = 'matrixcalc_saved_assortments_v2';
+        const OLD_MATRICES_KEY = 'matrixcalc_saved_matrices_v1';
         
         function getSavedAssortments() {
             try {
-                const data = localStorage.getItem(ASSORTMENTS_KEY);
-                return data ? JSON.parse(data) : [];
+                let data = SharedUtils.load(ASSORTMENTS_KEY, null);
+                if (!data || !Array.isArray(data) || data.length === 0) {
+                    data = SharedUtils.load(OLD_ASSORTMENTS_KEY, []);
+                    if (data && data.length > 0) {
+                        // Мигрируем в новый ключ
+                        SharedUtils.save(ASSORTMENTS_KEY, data);
+                    }
+                }
+                return data || [];
+            } catch { return []; }
+        }
+
+        function getSavedMatrices() {
+            try {
+                let data = SharedUtils.load(MATRICES_KEY, null);
+                if (!data || !Array.isArray(data) || data.length === 0) {
+                    data = SharedUtils.load(OLD_MATRICES_KEY, []);
+                    if (data && data.length > 0) {
+                        SharedUtils.save(MATRICES_KEY, data);
+                    }
+                }
+                return data || [];
             } catch { return []; }
         }
         
         function loadAssortmentByName(name) {
+            resetSavedOrders();
             const saved = getSavedAssortments();
             const record = saved.find(s => s.name === name);
             
@@ -130,10 +168,9 @@
                 return;
             }
             
-            // Преобразуем данные ассортимента в формат матрицы
             const count = Object.keys(matrix).length;
             if (count > 0) {
-                if (!confirm(`Загрузить "${name}" (${record.count} товаров)?\nТекущие данные будут заменены.`)) {
+                if (!confirm(`Загрузить "${name}" (${record.count} товаров)?\nТекущий ассортимент будет заменен.\nОтметки матрицы (ДА/НЕТ) останутся.`)) {
                     return;
                 }
             }
@@ -146,18 +183,118 @@
                         nomenclature: p.nomenclature || p.name || '',
                         group: p.group || '',
                         packaging: p.packaging || 'ШТ',
-                        inPrice: p.price || 0,
+                        supplier: p.supplier || '',
+                        price: p.price || 0,
+                        inPrice: p.inPrice || p.price || 0,
+                        shelf: p.shelf || 0,
                         quant: p.quant || 1,
                         markup: defaultMarkup
                     };
                 }
             });
             
-            save(KEYS.MATRIX, matrix);
+            save(KEYS.ASSORTMENT, matrix);
             render();
-            alert(`Загружено: ${Object.keys(matrix).length} товаров из "${name}"`);
+            alert(`Загружено: ${Object.keys(matrix).length} товаров из "${name}"\nОтметки матрицы: ${Object.keys(matrixMarks).length} товаров`);
         }
         
+        // === ЗАГРУЗКА СОХРАНЁННЫХ МАТРИЦ ===
+        function loadSavedMatrixByName(name) {
+            resetSavedOrders();
+            const saved = getSavedMatrices();
+            const record = saved.find(s => s.name === name);
+            
+            if (!record) {
+                alert('Матрица не найден');
+                return;
+            }
+            
+            const md = record.matrixData || {};
+            let merged = 0;
+            let added = 0;
+            Object.entries(md).forEach(([code, item]) => {
+                if (!code) return;
+                const nc = normCode(code);
+                
+                // Извлекаем ДА/НЕТ marks
+                const marks = {};
+                Object.entries(item).forEach(([k, v]) => {
+                    if (!CATALOG_FIELDS.includes(k) && k !== 'inMatrix' && (v === 'ДА' || v === 'НЕТ')) {
+                        marks[k] = v;
+                    }
+                });
+                
+                if (Object.keys(marks).length > 0) {
+                    if (!matrixMarks[nc]) matrixMarks[nc] = {};
+                    Object.assign(matrixMarks[nc], marks);
+                }
+                
+                if (!matrix[nc]) {
+                    matrix[nc] = {
+                        code: item.code || code,
+                        nomenclature: item.nomenclature || '',
+                        group: item.group || '',
+                        packaging: 'ШТ',
+                        inPrice: 0,
+                        quant: 1,
+                        markup: defaultMarkup
+                    };
+                    added++;
+                } else {
+                    merged++;
+                }
+            });
+            
+            save(KEYS.ASSORTMENT, matrix);
+            save(KEYS.MATRIX_MARKS, matrixMarks);
+            
+            const modal = document.getElementById('matrixSelectModal');
+            if (modal) modal.remove();
+            
+            render();
+            alert(`Матрица применена: ${merged} обновлено, ${added} добавлено в каталог\nОтметок матрицы: ${Object.keys(matrixMarks).length} товаров\nВсего в ассортименте: ${Object.keys(matrix).length} товаров`);
+        }
+        
+        function showMatrixSelectModal() {
+            const saved = getSavedMatrices();
+            
+            if (saved.length === 0) {
+                alert('Нет сохранённых матриц.\nСначала сохраните матрицу в matrix-calc.html');
+                return;
+            }
+            
+            const existing = document.getElementById('matrixSelectModal');
+            if (existing) existing.remove();
+            
+            const modal = document.createElement('div');
+            modal.id = 'matrixSelectModal';
+            modal.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-50';
+            modal.innerHTML = `
+                <div class="bg-white rounded-lg border border-gray-200 p-6 w-full max-w-md shadow-lg" onclick="event.stopPropagation()">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg font-semibold text-gray-900">${icons.grid} Выберите матрицу</h3>
+                        <button onclick="document.getElementById('matrixSelectModal').remove()" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+                    </div>
+                    <div class="max-h-80 overflow-y-auto border rounded-lg divide-y">
+                        ${saved.map(s => `
+                            <div class="p-3 hover:bg-violet-50 cursor-pointer flex justify-between items-center" onclick="loadSavedMatrixByName('${esc(s.name)}')">
+                                <div>
+                                    <div class="font-medium text-gray-900">${s.name}</div>
+                                    <div class="text-xs text-gray-500">${s.products || 0} товаров • ${s.inMatrix || 0} в матрице • ${new Date(s.date).toLocaleDateString('ru-RU')}</div>
+                                </div>
+                                <span class="text-violet-600 font-medium">Загрузить →</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                    <div class="mt-4 text-xs text-gray-400 text-center">
+                        Матрицы сохраняются в matrix-calc.html
+                    </div>
+                </div>
+            `;
+            modal.addEventListener('click', () => modal.remove());
+            document.body.appendChild(modal);
+        }
+
         function showAssortmentSelectModal() {
             const saved = getSavedAssortments();
             
@@ -166,7 +303,6 @@
                 return;
             }
             
-            // Закрываем предыдущее модальное окно если есть
             const existing = document.getElementById('assortmentSelectModal');
             if (existing) existing.remove();
             
@@ -176,12 +312,12 @@
             modal.innerHTML = `
                 <div class="bg-white rounded-lg border border-gray-200 p-6 w-full max-w-md shadow-lg" onclick="event.stopPropagation()">
                     <div class="flex justify-between items-center mb-4">
-                        <h3 class="text-lg font-semibold text-gray-900">📂 Выберите ассортимент</h3>
+                        <h3 class="text-lg font-semibold text-gray-900">${icons.list} Выберите ассортимент</h3>
                         <button onclick="document.getElementById('assortmentSelectModal').remove()" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
                     </div>
                     <div class="max-h-80 overflow-y-auto border rounded-lg divide-y">
                         ${saved.map(s => `
-                            <div class="p-3 hover:bg-teal-50 cursor-pointer flex justify-between items-center" onclick="loadAssortmentByName('${s.name.replace(/'/g, "\\'")}')">
+                            <div class="p-3 hover:bg-teal-50 cursor-pointer flex justify-between items-center" onclick="loadAssortmentByName('${esc(s.name)}')">
                                 <div>
                                     <div class="font-medium text-gray-900">${s.name}</div>
                                     <div class="text-xs text-gray-500">${s.count} товаров • ${new Date(s.date).toLocaleDateString('ru-RU')}</div>
@@ -222,32 +358,98 @@
             plus: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
             save: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>`,
             refresh: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="23 4 23 10 17 10"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>`,
-            import: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`
+            import: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`,
+            export: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M16 10l4-4-4-4"/><line x1="20" y1="6" x2="12" y2="6"/><path d="M20 6h-8v12"/></svg>`
         };
 
         function init() {
             loadStoresFromHTML();
-            matrix = load(KEYS.MATRIX, {});
             sales = load(KEYS.SALES, []);
             stocks = load(KEYS.STOCKS, []);
             suppliers = load(KEYS.SUPPLIERS, []);
             currentSupplier = load(KEYS.CURRENT_SUPPLIER, '');
             defaultMarkup = load(KEYS.DEFAULT_MARKUP, 25);
             groupMarkups = load(KEYS.GROUP_MARKUPS, {});
+
+            // Загрузка с миграцией: старый формат (всё в matrix) → новый (matrix + matrixMarks)
+            const savedAssort = load(KEYS.ASSORTMENT, null);
+            const savedMarks = load(KEYS.MATRIX_MARKS, null);
+
+            if (savedAssort !== null && savedMarks !== null) {
+                // Новый формат
+                matrix = savedAssort;
+                matrixMarks = savedMarks;
+            } else {
+                // Старый формат — мигрируем
+                const oldData = load('univ_matrix_v8', {});
+                if (Object.keys(oldData).length > 0) {
+                    console.log('Миграция: разделение matrix на assortment + matrixMarks...');
+                    matrix = {};
+                    matrixMarks = {};
+                    Object.entries(oldData).forEach(([code, item]) => {
+                        const catalog = {};
+                        CATALOG_FIELDS.forEach(f => {
+                            if (item[f] !== undefined && item[f] !== null) catalog[f] = item[f];
+                        });
+                        if (Object.keys(catalog).length > 0) matrix[code] = catalog;
+
+                        const marks = {};
+                        Object.entries(item).forEach(([k, v]) => {
+                            if (!CATALOG_FIELDS.includes(k) && (v === 'ДА' || v === 'НЕТ')) {
+                                marks[k] = v;
+                            }
+                        });
+                        if (Object.keys(marks).length > 0) matrixMarks[code] = marks;
+                    });
+                    save(KEYS.ASSORTMENT, matrix);
+                    save(KEYS.MATRIX_MARKS, matrixMarks);
+                    console.log(`Миграция: ${Object.keys(matrix).length} каталог, ${Object.keys(matrixMarks).length} marks`);
+                }
+            }
             
             window.addEventListener('storage', (e) => {
                 if (e.key === KEYS.STORES) loadStoresFromHTML();
             });
+
+            // Синхронизация через polling — работает даже при file:// протоколе
+            if (window.SharedData) {
+                SharedData.onChange(({source}) => {
+                    if (source !== 'universal') {
+                        syncFromMatrixCalc();
+                        // Bidirectional matrix marks sync
+                        try {
+                            const newMarks = SharedData.getMatrixMarks();
+                            if (newMarks && Object.keys(newMarks).length > 0) {
+                                let changed = false;
+                                Object.entries(newMarks).forEach(([code, ttMarks]) => {
+                                    if (!matrixMarks[code]) {
+                                        matrixMarks[code] = {};
+                                    }
+                                    Object.entries(ttMarks).forEach(([tt, val]) => {
+                                        if (matrixMarks[code][tt] !== val) {
+                                            matrixMarks[code][tt] = val;
+                                            changed = true;
+                                        }
+                                    });
+                                });
+                                if (changed) {
+                                    save(KEYS.MATRIX_MARKS, matrixMarks);
+                                    resetSavedOrders();
+                                    render();
+                                }
+                            }
+                        } catch(e) {}
+                    }
+                });
+            }
             
             render();
         }
 
         function loadStoresFromHTML() {
             try {
-                // Используем load() для корректного чтения LZ-сжатых данных
                 const data = load(KEYS.STORES, []);
                 if (Array.isArray(data) && data.length > 0) {
-                    // Сохраняем полные объекты (tt, tt2, storeNumber и др.)
                     stores = data;
                     console.log(`[Universal] Загружено ${stores.length} магазинов из stores.html`);
                     return;
@@ -256,10 +458,82 @@
             stores = [];
         }
 
+        // === СИНХРОНИЗАЦИЯ С MATRIX-CALC через shared-data.js ===
+        // При сохранении данных в universal — записываем в общую базу
+        function syncToMatrixCalc() {
+            try {
+                SharedData.saveProducts(SharedData.mapToArray(matrix), 'universal');
+            } catch (e) { console.error('Sync to matrix-calc error:', e); }
+        }
+
+        // При изменении данных в matrix-calc — загружаем оттуда
+        function syncFromMatrixCalc() {
+            try {
+                const source = SharedData.getSource();
+                if (source === 'universal') return; // Не синхронизируем сами с собой
+
+                const sharedProducts = SharedData.getProducts();
+                if (!sharedProducts || sharedProducts.length === 0) return;
+
+                let changed = false;
+                const sharedMap = {};
+                sharedProducts.forEach(p => {
+                    if (!p.code) return;
+                    sharedMap[normCode(p.code)] = p;
+                });
+
+                // Обновляем существующие и добавляем новые товары
+                Object.entries(sharedMap).forEach(([code, sp]) => {
+                    if (!matrix[code] && sp.nomenclature) {
+                        matrix[code] = SharedData.arrayToMap([sp])[code];
+                        changed = true;
+                    } else if (matrix[code]) {
+                        const existing = matrix[code];
+                        if (sp.group) existing.group = sp.group;
+                        if (sp.nomenclature || sp.name) existing.nomenclature = sp.nomenclature || sp.name;
+                        if (sp.packaging) existing.packaging = sp.packaging;
+                        if (sp.supplier) existing.supplier = sp.supplier;
+                        if (sp.quant) existing.quant = sp.quant;
+                        if (sp.shelf !== undefined) existing.shelf = sp.shelf;
+                    }
+                });
+
+                // Удаляем товары, которых больше нет в matrix-calc
+                Object.keys(matrix).forEach(code => {
+                    if (!sharedMap[code]) {
+                        delete matrix[code];
+                        changed = true;
+                    }
+                });
+
+                if (changed) {
+                    save(KEYS.ASSORTMENT, matrix);
+                    resetSavedOrders();
+                    render();
+                    console.log(`Синхронизировано из matrix-calc: ${Object.keys(matrix).length} товаров`);
+                }
+            } catch (e) { console.error('Sync from matrix-calc error:', e); }
+        }
+
         function render() {
+            // Сохраняем позицию скролла до перерисовки
+            const content = document.getElementById('content');
+            const scrollTop = content.scrollTop;
+            // Сохраняем скролл внутри таблицы если есть
+            const tableContainer = document.querySelector('.table-container');
+            const tableScrollTop = tableContainer ? tableContainer.scrollTop : 0;
+            
             renderTabs();
             renderContent();
             updateStats();
+            
+            // Восстанавливаем позицию скролла
+            content.scrollTop = scrollTop;
+            // Восстанавливаем скролл таблицы
+            const newTableContainer = document.querySelector('.table-container');
+            if (newTableContainer && tableScrollTop > 0) {
+                newTableContainer.scrollTop = tableScrollTop;
+            }
         }
 
         function updateStats() {
@@ -275,9 +549,10 @@
                 { id: 'matrix', label: 'Матрица', icon: icons.grid },
                 { id: 'prices', label: 'Цены', icon: icons.dollar },
                 { id: 'order', label: 'Заказ', icon: icons.order },
+                { id: 'analytics', label: 'Аналитика', icon: icons.chart },
             ];
             document.getElementById('tabs').innerHTML = tabs.map(t => `
-                <button onclick="tab='${t.id}';render()" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${tab === t.id ? 'bg-amber-600 text-white shadow-sm' : 'text-gray-600 hover:bg-white hover:text-gray-900'}">
+                <button onclick="tab='${t.id}';render()" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${tab === t.id ? 'bg-sky-600 text-white shadow-sm' : 'text-gray-600 hover:bg-white hover:text-gray-900'}">
                     ${t.icon}<span>${t.label}</span>
                 </button>
             `).join('');
@@ -292,92 +567,141 @@
                 case 'matrix': el.innerHTML = renderMatrix(); break;
                 case 'prices': el.innerHTML = renderPrices(); break;
                 case 'order': el.innerHTML = renderOrder(); break;
+                case 'analytics': el.innerHTML = renderAnalytics(); break;
             }
         }
 
+        // === ЗАГРУЗКА (Upload Tab) ===
         function renderUpload() {
-            // Получаем сохранённые ассортименты из matrix-calc
             const savedAssortments = getSavedAssortments();
-            
+            const savedMatrices = getSavedMatrices();
+
+            const matrixCount = Object.keys(matrix).length;
+            const marksCount = Object.keys(matrixMarks).length;
+            const hasMatrix = matrixCount > 0;
+            const hasStocks = stocks.length > 0;
+            const hasSales = sales.length > 0;
+            const hasStores = stores.length > 0;
+            const hasMarks = marksCount > 0;
+            const canOrder = hasMatrix && hasStocks && hasStores;
+
             return `
                 <div class="space-y-2">
                     <div class="grid grid-cols-1 md:grid-cols-4 gap-2">
-                        <div onclick="document.getElementById('salesInput').click()" class="bg-white rounded-lg border border-gray-200 p-4 cursor-pointer hover:border-gray-400 transition-colors">
+                        <!-- Продажи -->
+                        <div onclick="document.getElementById('salesInput').click()" class="bg-white rounded-lg border border-gray-200 p-4 cursor-pointer hover:border-emerald-400 transition-colors group">
                             <div class="flex flex-col items-center text-center">
-                                <div class="p-3 bg-emerald-50 rounded-lg text-emerald-600 mb-3">${icons.sales}</div>
+                                <div class="p-3 bg-emerald-50 rounded-lg text-emerald-600 mb-2 group-hover:bg-emerald-100 transition-colors">${icons.sales}</div>
                                 <h3 class="font-medium text-gray-800 mb-1">Продажи</h3>
-                                <p class="text-xs text-gray-400">ТТ → Кат → Гр → Товар</p>
+                                <p class="text-xs text-gray-400">Загрузить из файла</p>
                                 <input type="file" id="salesInput" accept=".xlsx,.xls,.csv" onchange="handleFile(this, 'sales')" class="hidden">
-                                ${sales.length > 0 ? `<p class="mt-2 text-sm text-emerald-600 font-medium">${sales.length} записей</p>` : ''}
+                                ${sales.length > 0 ? `<p class="mt-2 text-sm text-emerald-600 font-bold">${sales.length} записей</p>` : ''}
                             </div>
                         </div>
-                        <div onclick="document.getElementById('stocksInput').click()" class="bg-white rounded-lg border border-gray-200 p-4 cursor-pointer hover:border-gray-400 transition-colors">
+                        <!-- Остатки на ТТ -->
+                        <div onclick="document.getElementById('stocksInput').click()" class="bg-white rounded-lg border border-gray-200 p-4 cursor-pointer hover:border-sky-400 transition-colors group">
                             <div class="flex flex-col items-center text-center">
-                                <div class="p-3 bg-sky-50 rounded-lg text-sky-600 mb-3">${icons.stock}</div>
+                                <div class="p-3 bg-sky-50 rounded-lg text-sky-600 mb-2 group-hover:bg-sky-100 transition-colors">${icons.stock}</div>
                                 <h3 class="font-medium text-gray-800 mb-1">Остатки на ТТ</h3>
-                                <p class="text-xs text-gray-400">ТТ | Наим | Код | Ост.</p>
+                                <p class="text-xs text-gray-400">Загрузить из файла</p>
                                 <input type="file" id="stocksInput" accept=".xlsx,.xls,.csv" onchange="handleFile(this, 'stocks')" class="hidden">
-                                ${stocks.length > 0 ? `<p class="mt-2 text-sm text-sky-600 font-medium">${stocks.length} записей</p>` : ''}
+                                ${stocks.length > 0 ? `<p class="mt-2 text-sm text-sky-600 font-bold">${stocks.length} записей</p>` : ''}
                             </div>
                         </div>
-                        <div onclick="document.getElementById('matrixInput').click()" class="bg-white rounded-lg border border-gray-200 p-4 cursor-pointer hover:border-gray-400 transition-colors">
+                        <!-- Матрица -->
+                        <div onclick="document.getElementById('matrixInput').click()" class="bg-white rounded-lg border ${hasMarks ? 'border-violet-300' : 'border-gray-200'} p-4 cursor-pointer hover:border-violet-400 transition-colors group">
                             <div class="flex flex-col items-center text-center">
-                                <div class="p-3 bg-violet-50 rounded-lg text-violet-600 mb-3">${icons.grid}</div>
+                                <div class="p-3 bg-violet-50 rounded-lg text-violet-600 mb-2 group-hover:bg-violet-100 transition-colors">${icons.grid}</div>
                                 <h3 class="font-medium text-gray-800 mb-1">Матрица</h3>
-                                <p class="text-xs text-gray-400">Импорт матрицы ТТ</p>
+                                <p class="text-xs text-gray-400">Нажмите чтобы загрузить из файла</p>
                                 <input type="file" id="matrixInput" accept=".xlsx,.xls" onchange="importMatrix(this)" class="hidden">
-                                ${Object.keys(matrix).length > 0 ? `<p class="mt-2 text-sm text-violet-600 font-medium">${Object.keys(matrix).length} тов.</p>` : ''}
-                            </div>
-                        </div>
-                        <div class="bg-white rounded-lg border border-gray-200 p-4">
-                            <div class="flex flex-col items-center text-center">
-                                <div class="p-3 bg-amber-50 rounded-lg text-amber-600 mb-3">${icons.package}</div>
-                                <h3 class="font-medium text-gray-800 mb-1">Ассортимент</h3>
-                                <p class="text-xs text-gray-400 mb-2">Группа | Наим | Код | Цена</p>
-                                <div class="flex gap-1 w-full">
-                                    <button onclick="document.getElementById('assortInput').click()" class="flex-1 px-2 py-1.5 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded hover:bg-amber-100">
-                                        📁 Файл
-                                    </button>
-                                    ${savedAssortments.length > 0 ? `
-                                    <button onclick="showAssortmentSelectModal()" class="flex-1 px-2 py-1.5 text-xs font-medium text-teal-700 bg-teal-50 border border-teal-200 rounded hover:bg-teal-100">
-                                        📂 Из списка
-                                    </button>
-                                    ` : ''}
+                                ${savedMatrices.length > 0 ? `
+                                <div class="space-y-0.5 mt-2 max-h-28 overflow-y-auto w-full">
+                                    ${savedMatrices.map(s => `
+                                        <div onclick="event.stopPropagation();loadSavedMatrixByName('${esc(s.name)}')" class="px-2 py-0.5 bg-violet-50 hover:bg-violet-100 rounded text-[11px] text-violet-700 cursor-pointer transition-colors flex justify-between items-center">
+                                            <span class="truncate font-medium">${s.name}</span>
+                                            <span class="text-violet-400 ml-1 shrink-0">${s.products || 0}</span>
+                                        </div>
+                                    `).join('')}
                                 </div>
+                                ` : ''}
+                                ${hasMarks ? `<p class="mt-2 text-sm text-violet-600 font-bold">${marksCount} тов.</p>` : ''}
+                            </div>
+                        </div>
+                        <!-- Ассортимент -->
+                        <div onclick="document.getElementById('assortInput').click()" class="bg-white rounded-lg border ${hasMatrix ? 'border-sky-300' : 'border-gray-200'} p-4 cursor-pointer hover:border-sky-400 transition-colors group">
+                            <div class="flex flex-col items-center text-center">
+                                <div class="p-3 bg-sky-50 rounded-lg text-sky-600 mb-2 group-hover:bg-sky-100 transition-colors">${icons.package}</div>
+                                <h3 class="font-medium text-gray-800 mb-1">Ассортимент</h3>
+                                <p class="text-xs text-gray-400">Нажмите чтобы загрузить из файла</p>
                                 <input type="file" id="assortInput" accept=".xlsx,.xls" onchange="importAssortment(this)" class="hidden">
-                                ${Object.keys(matrix).length > 0 ? `<p class="mt-2 text-sm text-amber-600 font-medium">${Object.keys(matrix).length} тов.</p>` : ''}
+                                ${savedAssortments.length > 0 ? `
+                                <div class="space-y-0.5 mt-2 max-h-28 overflow-y-auto w-full">
+                                    ${savedAssortments.map(s => `
+                                        <div onclick="event.stopPropagation();loadAssortmentByName('${esc(s.name)}')" class="px-2 py-0.5 bg-sky-50 hover:bg-sky-100 rounded text-[11px] text-sky-700 cursor-pointer transition-colors flex justify-between items-center">
+                                            <span class="truncate font-medium">${s.name}</span>
+                                            <span class="text-sky-400 ml-1 shrink-0">${s.count}</span>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                                ` : ''}
+                                ${hasMatrix ? `<p class="mt-2 text-sm text-sky-600 font-bold">${matrixCount} тов.</p>` : ''}
                             </div>
                         </div>
                     </div>
-                    
-                    ${savedAssortments.length > 0 ? `
-                    <div class="bg-teal-50 rounded-lg border border-teal-200 p-2">
-                        <div class="flex items-center gap-2 text-xs text-teal-700">
-                            <span>💾 Сохранённые ассортименты:</span>
-                            ${savedAssortments.slice(0, 3).map(s => `
-                                <button onclick="loadAssortmentByName('${s.name.replace(/'/g, "\\'")}')" class="px-2 py-1 bg-white border border-teal-300 rounded hover:bg-teal-100">
-                                    ${s.name} (${s.count})
-                                </button>
-                            `).join('')}
-                            ${savedAssortments.length > 3 ? `<button onclick="showAssortmentSelectModal()" class="px-2 py-1 text-teal-600 hover:underline">ещё ${savedAssortments.length - 3}...</button>` : ''}
-                        </div>
-                    </div>
-                    ` : ''}
-                    
-                    <div class="bg-white rounded-lg border border-gray-200 p-3">
+
+                    <!-- Нижняя панель настроек -->
+                    <div class="bg-white rounded-lg border ${canOrder ? 'border-green-300' : 'border-gray-200'} p-3 space-y-2">
+                        <!-- Строка 1: Период, Наценка, Индикаторы -->
                         <div class="flex flex-wrap items-center gap-3">
-                            <div class="flex items-center gap-2 bg-gray-50 px-3 py-2 rounded-md border border-gray-200">
-                                <label class="text-sm text-gray-600">Период:</label>
-                                <input type="number" value="${period}" onchange="period=parseInt(this.value)||21" class="input w-14 text-center" min="1" max="60">
-                                <span class="text-sm text-gray-500">дней</span>
+                            <div class="flex items-center gap-1.5 bg-gray-50 px-2.5 py-1.5 rounded-md border border-gray-200">
+                                <label class="text-xs text-gray-500">Период:</label>
+                                <input type="number" value="${period}" onchange="period=parseInt(this.value)||21" class="input w-12 text-center" min="1" max="60">
+                                <span class="text-xs text-gray-400">дн.</span>
                             </div>
-                            <div class="flex items-center gap-2 bg-gray-50 px-3 py-2 rounded-md border border-gray-200">
-                                <label class="text-sm text-gray-600">Наценка:</label>
-                                <input type="number" value="${defaultMarkup}" onchange="defaultMarkup=parseFloat(this.value)||25;save(KEYS.DEFAULT_MARKUP,defaultMarkup)" class="input w-14 text-center" step="0.1">
-                                <span class="text-sm text-gray-500">%</span>
+                            <div class="flex items-center gap-1.5 bg-gray-50 px-2.5 py-1.5 rounded-md border border-gray-200">
+                                <label class="text-xs text-gray-500">Наценка:</label>
+                                <input type="number" value="${defaultMarkup}" onchange="defaultMarkup=parseFloat(this.value)||25;save(KEYS.DEFAULT_MARKUP,defaultMarkup)" class="input w-12 text-center" step="0.1">
+                                <span class="text-xs text-gray-400">%</span>
                             </div>
-                            <span class="bg-orange-100 px-2 py-1 rounded-md text-xs text-orange-700">ТТ: ${stores.length}</span>
-                            <button onclick="if(confirm('Очистить все данные?'))clearAll()" class="btn px-3 py-1.5 text-sm font-medium text-red-600 bg-white border border-red-300 rounded-md hover:bg-red-50 ml-auto">${icons.trash}<span>Сброс</span></button>
+
+                            <div class="h-6 w-px bg-gray-200"></div>
+
+                            <!-- Индикаторы загрузки -->
+                            <div class="flex flex-wrap items-center gap-1.5">
+                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium ${hasMatrix ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-500'}">
+                                    ${hasMatrix ? '&#10003;' : '&#10007;'} Ассортимент: ${matrixCount}
+                                </span>
+                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium ${hasStocks ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-500'}">
+                                    ${hasStocks ? '&#10003;' : '&#10007;'} Остатки: ${stocks.length}
+                                </span>
+                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium ${hasSales ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-500'}">
+                                    ${hasSales ? '&#10003;' : '&#10007;'} Продажи: ${sales.length}
+                                </span>
+                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium ${hasStores ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-500'}">
+                                    ${hasStores ? '&#10003;' : '&#10007;'} Магазины: ${stores.length}
+                                </span>
+                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium ${hasMarks ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-500'}">
+                                    ${hasMarks ? '&#10003;' : '&#10007;'} Матрица: ${marksCount}
+                                </span>
+                            </div>
+                        </div>
+
+                        <!-- Строка 2: Кнопки -->
+                        <div class="flex items-center gap-3">
+                            ${canOrder ? `
+                            <button onclick="tab='order';searchResults='';render();setTimeout(()=>{const el=document.getElementById('orderSearchInput');if(el)el.focus();},50)" class="flex-1 max-w-xs py-2.5 text-sm font-bold text-white bg-gradient-to-r from-green-600 to-emerald-600 rounded-lg hover:from-green-700 hover:to-emerald-700 shadow-md hover:shadow-lg transition-all inline-flex items-center justify-center gap-2 cursor-pointer">
+                                ${icons.order} Сформировать заказ
+                                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+                            </button>
+                            ` : `
+                            <div class="flex-1 max-w-xs py-2.5 text-sm font-medium text-gray-400 bg-gray-100 rounded-lg border border-gray-200 text-center">
+                                ${icons.order} Сформировать заказ
+                            </div>
+                            `}
+                            <button onclick="if(confirm('Очистить все данные?'))clearAll()" class="flex-1 max-w-xs py-2.5 text-sm font-medium text-red-600 bg-white border border-red-200 rounded-lg hover:bg-red-50 transition-colors inline-flex items-center justify-center gap-2">
+                                ${icons.trash} Очистить
+                            </button>
                         </div>
                     </div>
                 </div>`;
@@ -390,7 +714,7 @@
                     <div class="bg-white rounded-lg border border-gray-200 p-4">
                         <div class="flex justify-between items-center mb-4">
                             <h2 class="text-base font-semibold text-gray-800 flex items-center gap-2">${icons.supplier}Поставщики</h2>
-                            <button onclick="saveCurrentSupplier()" class="btn px-4 py-2 text-sm font-medium text-white bg-amber-500 rounded-md hover:bg-amber-600" ${Object.keys(matrix).length === 0 ? 'disabled style="opacity:0.5"' : ''}>
+                            <button onclick="saveCurrentSupplier()" class="btn px-4 py-2 text-sm font-medium text-white bg-sky-500 rounded-md hover:bg-sky-600" ${Object.keys(matrix).length === 0 ? 'disabled style="opacity:0.5"' : ''}>
                                 ${icons.save}<span>Сохранить текущего</span>
                             </button>
                         </div>
@@ -401,7 +725,7 @@
                         ` : `
                             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                                 ${suppliers.map((s, i) => `
-                                    <div class="border border-gray-200 rounded-lg p-4 hover:border-amber-300 transition-colors ${currentSupplier === s.name ? 'border-amber-400 bg-amber-50' : ''}">
+                                    <div class="border border-gray-200 rounded-lg p-4 hover:border-sky-300 transition-colors ${currentSupplier === s.name ? 'border-sky-400 bg-sky-50' : ''}">
                                         <div class="flex justify-between items-start mb-2">
                                             <h3 class="font-semibold text-gray-800">${s.name}</h3>
                                             <button onclick="deleteSupplier(${i})" class="text-red-400 hover:text-red-600 p-1">${icons.trash}</button>
@@ -428,7 +752,7 @@
                         <input type="text" id="supplierName" placeholder="Название поставщика" class="w-full px-3 py-2 border rounded-lg mb-4">
                         <div class="flex justify-end gap-2">
                             <button onclick="hideSaveSupplierModal()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Отмена</button>
-                            <button onclick="confirmSaveSupplier()" class="px-4 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600">Сохранить</button>
+                            <button onclick="confirmSaveSupplier()" class="px-4 py-2 bg-sky-500 text-white rounded-lg hover:bg-sky-600">Сохранить</button>
                         </div>
                     </div>
                 </div>`;
@@ -454,6 +778,7 @@
             const supplierData = {
                 name,
                 matrix: JSON.parse(JSON.stringify(matrix)),
+                matrixMarks: JSON.parse(JSON.stringify(matrixMarks)),
                 sales: JSON.parse(JSON.stringify(sales)),
                 stocks: JSON.parse(JSON.stringify(stocks)),
                 groupMarkups: JSON.parse(JSON.stringify(groupMarkups)),
@@ -481,12 +806,14 @@
             if (Object.keys(matrix).length > 0 && !confirm('Заменить данные?')) return;
             
             matrix = JSON.parse(JSON.stringify(s.matrix || {}));
+            matrixMarks = JSON.parse(JSON.stringify(s.matrixMarks || {}));
             sales = JSON.parse(JSON.stringify(s.sales || []));
             stocks = JSON.parse(JSON.stringify(s.stocks || []));
             groupMarkups = JSON.parse(JSON.stringify(s.groupMarkups || {}));
             currentSupplier = s.name;
             
-            save(KEYS.MATRIX, matrix);
+            save(KEYS.ASSORTMENT, matrix);
+            save(KEYS.MATRIX_MARKS, matrixMarks);
             save(KEYS.SALES, sales);
             save(KEYS.STOCKS, stocks);
             save(KEYS.GROUP_MARKUPS, groupMarkups);
@@ -509,6 +836,7 @@
             return Array.from(groups).sort((a, b) => a.localeCompare(b, 'ru'));
         }
 
+        // === АССОРТИМЕНТ ===
         function renderAssortment() {
             const totalItems = Object.keys(matrix).length;
             const allGroups = getAllGroups();
@@ -516,25 +844,25 @@
             let html = `<div class="bg-white rounded-lg border border-gray-200 p-3 mb-3">
                 <div class="flex justify-between items-center">
                     <div class="flex gap-2 items-center">
-                        <div class="bg-amber-100 text-amber-800 rounded-lg px-3 py-1.5">
+                        <div class="bg-sky-100 text-sky-800 rounded-lg px-3 py-1.5">
                             <span class="text-xs">Товаров: </span><strong>${totalItems}</strong>
                         </div>
                         <div class="bg-blue-100 text-blue-800 rounded-lg px-3 py-1.5">
                             <span class="text-xs">Групп: </span><strong>${allGroups.length}</strong>
                         </div>
                         <div class="relative">
-                            <input type="text" placeholder="Поиск по названию или коду..." value="${searchAssort}" oninput="searchAssort=this.value;render()" class="pl-8 pr-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-amber-400 w-56">
+                            <input type="text" placeholder="Поиск по названию или коду..." value="${searchAssort}" oninput="searchAssort=this.value;render()" class="pl-8 pr-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-sky-400 w-56">
                             <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400">${icons.search}</span>
                             ${searchAssort ? `<button onclick="searchAssort='';render()" class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">✕</button>` : ''}
                         </div>
-                        <select onchange="filterGroup=this.value;render()" class="px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-amber-400">
+                        <select onchange="filterGroup=this.value;render()" class="px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-sky-400">
                             <option value="">Все группы</option>
                             ${allGroups.map(g => `<option value="${g}" ${filterGroup === g ? 'selected' : ''}>${g}</option>`).join('')}
                         </select>
                     </div>
                     <div class="flex gap-2">
                         <button onclick="showAddProductModal()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700">${icons.plus} Добавить</button>
-                        <button onclick="exportAssortment()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">${icons.download} Экспорт</button>
+                        <button onclick="exportAssortment()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">${icons.export} Экспорт</button>
                     </div>
                 </div>
             </div>`;
@@ -572,22 +900,22 @@
                         </thead>
                         <tbody>
                             ${Object.entries(grouped).sort((a,b) => a[0].localeCompare(b[0], 'ru')).map(([gr, items]) => `
-                                <tr class="bg-amber-50 cursor-pointer hover:bg-amber-100" onclick="collapsedG['${gr}']=!collapsedG['${gr}'];render()">
-                                    <td colspan="9" class="font-semibold text-amber-800">
+                                <tr class="bg-sky-50 cursor-pointer hover:bg-sky-100" onclick="collapsedG['${esc(gr)}']=!collapsedG['${esc(gr)}'];render()">
+                                    <td colspan="9" class="font-semibold text-sky-800">
                                         <span class="flex items-center gap-2">${collapsedG[gr] ? icons.chevronRight : icons.chevronDown}${gr} (${items.length})</span>
                                     </td>
                                 </tr>
                                 ${collapsedG[gr] ? '' : items.map(p => `
                                     <tr class="hover:bg-gray-50">
-                                        <td class="text-xs"><input type="text" value="${p.group || ''}" onchange="updateProduct('${p.code}', 'group', this.value)" class="input w-32 text-xs" placeholder="Группа"></td>
-                                        <td class="font-medium text-gray-700">${p.nomenclature || ''}</td>
+                                        <td class="text-xs"><input type="text" value="${p.group || ''}" onchange="updateProduct('${esc(p.code)}', 'group', this.value)" class="input w-32 text-xs" placeholder="Группа"></td>
+                                        <td class="font-medium text-gray-700 text-left">${p.nomenclature || ''}</td>
                                         <td class="font-mono text-xs text-gray-600">${p.code}</td>
                                         <td class="text-center text-gray-500">${p.packaging || 'ШТ'}</td>
-                                        <td class="text-xs"><input type="text" value="${p.supplier || ''}" onchange="updateProduct('${p.code}', 'supplier', this.value)" class="input w-24 text-xs" placeholder="Поставщик"></td>
-                                        <td class="text-right"><input type="number" step="0.01" value="${p.price || 0}" onchange="updateProduct('${p.code}', 'price', parseFloat(this.value)||0)" class="input w-16 text-right text-xs"></td>
-                                        <td class="text-right"><input type="number" step="0.01" value="${p.shelf || 0}" onchange="updateProduct('${p.code}', 'shelf', parseFloat(this.value)||0)" class="input w-16 text-right text-xs"></td>
-                                        <td class="text-center"><input type="number" value="${p.quant || 1}" onchange="updateProduct('${p.code}', 'quant', parseFloat(this.value)||1)" class="input w-12 text-center text-xs" step="1"></td>
-                                        <td class="text-center"><button onclick="event.stopPropagation();deleteProduct('${p.code}')" class="text-red-500 hover:text-red-700 p-1">${icons.trash}</button></td>
+                                        <td class="text-xs"><input type="text" value="${p.supplier || ''}" onchange="updateProduct('${esc(p.code)}', 'supplier', this.value)" class="input w-24 text-xs" placeholder="Поставщик"></td>
+                                        <td class="text-right"><input type="number" step="0.01" value="${p.price || 0}" onchange="updateProduct('${esc(p.code)}', 'price', parseFloat(this.value)||0)" class="input w-16 text-right text-xs"></td>
+                                        <td class="text-right"><input type="number" step="0.01" value="${p.shelf || 0}" onchange="updateProduct('${esc(p.code)}', 'shelf', parseFloat(this.value)||0)" class="input w-16 text-right text-xs"></td>
+                                        <td class="text-center"><input type="number" value="${p.quant || 1}" onchange="updateProduct('${esc(p.code)}', 'quant', parseFloat(this.value)||1)" class="input w-12 text-center text-xs" step="1"></td>
+                                        <td class="text-center"><button onclick="event.stopPropagation();deleteProduct('${esc(p.code)}')" class="text-red-500 hover:text-red-700 p-1">${icons.trash}</button></td>
                                     </tr>
                                 `).join('')}
                             `).join('')}
@@ -621,17 +949,25 @@
         }
 
         function updateProduct(code, field, value) {
-            if (matrix[code]) {
-                matrix[code][field] = value;
-                save(KEYS.MATRIX, matrix);
-                if (['inPrice', 'markup', 'group'].includes(field)) render();
-            }
+            const nc = normCode(code);
+            const product = matrix[nc] || matrix[code];
+            if (!product) return;
+            product[field] = value;
+            save(KEYS.ASSORTMENT, matrix);
+            if (['inPrice', 'markup', 'group'].includes(field)) render();
         }
 
         function deleteProduct(code) {
-            if (confirm(`Удалить "${matrix[code]?.nomenclature || code}"?`)) {
-                delete matrix[code];
-                save(KEYS.MATRIX, matrix);
+            const nc = normCode(code);
+            const product = matrix[nc] || matrix[code];
+            const key = matrix[nc] ? nc : code;
+            if (!product) return;
+            if (confirm(`Удалить "${product.nomenclature || code}"?`)) {
+                delete matrix[key];
+                delete matrixMarks[nc];
+                delete matrixMarks[code];
+                save(KEYS.ASSORTMENT, matrix);
+                save(KEYS.MATRIX_MARKS, matrixMarks);
                 render();
             }
         }
@@ -658,14 +994,16 @@
                 group: document.getElementById('newProductGroup').value.trim(),
                 packaging: document.getElementById('newProductPackaging').value.trim() || 'ШТ',
                 quant: parseFloat(document.getElementById('newProductQuant').value) || 1,
-                inPrice: parseFloat(document.getElementById('newProductPrice').value) || 0
+                inPrice: parseFloat(document.getElementById('newProductPrice').value) || 0,
+                markup: defaultMarkup
             };
-            save(KEYS.MATRIX, matrix);
+            save(KEYS.ASSORTMENT, matrix);
             hideAddProductModal();
             render();
         }
 
         function importAssortment(input) {
+            resetSavedOrders();
             const file = input.files[0];
             if (!file) return;
             const reader = new FileReader();
@@ -682,12 +1020,13 @@
                             code, group: String(row['Группа'] || row['Категория'] || '').trim(),
                             packaging: String(row['Упак'] || 'ШТ').trim(),
                             quant: parseFloat(row['Квант']) || 1,
-                            inPrice: parseFloat(row['Вх. цена'] || row['Цена'] || 0) || 0
+                            inPrice: parseFloat(row['Вх. цена'] || row['Цена'] || 0) || 0,
+                            markup: defaultMarkup
                         };
                     });
-                    save(KEYS.MATRIX, matrix);
+                    save(KEYS.ASSORTMENT, matrix);
                     render();
-                    alert(`Импортировано ${Object.keys(matrix).length} товаров`);
+                    alert(`Импортировано ${Object.keys(matrix).length} товаров\nОтметки матрицы не затронуты (${Object.keys(matrixMarks).length} товаров)`);
                 } catch (err) { alert('Ошибка: ' + err.message); }
             };
             reader.readAsArrayBuffer(file);
@@ -695,17 +1034,19 @@
         }
 
         function exportAssortment() {
-            const rows = [['Группа', 'Наименование', 'Код', 'Упаковка', 'Поставщик', 'Цена', 'Полка', 'Квант']];
-            Object.values(matrix).forEach(p => rows.push([p.group || '', p.nomenclature || '', p.code, p.packaging || 'ШТ', p.supplier || '', p.price || 0, p.shelf || 0, p.quant || 1]));
+            const headers = ['Группа', 'Наименование', 'Код', 'Упаковка', 'Поставщик', 'Цена', 'Полка', 'Квант'];
+            const data = [];
+            Object.values(matrix).forEach(p => data.push([p.group || '', p.nomenclature || '', p.code, p.packaging || 'ШТ', p.supplier || '', p.price || 0, p.shelf || 0, p.quant || 1]));
+            const ws = SharedUtils.createStyledSheet(data, headers, [0, 1, 4]);
             const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Ассортимент');
-            XLSX.writeFile(wb, 'assortment.xlsx');
+            XLSX.utils.book_append_sheet(wb, ws, 'Ассортимент');
+            const d = new Date(); XLSX.writeFile(wb, `ассортимент_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}.xlsx`);
         }
 
+        // === МАТРИЦА ===
         function renderMatrix() {
             if (Object.keys(matrix).length === 0) return `<div class="bg-white rounded-lg border border-gray-200 p-4"><div class="text-center py-12">${icons.db}<p class="text-gray-500 mt-3">Загрузите данные</p></div></div>`;
 
-            // Группировка по группам
             const grouped = {};
             Object.entries(matrix).forEach(([code, p]) => {
                 const gr = p.group || 'Без группы';
@@ -716,8 +1057,11 @@
             return `<div class="bg-white rounded-lg border border-gray-200 p-3 mb-3">
                 <div class="flex justify-between items-center">
                     <div class="flex gap-2 items-center">
-                        <div class="bg-amber-100 text-amber-800 rounded-lg px-3 py-1.5">
+                        <div class="bg-sky-100 text-sky-800 rounded-lg px-3 py-1.5">
                             <span class="text-xs">Товаров: </span><strong>${Object.keys(matrix).length}</strong>
+                        </div>
+                        <div class="bg-violet-100 text-violet-800 rounded-lg px-3 py-1.5">
+                            <span class="text-xs">В матрице: </span><strong>${Object.keys(matrixMarks).length}</strong>
                         </div>
                         <div class="bg-blue-100 text-blue-800 rounded-lg px-3 py-1.5">
                             <span class="text-xs">Магазинов: </span><strong>${stores.length}</strong>
@@ -726,13 +1070,12 @@
                     <div class="flex gap-2">
                         <button onclick="document.getElementById('matrixImportInput').click()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700">${icons.import} Импорт</button>
                         <input type="file" id="matrixImportInput" accept=".xlsx,.xls" onchange="importMatrix(this)" class="hidden">
-                        <button onclick="exportMatrix()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">${icons.download} Экспорт</button>
+                        <button onclick="exportMatrix()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">${icons.export} Экспорт</button>
                     </div>
                 </div>
             </div>
             
             <div class="bg-white rounded-lg border border-gray-200 overflow-hidden">
-                <div class="text-xs text-gray-500 p-2">Клик для переключения ДА/НЕТ</div>
                 <div class="table-container">
                     <table class="table-modern">
                         <thead>
@@ -746,7 +1089,7 @@
                         </thead>
                         <tbody>
                             ${Object.entries(grouped).sort((a,b) => a[0].localeCompare(b[0], 'ru')).map(([gr, items]) => `
-                                <tr class="group-header cursor-pointer" onclick="collapsedG['matrix_${gr}']=!collapsedG['matrix_${gr}'];render()">
+                                <tr class="group-header cursor-pointer" onclick="collapsedG['matrix_${esc(gr)}']=!collapsedG['matrix_${esc(gr)}'];render()">
                                     <td colspan="${3 + stores.length}" class="text-left py-1 px-2">
                                         <div class="flex items-center gap-2">
                                             ${collapsedG['matrix_' + gr] ? icons.chevronRight : icons.chevronDown}
@@ -755,19 +1098,24 @@
                                         </div>
                                     </td>
                                 </tr>
-                                ${collapsedG['matrix_' + gr] ? '' : items.map(p => `
-                                    <tr class="hover:bg-gray-50">
+                                ${collapsedG['matrix_' + gr] ? '' : items.map(p => {
+                                    const inMatrix = !!matrixMarks[p.code];
+                                    return `
+                                    <tr class="hover:bg-gray-50 ${inMatrix ? '' : 'opacity-60'}">
                                         <td class="text-left text-[10px] sticky left-0 bg-white z-10">${p.group || ''}</td>
                                         <td class="text-left font-medium text-xs">${p.nomenclature || ''}</td>
                                         <td class="font-mono text-[10px]">${p.code}</td>
-                                        ${stores.map(s => `
-                                            <td class="text-center cursor-pointer font-medium select-none ${p[s.tt] === 'ДА' ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200' : 'bg-rose-50 text-rose-600 hover:bg-rose-100'}" onclick="toggleMatrixCell('${p.code}', '${s.tt}')">
-                                                ${p[s.tt] === 'ДА' ? icons.check : ''}
-                                            </td>
-                                        `).join('')}
-                                        <td class="text-center"><button onclick="event.stopPropagation();deleteFromMatrix('${p.code}')" class="text-red-500 hover:text-red-700 p-1">${icons.trash}</button></td>
-                                    </tr>
-                                `).join('')}
+                                        ${stores.map(s => {
+                                            const mark = matrixMarks[p.code] ? matrixMarks[p.code][s.tt] : null;
+                                            const isYes = mark === 'ДА';
+                                            const isNo = mark === 'НЕТ';
+                                            return `<td class="text-center cursor-pointer font-medium select-none ${isYes ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200' : isNo ? 'bg-rose-50 text-rose-600 hover:bg-rose-100' : 'bg-gray-50 text-gray-300 hover:bg-gray-100'}" onclick="toggleMatrixCell('${esc(p.code)}', '${esc(s.tt)}')">
+                                                ${isYes ? icons.check : ''}
+                                            </td>`;
+                                        }).join('')}
+                                        <td class="text-center"><button onclick="event.stopPropagation();deleteFromMatrix('${esc(p.code)}')" class="text-red-500 hover:text-red-700 p-1">${icons.trash}</button></td>
+                                    </tr>`;
+                                }).join('')}
                             `).join('')}
                         </tbody>
                     </table>
@@ -776,22 +1124,24 @@
         }
 
         function toggleMatrixCell(code, tt) {
-            if (matrix[code]) {
-                matrix[code][tt] = matrix[code][tt] === 'ДА' ? 'НЕТ' : 'ДА';
-                save(KEYS.MATRIX, matrix);
-                render();
-            }
+            if (!matrixMarks[code]) matrixMarks[code] = {};
+            matrixMarks[code][tt] = matrixMarks[code][tt] === 'ДА' ? 'НЕТ' : 'ДА';
+            save(KEYS.MATRIX_MARKS, matrixMarks);
+            render();
         }
 
         function deleteFromMatrix(code) {
             if (confirm(`Удалить "${matrix[code]?.nomenclature || code}"?`)) {
                 delete matrix[code];
-                save(KEYS.MATRIX, matrix);
+                delete matrixMarks[code];
+                save(KEYS.ASSORTMENT, matrix);
+                save(KEYS.MATRIX_MARKS, matrixMarks);
                 render();
             }
         }
 
         function importMatrix(input) {
+            resetSavedOrders();
             const file = input.files[0];
             if (!file) return;
             const reader = new FileReader();
@@ -805,23 +1155,29 @@
                     json.forEach(row => {
                         const code = normCode(String(row['Код'] || ''));
                         if (!code) return;
-                        if (!matrix[code]) matrix[code] = { nomenclature: String(row['Наименование'] || '').trim(), code };
-                        // Обновляем группу
-                        matrix[code].group = String(row['Группа'] || '').trim();
-                        // Обновляем магазины (начиная с 4-й колонки - индекс 3)
+                        
+                        if (!matrix[code]) {
+                            matrix[code] = { nomenclature: String(row['Наименование'] || '').trim(), code, group: String(row['Группа'] || '').trim() };
+                        } else {
+                            if (!matrix[code].group) matrix[code].group = String(row['Группа'] || '').trim();
+                            if (!matrix[code].nomenclature) matrix[code].nomenclature = String(row['Наименование'] || '').trim();
+                        }
+                        
+                        if (!matrixMarks[code]) matrixMarks[code] = {};
                         headers.forEach((h, i) => {
                             if (i > 2 && h) {
                                 const ttName = String(h).trim();
                                 if (stores.some(s => s.tt === ttName)) {
                                     const val = String(row[ttName] || Object.values(row)[i] || '').toUpperCase();
-                                    matrix[code][ttName] = val === 'ДА' || val === 'YES' || val === '1' ? 'ДА' : 'НЕТ';
+                                    matrixMarks[code][ttName] = val === 'ДА' || val === 'YES' || val === '1' ? 'ДА' : 'НЕТ';
                                 }
                             }
                         });
                     });
-                    save(KEYS.MATRIX, matrix);
+                    save(KEYS.ASSORTMENT, matrix);
+                    save(KEYS.MATRIX_MARKS, matrixMarks);
                     render();
-                    alert(`Обновлено ${Object.keys(matrix).length} товаров`);
+                    alert(`Ассортимент: ${Object.keys(matrix).length} товаров\nОтметки матрицы: ${Object.keys(matrixMarks).length} товаров`);
                 } catch (err) { alert('Ошибка: ' + err.message); }
             };
             reader.readAsArrayBuffer(file);
@@ -831,17 +1187,19 @@
         function exportMatrix() {
             if (Object.keys(matrix).length === 0) { alert('Нет данных'); return; }
             const headers = ['Группа', 'Наименование', 'Код', ...stores.map(s => s.tt)];
-            const rows = [headers];
+            const data = [];
             Object.entries(matrix).forEach(([code, p]) => {
                 const row = [p.group || '', p.nomenclature || '', code];
-                stores.forEach(s => row.push(p[s.tt] === 'ДА' ? 'ДА' : 'НЕТ'));
-                rows.push(row);
+                stores.forEach(s => row.push((matrixMarks[code] && matrixMarks[code][s.tt] === 'ДА') ? 'ДА' : 'НЕТ'));
+                data.push(row);
             });
+            const ws = SharedUtils.createStyledSheet(data, headers, [0, 1]);
             const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Матрица');
-            XLSX.writeFile(wb, 'matrix.xlsx');
+            XLSX.utils.book_append_sheet(wb, ws, 'Матрица');
+            const d = new Date(); XLSX.writeFile(wb, `матрица_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}.xlsx`);
         }
 
+        // === ЦЕНЫ ===
         function renderPrices() {
             const allGroups = getAllGroups();
             let totalRevenue = 0, totalProfit = 0, totalPurchase = 0;
@@ -898,7 +1256,7 @@
                             return `<div class="bg-gray-50 rounded px-2 py-2 text-xs border">
                                 <div class="font-medium text-gray-700 break-words leading-tight" style="min-height: 32px; word-break: break-word;">${group}</div>
                                 <div class="flex items-center gap-1 mt-1">
-                                    <input type="number" value="${markup}" onchange="updateGroupMarkup('${group}', this.value)" placeholder="${defaultMarkup}" class="input w-14 text-center text-xs font-bold py-0.5" step="0.1">
+                                    <input type="number" value="${markup}" onchange="updateGroupMarkup('${esc(group)}', this.value)" placeholder="${defaultMarkup}" class="input w-14 text-center text-xs font-bold py-0.5" step="0.1">
                                     <span class="text-gray-400 text-[10px]">%</span>
                                 </div>
                             </div>`;
@@ -910,7 +1268,7 @@
                     <div class="flex justify-between items-center mb-3">
                         <h2 class="text-sm font-semibold text-gray-800 flex items-center gap-2">${icons.dollar}Цены по товарам</h2>
                         <div class="flex gap-2">
-                            <input type="text" placeholder="Поиск..." value="${searchPrices}" oninput="searchPrices=this.value;render()" class="input w-40">
+                            <input id="pricesSearchInput" type="text" placeholder="Поиск..." value="${searchPrices}" oninput="debounceSearchPrices(this)" class="input w-40">
                             <button onclick="exportPrices()" class="btn px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50">${icons.download}</button>
                         </div>
                     </div>
@@ -918,37 +1276,59 @@
                         <table class="table-modern">
                             <thead>
                                 <tr>
-                                    <th class="text-left">Наименование</th>
                                     <th class="text-left">Группа</th>
-                                    <th class="text-right">Вход. цена</th>
-                                    <th class="text-right bg-green-100">Полка ₽</th>
-                                    <th class="text-right bg-orange-100">Наценка %</th>
-                                    <th class="text-right">Доход ₽</th>
-                                    <th class="text-right">Доход %</th>
+                                    <th class="text-left">Наименование</th>
+                                    <th class="text-center">Код</th>
+                                    <th class="text-center">Вход. цена</th>
+                                    <th class="text-center bg-green-100">Полка ₽</th>
+                                    <th class="text-center bg-orange-100">Наценка %</th>
+                                    <th class="text-center">Доход ₽</th>
+                                    <th class="text-center">Доход %</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                ${Object.entries(matrix).filter(([code, p]) => {
-                                    if (!searchPrices) return true;
-                                    return p.nomenclature?.toLowerCase().includes(searchPrices.toLowerCase()) || code.includes(searchPrices);
-                                }).map(([code, p]) => {
-                                    const inPrice = p.inPrice || 0;
-                                    const markup = p.markup ?? groupMarkups[p.group || ''] ?? defaultMarkup;
-                                    const shelfPrice = Math.round(inPrice * (1 + markup / 100));
-                                    const profit = shelfPrice - inPrice;
-                                    const profitPercent = inPrice > 0 ? ((profit / inPrice) * 100).toFixed(1) : 0;
-                                    const hasIndividual = p.markup !== undefined && p.markup !== null;
-                                    return `
-                                        <tr class="hover:bg-gray-50">
-                                            <td class="font-medium text-gray-700">${p.nomenclature || ''}</td>
-                                            <td class="text-xs text-gray-500">${p.group || ''}</td>
-                                            <td class="text-right"><input type="number" value="${inPrice}" onchange="updateProduct('${code}', 'inPrice', parseFloat(this.value)||0)" class="input w-20 text-right text-xs"></td>
-                                            <td class="text-right font-semibold bg-green-50">${shelfPrice.toLocaleString('ru-RU')} ₽</td>
-                                            <td class="text-right bg-orange-50"><input type="number" value="${hasIndividual ? p.markup : ''}" onchange="updateProductMarkup('${code}', this.value)" placeholder="${groupMarkups[p.group || ''] ?? defaultMarkup}" class="input w-14 text-right text-xs font-bold ${hasIndividual ? 'text-blue-700' : ''}"></td>
-                                            <td class="text-right font-medium ${profit > 0 ? 'text-emerald-600' : 'text-gray-500'}">${profit.toLocaleString('ru-RU')} ₽</td>
-                                            <td class="text-right font-medium ${profit > 0 ? 'text-emerald-600' : 'text-gray-500'}">${profitPercent}%</td>
-                                        </tr>`;
-                                }).join('')}
+                                ${(() => {
+                                    const grouped = {};
+                                    Object.entries(matrix).forEach(([code, p]) => {
+                                        if (searchPrices && !p.nomenclature?.toLowerCase().includes(searchPrices.toLowerCase()) && !code.includes(searchPrices)) return;
+                                        const gr = p.group || 'Без группы';
+                                        if (!grouped[gr]) grouped[gr] = [];
+                                        grouped[gr].push({ code, ...p });
+                                    });
+                                    Object.keys(grouped).forEach(gr => {
+                                        grouped[gr].sort((a, b) => (a.nomenclature || '').localeCompare(b.nomenclature || '', 'ru'));
+                                    });
+                                    return Object.entries(grouped).sort((a,b) => a[0].localeCompare(b[0], 'ru')).map(([gr, items]) => `
+                                        <tr class="group-header cursor-pointer" onclick="collapsedG['prices_${esc(gr)}']=!collapsedG['prices_${esc(gr)}'];renderPricesDebounced()">
+                                            <td colspan="8" class="text-left py-1 px-2">
+                                                <div class="flex items-center gap-2">
+                                                    ${collapsedG['prices_' + gr] ? icons.chevronRight : icons.chevronDown}
+                                                    <span class="font-semibold">${gr}</span>
+                                                    <span class="text-[10px] bg-indigo-200 text-indigo-800 px-1 rounded">${items.length}</span>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                        ${collapsedG['prices_' + gr] ? '' : items.map(p => {
+                                            const inPrice = p.inPrice || 0;
+                                            const markup = p.markup ?? groupMarkups[p.group || ''] ?? defaultMarkup;
+                                            const shelfPrice = Math.round(inPrice * (1 + markup / 100));
+                                            const profit = shelfPrice - inPrice;
+                                            const profitPercent = inPrice > 0 ? ((profit / inPrice) * 100).toFixed(1) : 0;
+                                            const hasIndividual = p.markup !== undefined && p.markup !== null;
+                                            return `
+                                                <tr class="hover:bg-gray-50">
+                                                    <td class="text-left text-[10px] text-gray-500">${p.group || ''}</td>
+                                                    <td class="text-left font-medium text-gray-700">${p.nomenclature || ''}</td>
+                                                    <td class="text-center font-mono text-[10px] text-gray-500">${p.code}</td>
+                                                    <td class="text-center"><input type="number" value="${inPrice}" oninput="handlePriceInput(this)" class="input w-20 text-center text-xs"></td>
+                                                    <td class="text-center font-semibold bg-green-50" id="shelf_${p.code}">${shelfPrice.toLocaleString('ru-RU')} ₽</td>
+                                                    <td class="text-center bg-orange-50"><input type="number" value="${hasIndividual ? p.markup : ''}" oninput="handleMarkupInput(this)" placeholder="${groupMarkups[p.group || ''] ?? defaultMarkup}" class="input w-14 text-center text-xs font-bold ${hasIndividual ? 'text-blue-700' : ''}"></td>
+                                                    <td class="text-center font-medium ${profit > 0 ? 'text-emerald-600' : 'text-gray-500'}">${profit.toLocaleString('ru-RU')} ₽</td>
+                                                    <td class="text-center font-medium ${profit > 0 ? 'text-emerald-600' : 'text-gray-500'}">${profitPercent}%</td>
+                                                </tr>`;
+                                        }).join('')}
+                                    `).join('');
+                                })()}
                             </tbody>
                         </table>
                     </div>
@@ -964,96 +1344,248 @@
         }
 
         function updateProductMarkup(code, value) {
-            if (matrix[code]) {
-                if (value === '' || value === null) delete matrix[code].markup;
-                else matrix[code].markup = parseFloat(value) || 0;
-                save(KEYS.MATRIX, matrix);
-                render();
-            }
+            const nc = normCode(code);
+            const product = matrix[nc] || matrix[code];
+            if (!product) return;
+            if (value === '' || value === null) delete product.markup;
+            else product.markup = parseFloat(value) || 0;
+            save(KEYS.ASSORTMENT, matrix);
+            render();
+        }
+
+        // === ЖИВОЕ ОБНОВЛЕНИЕ ЦЕН (без полного рендера) ===
+        function handlePriceInput(inputEl) {
+            const row = inputEl.closest('tr');
+            if (!row) return;
+            const codeCell = row.querySelectorAll('td')[2];
+            const code = normCode(codeCell.textContent.trim());
+            const product = matrix[code];
+            if (!product) return;
+
+            const val = parseFloat(inputEl.value) || 0;
+            product.inPrice = val;
+            save(KEYS.ASSORTMENT, matrix);
+
+            const markup = product.markup ?? groupMarkups[product.group || ''] ?? defaultMarkup;
+            const shelfPrice = Math.round(val * (1 + markup / 100));
+            const profit = shelfPrice - val;
+            const profitPercent = val > 0 ? ((profit / val) * 100).toFixed(1) : 0;
+
+            const cells = row.querySelectorAll('td');
+            cells[4].innerHTML = shelfPrice.toLocaleString('ru-RU') + ' ₽';
+            cells[6].innerHTML = profit.toLocaleString('ru-RU') + ' ₽';
+            cells[7].innerHTML = profitPercent + '%';
+            cells[6].className = 'text-center font-medium ' + (profit > 0 ? 'text-emerald-600' : 'text-gray-500');
+            cells[7].className = 'text-center font-medium ' + (profit > 0 ? 'text-emerald-600' : 'text-gray-500');
+        }
+
+        function handleMarkupInput(inputEl) {
+            const row = inputEl.closest('tr');
+            if (!row) return;
+            const codeCell = row.querySelectorAll('td')[2];
+            const code = normCode(codeCell.textContent.trim());
+            const product = matrix[code];
+            if (!product) return;
+
+            const val = inputEl.value === '' ? null : (parseFloat(inputEl.value) || 0);
+            if (val === null) delete product.markup;
+            else product.markup = val;
+            save(KEYS.ASSORTMENT, matrix);
+
+            const effectiveMarkup = val ?? groupMarkups[product.group || ''] ?? defaultMarkup;
+            const inPrice = product.inPrice || 0;
+            const shelfPrice = Math.round(inPrice * (1 + effectiveMarkup / 100));
+            const profit = shelfPrice - inPrice;
+            const profitPercent = inPrice > 0 ? ((profit / inPrice) * 100).toFixed(1) : 0;
+
+            const cells = row.querySelectorAll('td');
+            cells[4].innerHTML = shelfPrice.toLocaleString('ru-RU') + ' ₽';
+            cells[6].innerHTML = profit.toLocaleString('ru-RU') + ' ₽';
+            cells[7].innerHTML = profitPercent + '%';
+            cells[6].className = 'text-center font-medium ' + (profit > 0 ? 'text-emerald-600' : 'text-gray-500');
+            cells[7].className = 'text-center font-medium ' + (profit > 0 ? 'text-emerald-600' : 'text-gray-500');
+            inputEl.className = 'input w-14 text-center text-xs font-bold ' + (val !== null ? 'text-blue-700' : '');
         }
 
         function exportPrices() {
-            const rows = [['Группа', 'Наименование', 'Код', 'Вход. цена', 'Наценка %', 'Полка', 'Доход ₽', 'Доход %']];
+            const headers = ['Группа', 'Наименование', 'Код', 'Вход. цена', 'Наценка %', 'Полка', 'Доход ₽', 'Доход %'];
+            const data = [];
             Object.entries(matrix).forEach(([code, p]) => {
                 const inPrice = p.inPrice || 0;
                 const markup = p.markup ?? groupMarkups[p.group || ''] ?? defaultMarkup;
                 const shelfPrice = Math.round(inPrice * (1 + markup / 100));
                 const profit = shelfPrice - inPrice;
-                rows.push([p.group || '', p.nomenclature || '', code, inPrice, markup, shelfPrice, profit, inPrice > 0 ? ((profit / inPrice) * 100).toFixed(1) + '%' : '0%']);
+                data.push([p.group || '', p.nomenclature || '', code, inPrice, markup, shelfPrice, profit, inPrice > 0 ? ((profit / inPrice) * 100).toFixed(1) + '%' : '0%']);
             });
+            const ws = SharedUtils.createStyledSheet(data, headers, [0, 1]);
             const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Цены');
-            XLSX.writeFile(wb, 'prices.xlsx');
+            XLSX.utils.book_append_sheet(wb, ws, 'Цены');
+            const d = new Date(); XLSX.writeFile(wb, `цены_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}.xlsx`);
+        }
+
+        // === DEBOUNCE ПОИСКА ===
+        let searchTimeoutPrices = null;
+        function debounceSearchPrices(input) {
+            const val = input.value;
+            const pos = input.selectionStart;
+            clearTimeout(searchTimeoutPrices);
+            searchTimeoutPrices = setTimeout(() => {
+                searchPrices = val;
+                render();
+                setTimeout(() => {
+                    const el = document.getElementById('pricesSearchInput');
+                    if (el) { el.focus(); el.setSelectionRange(pos, pos); }
+                }, 10);
+            }, 300);
+        }
+
+        let searchTimeoutResults = null;
+        function debounceSearchResults(input) {
+            const val = input.value;
+            const pos = input.selectionStart;
+            clearTimeout(searchTimeoutResults);
+            searchTimeoutResults = setTimeout(() => {
+                searchResults = val;
+                render();
+                setTimeout(() => {
+                    const el = document.getElementById('orderSearchInput');
+                    if (el) { el.focus(); el.setSelectionRange(pos, pos); }
+                }, 10);
+            }, 300);
+        }
+
+        let renderTimeoutPrices = null;
+        function renderPricesDebounced() {
+            clearTimeout(renderTimeoutPrices);
+            renderTimeoutPrices = setTimeout(() => render(), 0);
         }
 
         // === ЗАКАЗ ===
-        function calcOrder(stock, avgDay, periodDays, quant) {
-            const prelimOrder = avgDay * periodDays;
-            const order = stock - prelimOrder;
-            if (order > 6) return 0;
-            if (order < 0) {
-                const need = Math.abs(order);
-                return Math.ceil(need / quant) * quant;
+        function roundOrderQty(rawOrder, quant) {
+            if (rawOrder <= 2) return 0;
+            return Math.max(quant, Math.round(rawOrder / quant) * quant);
+        }
+
+        function calcOrder(stock, avgDay, periodDays, quant, shelf, packaging) {
+            const minStock = shelf || 0;
+            const prelim = stock - (avgDay * periodDays) - minStock;
+
+            if (prelim > 1) return 0;
+
+            let rawOrder;
+            if (prelim < 0) {
+                rawOrder = Math.abs(prelim);
+            } else {
+                rawOrder = 1;
             }
-            if (order >= 0 && order <= 6) {
-                const need = Math.max(1, order);
-                return Math.ceil(need / quant) * quant;
+
+            if (packaging === 'КГ') {
+                return Math.ceil(rawOrder / quant) * quant;
             }
-            return 0;
+
+            return roundOrderQty(rawOrder, quant);
         }
 
         function renderOrder() {
-            if (Object.keys(matrix).length === 0) return `<div class="bg-white rounded-lg border border-gray-200 p-4"><div class="text-center py-12">${icons.db}<p class="text-gray-500 mt-3">Загрузите данные</p></div></div>`;
-            if (stores.length === 0) return `<div class="bg-white rounded-lg border border-gray-200 p-4"><div class="text-center py-12">${icons.db}<p class="text-gray-500 mt-3">Загрузите магазины</p></div></div>`;
+            if (Object.keys(matrix).length === 0 || stores.length === 0) {
+                const missing = [];
+                if (Object.keys(matrix).length === 0) missing.push({ label: 'Ассортимент', tab: 'upload' });
+                if (stores.length === 0) missing.push({ label: 'Магазины (ТТ)', tab: 'upload' });
+                if (stocks.length === 0) missing.push({ label: 'Остатки на ТТ', tab: 'upload' });
+
+                return `
+                    <div class="bg-white rounded-lg border border-gray-200 p-4">
+                        <div class="text-center py-12">
+                            ${icons.order}
+                            <h3 class="text-lg font-semibold text-gray-700 mt-4">Не хватает данных для расчёта заказа</h3>
+                            <div class="flex flex-wrap justify-center gap-3 mt-4">
+                                ${missing.map(m => `
+                                    <div class="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-center">
+                                        <p class="text-sm font-medium text-red-700">❌ ${m.label}</p>
+                                        <button onclick="tab='${m.tab}';render()" class="mt-1 text-xs text-blue-600 hover:underline">Загрузить →</button>
+                                    </div>
+                                `).join('')}
+                            </div>
+                            <div class="flex flex-wrap justify-center gap-3 mt-4">
+                                ${Object.keys(matrix).length > 0 ? '<span class="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">✅ Ассортимент загружен</span>' : ''}
+                                ${stores.length > 0 ? '<span class="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">✅ Магазины загружены</span>' : ''}
+                                ${stocks.length > 0 ? '<span class="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">✅ Остатки загружены</span>' : ''}
+                                ${sales.length > 0 ? '<span class="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">✅ Продажи загружены</span>' : ''}
+                                ${Object.keys(matrixMarks).length > 0 ? '<span class="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">✅ Матрица загружена</span>' : ''}
+                            </div>
+                            <button onclick="tab='upload';render()" class="mt-6 btn inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-sky-600 rounded-lg hover:bg-sky-700">
+                                ${icons.upload} Перейти к загрузке данных
+                            </button>
+                        </div>
+                    </div>`;
+            }
 
             // Карта остатков по ТТ и коду
             const stockMap = new Map();
             stocks.forEach(s => stockMap.set(`${s.tt}_${s.code}`, s));
 
-            // Карта продаж по ТТ и коду (ключ = ТТ_КОД)
+            // Карта продаж по ТТ и коду
             const salesByTTCode = {};
+            const nameToCode = {};
+            Object.entries(matrix).forEach(([code, p]) => {
+                if (p.nomenclature) nameToCode[p.nomenclature.trim().toLowerCase()] = code;
+            });
             sales.forEach(s => {
-                const product = Object.values(matrix).find(p => p.nomenclature === s.name);
-                if (product && s.tt) {
-                    const key = `${s.tt}_${product.code}`;
+                if (!s.tt) return;
+                if (s.code) {
+                    const key = `${s.tt}_${normCode(s.code)}`;
                     salesByTTCode[key] = (salesByTTCode[key] || 0) + s.quantity;
+                } else if (s.name) {
+                    const normName = s.name.trim().toLowerCase();
+                    let code = nameToCode[normName];
+                    if (!code) {
+                        const entry = Object.entries(nameToCode).find(([name, c]) => name.includes(normName) || normName.includes(name));
+                        if (entry) code = entry[1];
+                    }
+                    if (code) {
+                        const key = `${s.tt}_${code}`;
+                        salesByTTCode[key] = (salesByTTCode[key] || 0) + s.quantity;
+                    }
                 }
             });
 
             const results = [];
             stores.forEach(store => {
                 Object.entries(matrix).forEach(([code, p]) => {
-                    const inMatrix = p[store.tt] === 'ДА';
                     const key = `${store.tt}_${code}`;
                     const stockData = stockMap.get(key);
-
-                    if (!inMatrix && !stockData) {
-                        results.push({ tt: store.tt, code, nomenclature: p.nomenclature || '', group: p.group || '', currentStock: 0, sales: 0, daysPresent: 0, avgSalesPerDay: 0, order: 0, quant: p.quant || 1, inPrice: p.inPrice || 0, sum: 0, status: 'нет в матрице' });
-                        return;
-                    }
+                    const codeInMatrix = !!matrixMarks[code];
+                    const markForTT = codeInMatrix ? (matrixMarks[code][store.tt] || 'НЕТ') : null;
+                    const matrixDA = markForTT === 'ДА';
 
                     if (!stockData) {
-                        results.push({ tt: store.tt, code, nomenclature: p.nomenclature || '', group: p.group || '', currentStock: 0, sales: salesByTTCode[key] || 0, daysPresent: 0, avgSalesPerDay: 0, order: 0, quant: p.quant || 1, inPrice: p.inPrice || 0, sum: 0, status: 'нет остатков' });
+                        if (matrixDA) {
+                            results.push({ tt: store.tt, code, nomenclature: p.nomenclature || '', group: p.group || '', currentStock: 0, sales: salesByTTCode[key] || 0, daysPresent: 0, avgSalesPerDay: 0, order: 0, quant: p.quant || 1, shelf: p.shelf || 0, packaging: p.packaging || 'ШТ', inPrice: p.inPrice || 0, sum: 0, status: 'нет остатков', statusType: 'noStock', isAssortment: false });
+                        }
                         return;
                     }
 
                     const currentStock = stockData.currentStock || 0;
+                    const totalSales = salesByTTCode[key] || 0;
                     const daysPresent = stockData.daysPresent || 0;
-                    const totalSales = salesByTTCode[key] || 0; // Продажи по конкретной ТТ!
                     const avgSalesPerDay = daysPresent > 0 ? totalSales / daysPresent : 0;
                     const quant = p.quant || 1;
-                    const order = calcOrder(currentStock, avgSalesPerDay, period, quant);
+                    const shelf = p.shelf || 0;
+                    const packaging = p.packaging || 'ШТ';
+                    const order = calcOrder(currentStock, avgSalesPerDay, period, quant, shelf, packaging);
                     const sum = order * (p.inPrice || 0);
 
-                    results.push({
-                        tt: store.tt, code, nomenclature: p.nomenclature || stockData.name || '', group: p.group || '',
-                        currentStock, sales: totalSales, daysPresent,
-                        avgSalesPerDay: parseFloat(avgSalesPerDay.toFixed(3)), order, quant, inPrice: p.inPrice || 0, sum,
-                        status: order > 0 ? `заказ ${order}` : 'достаточно'
-                    });
+                    if (matrixDA) {
+                        results.push({ tt: store.tt, code, nomenclature: p.nomenclature || stockData.name || '', group: p.group || '', currentStock, sales: totalSales, daysPresent, avgSalesPerDay: parseFloat(avgSalesPerDay.toFixed(3)), order, quant, shelf, packaging, inPrice: p.inPrice || 0, sum, status: order > 0 ? `заказ ${order}` : 'достаточно', statusType: order > 0 ? 'order' : 'ok', isAssortment: false });
+                    } else if (codeInMatrix && markForTT === 'НЕТ') {
+                        results.push({ tt: store.tt, code, nomenclature: p.nomenclature || stockData.name || '', group: p.group || '', currentStock, sales: totalSales, daysPresent, avgSalesPerDay: parseFloat(avgSalesPerDay.toFixed(3)), order, quant, shelf, packaging, inPrice: p.inPrice || 0, sum, status: order > 0 ? `Не в матрице → заказ ${order}` : 'Не в матрице', statusType: 'noMatrix', isAssortment: true });
+                    } else {
+                        results.push({ tt: store.tt, code, nomenclature: p.nomenclature || stockData.name || '', group: p.group || '', currentStock, sales: totalSales, daysPresent, avgSalesPerDay: parseFloat(avgSalesPerDay.toFixed(3)), order, quant, shelf, packaging, inPrice: p.inPrice || 0, sum, status: order > 0 ? `Вне матрицы → заказ ${order}` : 'Вне матрицы', statusType: 'outMatrix', isAssortment: true });
+                    }
                 });
             });
 
+            // Фильтрация
             let filtered = results;
             if (searchResults) {
                 const s = searchResults.toLowerCase();
@@ -1062,20 +1594,37 @@
             if (filterTT) filtered = filtered.filter(r => r.tt === filterTT);
             if (filterGroup) filtered = filtered.filter(r => r.group === filterGroup);
             if (filterStatus === 'orders') filtered = filtered.filter(r => r.order > 0);
-            else if (filterStatus === 'noMatrix') filtered = filtered.filter(r => r.status === 'нет в матрице');
-            else if (filterStatus === 'noStock') filtered = filtered.filter(r => r.status === 'нет остатков');
+            else if (filterStatus === 'noMatrix') filtered = filtered.filter(r => r.statusType === 'noMatrix');
+            else if (filterStatus === 'outMatrix') filtered = filtered.filter(r => r.statusType === 'outMatrix');
+            else if (filterStatus === 'noStock') filtered = filtered.filter(r => r.statusType === 'noStock');
 
-            const groupedResults = {};
-            filtered.forEach(r => { if (!groupedResults[r.tt]) groupedResults[r.tt] = []; groupedResults[r.tt].push(r); });
-            Object.keys(groupedResults).forEach(tt => {
-                groupedResults[tt].sort((a, b) => {
-                    const gc = (a.group || '').localeCompare(b.group || '', 'ru');
-                    return gc !== 0 ? gc : (a.nomenclature || '').localeCompare(b.nomenclature || '', 'ru');
-                });
+            // Группировка: ТТ → Группа товара → товары
+            const groupedTT = {};
+            filtered.forEach(r => {
+                if (!groupedTT[r.tt]) groupedTT[r.tt] = {};
+                const gr = r.group || 'Без группы';
+                if (!groupedTT[r.tt][gr]) groupedTT[r.tt][gr] = [];
+                groupedTT[r.tt][gr].push(r);
             });
 
-            const stats = { total: filtered.length, toOrder: filtered.filter(r => r.order > 0).length, sum: filtered.reduce((s, r) => s + r.sum, 0) };
+            // Сортировка внутри каждой группы
+            Object.keys(groupedTT).forEach(tt => {
+                const groups = groupedTT[tt];
+                const sortedGroups = Object.entries(groups).sort(([gA, itemsA], [gB, itemsB]) => {
+                    const hasProblemA = itemsA.some(i => i.isAssortment);
+                    const hasProblemB = itemsB.some(i => i.isAssortment);
+                    if (hasProblemA !== hasProblemB) return hasProblemA ? -1 : 1;
+                    return gA.localeCompare(gB, 'ru');
+                });
+                groupedTT[tt] = Object.fromEntries(sortedGroups);
+            });
+
+            const stats = { total: filtered.length, toOrder: filtered.filter(r => r.order > 0).length, noMatrix: filtered.filter(r => r.statusType === 'noMatrix').length, outMatrix: filtered.filter(r => r.statusType === 'outMatrix').length, sum: filtered.reduce((s, r) => s + r.sum, 0) };
             const allGroups = getAllGroups();
+
+            // Сохраняем результаты расчёта заказа
+            savedOrderResults = filtered;
+            savedOrderStats = stats;
 
             return `<div class="space-y-3">
                 <div class="bg-white rounded-lg border border-gray-200 p-3">
@@ -1087,25 +1636,27 @@
                                 <span class="text-xs text-gray-500">дней</span>
                             </div>
                             <div class="bg-sky-100 text-sky-800 rounded-md px-3 py-1.5"><div class="text-[10px] opacity-70">ПОЗИЦИЙ</div><div class="text-lg font-bold">${stats.total}</div></div>
-                            <div class="bg-emerald-100 text-emerald-800 rounded-md px-3 py-1.5"><div class="text-[10px] opacity-70">К ЗАКАЗУ</div><div class="text-lg font-bold">${stats.toOrder}</div></div>
-                            <div class="bg-violet-100 text-violet-800 rounded-md px-3 py-1.5"><div class="text-[10px] opacity-70">СУММА</div><div class="text-lg font-bold">${stats.sum.toFixed(0)} ₽</div></div>
+                            <div class="bg-emerald-100 text-emerald-800 rounded-md px-3 py-1.5"><div class="text-[10px opacity-70">К ЗАКАЗУ</div><div class="text-lg font-bold">${stats.toOrder}</div></div>
+                            <div class="bg-orange-100 text-orange-800 rounded-md px-3 py-1.5"><div class="text-[10px] opacity-70">НЕ В МАТР.</div><div class="text-lg font-bold">${stats.noMatrix}</div></div>
+                            <div class="bg-purple-100 text-purple-800 rounded-md px-3 py-1.5"><div class="text-[10px] opacity-70">ВНЕ МАТР.</div><div class="text-lg font-bold">${stats.outMatrix}</div></div>
+                            <div class="bg-violet-100 text-violet-800 rounded-md px-3 py-1.5 cursor-pointer hover:bg-violet-200 transition-colors" onclick="showOrderSumsByStore(this)" title="Нажмите для сумм по магазинам"><div class="text-[10px] opacity-70">СУММА</div><div class="text-lg font-bold">${stats.sum.toFixed(0)} ₽</div></div>
                         </div>
                         <div class="flex gap-2">
-                            <button onclick="render()" class="btn px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700">Рассчитать</button>
-                            <button onclick="exportOrder()" class="btn px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700">${icons.download} Экспорт</button>
+                            <button onclick="exportOrder()" class="btn px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700">${icons.export} Экспорт</button>
                         </div>
                     </div>
                 </div>
                 
                 <div class="bg-white rounded-lg border border-gray-200 p-3">
                     <div class="flex flex-wrap gap-2 items-center">
-                        <input type="text" placeholder="Поиск..." value="${searchResults}" oninput="searchResults=this.value;render()" class="input w-40">
+                        <input id="orderSearchInput" type="text" placeholder="Поиск..." value="${searchResults}" oninput="debounceSearchResults(this)" class="input w-40">
                         <select onchange="filterGroup=this.value;render()" class="input bg-white"><option value="">Все категории</option>${allGroups.map(g => `<option value="${g}" ${filterGroup === g ? 'selected' : ''}>${g}</option>`).join('')}</select>
                         <select onchange="filterTT=this.value;render()" class="input bg-white"><option value="">Все ТТ</option>${stores.map(s => `<option value="${s.tt}" ${filterTT === s.tt ? 'selected' : ''}>${s.tt}</option>`).join('')}</select>
                         <select onchange="filterStatus=this.value;render()" class="input bg-white">
                             <option value="">Все статусы</option>
                             <option value="orders" ${filterStatus === 'orders' ? 'selected' : ''}>С заказом</option>
-                            <option value="noMatrix" ${filterStatus === 'noMatrix' ? 'selected' : ''}>Нет в матрице</option>
+                            <option value="noMatrix" ${filterStatus === 'noMatrix' ? 'selected' : ''}>Не в матрице</option>
+                            <option value="outMatrix" ${filterStatus === 'outMatrix' ? 'selected' : ''}>Вне матрицы</option>
                             <option value="noStock" ${filterStatus === 'noStock' ? 'selected' : ''}>Нет остатков</option>
                         </select>
                     </div>
@@ -1117,31 +1668,52 @@
                             <thead>
                                 <tr>
                                     <th class="text-left sticky left-0 bg-gray-50 z-20">Наименование</th>
-                                    <th class="text-left">Код</th>
-                                    <th class="text-right">Продажи</th>
+                                    <th class="text-center">Код</th>
+                                    <th class="text-center cursor-pointer" title="Нажмите для расчёта">Продажи</th>
                                     <th class="text-center">Дней</th>
-                                    <th class="text-right">Ср./день</th>
-                                    <th class="text-right">Остаток</th>
-                                    <th class="text-right bg-emerald-100">Заказ</th>
+                                    <th class="text-center">Ср./день</th>
+                                    <th class="text-center">Остаток</th>
+                                    <th class="text-center bg-emerald-100">Заказ</th>
                                     <th class="text-center">Статус</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                ${Object.entries(groupedResults).map(([tt, items]) => `
-                                    <tr class="bg-amber-50 cursor-pointer hover:bg-amber-100" onclick="collapsedTT['${tt}']=!collapsedTT['${tt}'];render()">
-                                        <td colspan="8" class="font-semibold text-amber-800"><span class="inline-flex items-center gap-1">${collapsedTT[tt] ? icons.chevronRight : icons.chevronDown}${icons.mapPin}${tt}<span class="font-normal text-amber-600">(${items.length} поз.)</span></span></td>
+                                ${Object.entries(groupedTT).map(([tt, groups]) => `
+                                    <tr class="bg-sky-50 cursor-pointer hover:bg-sky-100" onclick="collapsedTT['${esc(tt)}']=!collapsedTT['${esc(tt)}'];render()">
+                                        <td colspan="8" class="text-left font-semibold text-sky-800"><span class="inline-flex items-center gap-1">${collapsedTT[tt] ? icons.chevronRight : icons.chevronDown}${icons.mapPin}${tt}<span class="font-normal text-sky-600">(${Object.values(groups).reduce((s, items) => s + items.length, 0)} поз.)</span></span></td>
                                     </tr>
-                                    ${collapsedTT[tt] ? '' : items.map(r => `
-                                        <tr class="${r.order > 0 ? 'bg-emerald-50' : r.status.includes('нет') ? 'bg-rose-50' : ''} hover:bg-gray-100">
-                                            <td class="sticky left-0 bg-white">${r.nomenclature}</td>
-                                            <td class="font-mono text-xs text-gray-600">${r.code}</td>
-                                            <td class="text-right">${r.sales.toFixed(0)}</td>
-                                            <td class="text-center text-xs text-gray-600">${r.daysPresent || '-'}</td>
-                                            <td class="text-right">${r.avgSalesPerDay.toFixed(2)}</td>
-                                            <td class="text-right">${r.currentStock.toFixed(2)}</td>
-                                            <td class="text-right font-semibold bg-emerald-100">${r.order}</td>
-                                            <td class="text-center text-xs font-medium ${r.status === 'нет в матрице' ? 'text-rose-600' : r.status === 'нет остатков' ? 'text-amber-600' : r.order > 0 ? 'text-emerald-600' : 'text-gray-500'}">${r.status}</td>
+                                    ${collapsedTT[tt] ? '' : Object.entries(groups).map(([gr, items]) => `
+                                        <tr class="group-header cursor-pointer" onclick="collapsedG['order_${esc(tt)}_${esc(gr)}']=!collapsedG['order_${esc(tt)}_${esc(gr)}'];render()">
+                                            <td colspan="8" class="text-left py-1 px-2">
+                                                <div class="flex items-center gap-2">
+                                                    ${collapsedG['order_' + tt + '_' + gr] ? icons.chevronRight : icons.chevronDown}
+                                                    <span class="font-semibold text-indigo-800">${gr}</span>
+                                                    <span class="text-[10px] bg-indigo-200 text-indigo-800 px-1 rounded">${items.length}</span>
+                                                </div>
+                                            </td>
                                         </tr>
+                                        ${collapsedG['order_' + tt + '_' + gr] ? '' : items.map(r => {
+                                            let rowClass = '';
+                                            let statusClass = 'text-gray-500';
+                                            let namePrefix = '';
+                                            if (r.statusType === 'outMatrix') { rowClass = 'bg-purple-50'; statusClass = 'text-purple-700'; namePrefix = '📦 '; }
+                                            else if (r.statusType === 'noMatrix') { rowClass = 'bg-orange-50'; statusClass = 'text-orange-700'; namePrefix = '⚠️ '; }
+                                            else if (r.statusType === 'order') { rowClass = 'bg-emerald-50'; statusClass = 'text-emerald-600'; }
+                                            else if (r.statusType === 'noStock') { rowClass = 'bg-rose-50'; statusClass = 'text-rose-600'; }
+                                            return `
+                                            <tr class="${rowClass} hover:bg-gray-100">
+                                                <td class="sticky left-0 bg-white text-left">${namePrefix}${r.nomenclature}</td>
+                                                <td class="text-center font-mono text-xs text-gray-600">${r.code}</td>
+                                                <td class="text-center cursor-pointer hover:underline hover:text-blue-600" onclick="event.stopPropagation();showCalcDetail(this, ${JSON.stringify(r).replace(/"/g, '&quot;')})">${r.sales.toFixed(0)}</td>
+                                                <td class="text-center text-xs text-gray-600">${r.daysPresent || '-'}</td>
+                                                <td class="text-center">${r.avgSalesPerDay.toFixed(2)}</td>
+                                                <td class="text-center">${r.currentStock.toFixed(2)}</td>
+                                                <td class="text-center font-semibold ${r.statusType === 'outMatrix' ? 'bg-purple-100' : r.statusType === 'noMatrix' ? 'bg-orange-100' : 'bg-emerald-100'}">
+                                                    <input type="number" value="${r.order}" data-tt="${esc(r.tt)}" data-code="${esc(r.code)}" onchange="editOrder(this)" class="input w-16 text-center text-sm font-bold">
+                                                </td>
+                                                <td class="text-center text-xs font-medium ${statusClass}">${r.status}</td>
+                                            </tr>`;
+                                        }).join('')}
                                     `).join('')}
                                 `).join('')}
                             </tbody>
@@ -1151,8 +1723,445 @@
             </div>`;
         }
 
+        function editOrder(input) {
+            const newOrder = parseFloat(input.value) || 0;
+            const tt = input.dataset.tt;
+            const code = input.dataset.code;
+            const p = matrix[code];
+            const newSum = newOrder * (p ? p.inPrice || 0 : 0);
+            const row = input.closest('tr');
+            if (row) {
+                const statusTd = row.querySelector('td:last-child');
+                if (statusTd) statusTd.textContent = newOrder > 0 ? `заказ ${newOrder}` : 'достаточно';
+            }
+        }
+
+        function showCalcDetail(el, r) {
+            document.querySelectorAll('.calc-tooltip').forEach(e => e.remove());
+
+            const projectedSales = (r.avgSalesPerDay * period).toFixed(1);
+            const need = Math.max(0, projectedSales - r.currentStock).toFixed(1);
+            const totalDays = r.daysPresent || '?';
+
+            const tooltip = document.createElement('div');
+            tooltip.className = 'calc-tooltip';
+            tooltip.style.cssText = 'position:fixed;z-index:100;background:#1f2937;color:#f9fafb;border-radius:8px;padding:10px 14px;font-size:11px;line-height:1.6;box-shadow:0 8px 24px rgba(0,0,0,0.3);min-width:220px;pointer-events:auto;';
+            tooltip.innerHTML = `
+                <div style="font-weight:700;margin-bottom:4px;color:#93c5fd">${r.nomenclature || r.code}</div>
+                <div style="display:grid;grid-template-columns:auto 1fr;gap:1px 10px">
+                    <span style="color:#9ca3af">ТТ:</span><span>${r.tt}</span>
+                    <span style="color:#9ca3af">Продажи:</span><span style="font-weight:600">${r.sales.toFixed(0)} шт</span>
+                    <span style="color:#9ca3af">Дней с остатком:</span><span>${totalDays}</span>
+                    <span style="color:#9ca3af">Ср. продажи/день:</span><span style="font-weight:600">${r.avgSalesPerDay.toFixed(3)} шт</span>
+                    <span style="color:#9ca3af">Период:</span><span>${period} дней</span>
+                    <span style="color:#9ca3af">Прогноз продаж:</span><span style="font-weight:600;color:#fbbf24">${projectedSales} шт</span>
+                    <span style="color:#9ca3af">Текущий остаток:</span><span style="font-weight:600">${r.currentStock.toFixed(2)} шт</span>
+                    <span style="color:#9ca3af">Полка (мин.):</span><span>${r.shelf || 0} шт</span>
+                    <span style="color:#9ca3af">Дефицит:</span><span style="font-weight:600;color:#f87171">${need > 0 ? need + ' шт' : 'нет'}</span>
+                    <span style="color:#9ca3af">Квант:</span><span>${r.quant} (${r.packaging})</span>
+                    <span style="color:#9ca3af">Заказ:</span><span style="font-weight:700;color:#34d399">${r.order} шт</span>
+                </div>
+                <div style="color:#6b7280;margin-top:6px;font-size:10px">Кликните вне чтобы закрыть</div>
+            `;
+            document.body.appendChild(tooltip);
+
+            const rect = el.getBoundingClientRect();
+            let left = rect.right + 8;
+            let top = rect.top;
+            if (left + 240 > window.innerWidth) left = rect.left - 240;
+            if (top + 300 > window.innerHeight) top = window.innerHeight - 310;
+            tooltip.style.left = left + 'px';
+            tooltip.style.top = top + 'px';
+
+            function close() { tooltip.remove(); document.removeEventListener('click', close); }
+            setTimeout(() => document.addEventListener('click', close), 10);
+        }
+
+        // === АНАЛИТИКА ===
+        function renderAnalytics() {
+            if (sales.length === 0 && Object.keys(matrix).length === 0) {
+                return `<div class="bg-white rounded-lg border border-gray-200 p-4"><div class="text-center py-12">${icons.db}<p class="text-gray-500 mt-3">Загрузите данные</p></div></div>`;
+            }
+
+            // Build lookup: code -> product, name -> product
+            const codeLookup = {};
+            const nameLookup = {};
+            Object.entries(matrix).forEach(([code, p]) => {
+                codeLookup[normCode(code)] = p;
+                const n = (p.nomenclature || p.name || '').trim().toLowerCase();
+                if (n) nameLookup[n] = p;
+            });
+
+            // Helper: find product by sale item
+            function findProduct(sale) {
+                if (sale.code) {
+                    const c = normCode(String(sale.code));
+                    if (codeLookup[c]) return codeLookup[c];
+                }
+                if (sale.name) {
+                    const n = sale.name.trim().toLowerCase();
+                    if (nameLookup[n]) return nameLookup[n];
+                }
+                return null;
+            }
+
+            // Compute enriched sales
+            const enriched = sales.map(s => {
+                const prod = findProduct(s);
+                return {
+                    ...s,
+                    inPrice: prod ? (prod.inPrice || 0) : 0,
+                    group: s.group || (prod ? (prod.group || '') : ''),
+                    code: s.code || (prod ? prod.code : ''),
+                    name: s.name || (prod ? (prod.nomenclature || prod.name || '') : ''),
+                    revenue: (s.quantity || 0) * (prod ? (prod.inPrice || 0) : 0)
+                };
+            });
+
+            // Filter by group and search
+            const filtered = enriched.filter(s => {
+                if (filterAnalyticsGroup && s.group !== filterAnalyticsGroup) return false;
+                if (searchAnalytics && !s.name?.toLowerCase().includes(searchAnalytics.toLowerCase())) return false;
+                return true;
+            });
+
+            // === Summary cards ===
+            const totalSalesQty = filtered.reduce((sum, s) => sum + (s.quantity || 0), 0);
+            const totalRevenue = filtered.reduce((sum, s) => sum + (s.revenue || 0), 0);
+            const totalProducts = Object.keys(matrix).length;
+            const activeStores = new Set(filtered.map(s => s.tt));
+            const activeStoreCount = activeStores.size;
+
+            // === ABC by group ===
+            const groupMap = {};
+            filtered.forEach(s => {
+                const gr = s.group || 'Без группы';
+                if (!groupMap[gr]) groupMap[gr] = { qty: 0, revenue: 0 };
+                groupMap[gr].qty += s.quantity || 0;
+                groupMap[gr].revenue += s.revenue || 0;
+            });
+
+            const groupRows = Object.entries(groupMap)
+                .map(([gr, d]) => ({ group: gr, qty: d.qty, revenue: d.revenue }))
+                .sort((a, b) => b.revenue - a.revenue);
+
+            const grandRevenue = groupRows.reduce((s, r) => s + r.revenue, 0);
+            let cumRevenue = 0;
+            groupRows.forEach(r => {
+                cumRevenue += r.revenue;
+                const pct = grandRevenue > 0 ? (cumRevenue / grandRevenue) * 100 : 0;
+                r.share = grandRevenue > 0 ? (r.revenue / grandRevenue) * 100 : 0;
+                r.abc = pct <= 80 ? 'A' : pct <= 95 ? 'B' : 'C';
+            });
+
+            // === Top products ===
+            const prodMap = {};
+            filtered.forEach(s => {
+                const key = (s.code || '') + '|' + (s.name || '');
+                if (!prodMap[key]) prodMap[key] = { code: s.code, name: s.name, group: s.group, qty: 0, revenue: 0 };
+                prodMap[key].qty += s.quantity || 0;
+                prodMap[key].revenue += s.revenue || 0;
+            });
+
+            const prodRows = Object.values(prodMap)
+                .sort((a, b) => b.qty - a.qty)
+                .slice(0, 20);
+
+            const prodGrandRevenue = prodRows.reduce((s, r) => s + r.revenue, 0);
+
+            // === By store ===
+            const storeMap = {};
+            filtered.forEach(s => {
+                const tt = s.tt || 'Неизвестно';
+                if (!storeMap[tt]) storeMap[tt] = { qty: 0, revenue: 0 };
+                storeMap[tt].qty += s.quantity || 0;
+                storeMap[tt].revenue += s.revenue || 0;
+            });
+
+            // Count matrix items per store
+            const storeMatrixCount = {};
+            stores.forEach(s => {
+                storeMatrixCount[s.tt] = 0;
+                Object.keys(matrixMarks).forEach(code => {
+                    if (matrixMarks[code][s.tt] === 'ДА') storeMatrixCount[s.tt]++;
+                });
+            });
+
+            const storeRows = Object.entries(storeMap)
+                .map(([tt, d]) => ({
+                    tt,
+                    qty: d.qty,
+                    revenue: d.revenue,
+                    matrixCount: storeMatrixCount[tt] || 0
+                }))
+                .sort((a, b) => b.revenue - a.revenue);
+
+            const storeGrandRevenue = storeRows.reduce((s, r) => s + r.revenue, 0);
+
+            // === All groups for filter (from matrix) ===
+            const allGroups = getAllGroups();
+
+            // === Render ===
+            const fmt = (n) => Math.round(n).toLocaleString('ru-RU');
+            const fmtPct = (n) => n.toFixed(1) + '%';
+            const abcClass = (c) => c === 'A' ? 'abc-a' : c === 'B' ? 'abc-b' : 'abc-c';
+
+            let html = `<div class="space-y-3">`;
+
+            // Summary cards
+            html += `<div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div class="bg-white rounded-lg border border-gray-200 p-4 text-center">
+                    <div class="text-[10px] text-gray-500 uppercase tracking-wide">Продажи (шт)</div>
+                    <div class="text-xl font-bold text-blue-700 mt-1">${fmt(totalSalesQty)}</div>
+                </div>
+                <div class="bg-white rounded-lg border border-gray-200 p-4 text-center">
+                    <div class="text-[10px] text-gray-500 uppercase tracking-wide">Выручка (закупка)</div>
+                    <div class="text-xl font-bold text-emerald-600 mt-1">${fmt(totalRevenue)} ₽</div>
+                </div>
+                <div class="bg-white rounded-lg border border-gray-200 p-4 text-center">
+                    <div class="text-[10px] text-gray-500 uppercase tracking-wide">Товаров в матрице</div>
+                    <div class="text-xl font-bold text-violet-700 mt-1">${totalProducts}</div>
+                </div>
+                <div class="bg-white rounded-lg border border-gray-200 p-4 text-center">
+                    <div class="text-[10px] text-gray-500 uppercase tracking-wide">Активных ТТ</div>
+                    <div class="text-xl font-bold text-sky-600 mt-1">${activeStoreCount}</div>
+                </div>
+            </div>`;
+
+            // Filters
+            html += `<div class="bg-white rounded-lg border border-gray-200 p-3">
+                <div class="flex flex-wrap gap-2 items-center">
+                    <div class="relative">
+                        <input type="text" placeholder="Поиск по товару..." value="${esc(searchAnalytics)}" oninput="searchAnalytics=this.value;render()" class="pl-8 pr-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-violet-400 w-56">
+                        <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400">${icons.search}</span>
+                        ${searchAnalytics ? `<button onclick="searchAnalytics='';render()" class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">✕</button>` : ''}
+                    </div>
+                    <select onchange="filterAnalyticsGroup=this.value;render()" class="px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-violet-400">
+                        <option value="">Все группы</option>
+                        ${allGroups.map(g => `<option value="${esc(g)}" ${filterAnalyticsGroup === g ? 'selected' : ''}>${esc(g)}</option>`).join('')}
+                    </select>
+                    <div class="ml-auto">
+                        <button onclick="exportAnalytics()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">${icons.export} Экспорт в Excel</button>
+                    </div>
+                </div>
+            </div>`;
+
+            // B. Sales by product group
+            html += `<div class="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                <div class="px-4 py-3 border-b border-gray-100">
+                    <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-2">${icons.chart}Продажи по группам (ABC)</h3>
+                </div>
+                <div class="table-container">
+                    <table class="table-modern">
+                        <thead>
+                            <tr>
+                                <th class="text-left">Группа</th>
+                                <th>Кол-во продаж</th>
+                                <th>Выручка ₽</th>
+                                <th>Доля %</th>
+                                <th>ABC</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${groupRows.map(r => `
+                                <tr>
+                                    <td class="text-left font-medium text-gray-700">${esc(r.group)}</td>
+                                    <td>${fmt(r.qty)}</td>
+                                    <td>${fmt(r.revenue)}</td>
+                                    <td>${fmtPct(r.share)}</td>
+                                    <td><span class="inline-block px-2 py-0.5 rounded text-xs font-bold ${abcClass(r.abc)}">${r.abc}</span></td>
+                                </tr>
+                            `).join('')}
+                            ${groupRows.length === 0 ? '<tr><td colspan="5" class="text-center py-4 text-gray-400">Нет данных</td></tr>' : ''}
+                        </tbody>
+                    </table>
+                </div>
+            </div>`;
+
+            // C. Top products
+            html += `<div class="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                <div class="px-4 py-3 border-b border-gray-100">
+                    <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-2">${icons.list}Топ-20 товаров</h3>
+                </div>
+                <div class="table-container">
+                    <table class="table-modern">
+                        <thead>
+                            <tr>
+                                <th class="text-left">Код</th>
+                                <th class="text-left">Наименование</th>
+                                <th class="text-left">Группа</th>
+                                <th>Продажи</th>
+                                <th>Выручка ₽</th>
+                                <th>Доля %</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${prodRows.map(r => {
+                                const share = prodGrandRevenue > 0 ? (r.revenue / prodGrandRevenue) * 100 : 0;
+                                return `
+                                <tr>
+                                    <td class="text-left font-mono text-xs text-gray-600">${esc(r.code)}</td>
+                                    <td class="text-left font-medium text-gray-700">${esc(r.name)}</td>
+                                    <td class="text-left text-xs">${esc(r.group)}</td>
+                                    <td>${fmt(r.qty)}</td>
+                                    <td>${fmt(r.revenue)}</td>
+                                    <td>${fmtPct(share)}</td>
+                                </tr>`;
+                            }).join('')}
+                            ${prodRows.length === 0 ? '<tr><td colspan="6" class="text-center py-4 text-gray-400">Нет данных</td></tr>' : ''}
+                        </tbody>
+                    </table>
+                </div>
+            </div>`;
+
+            // D. By store
+            html += `<div class="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                <div class="px-4 py-3 border-b border-gray-100">
+                    <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-2">${icons.mapPin}Аналитика по магазинам</h3>
+                </div>
+                <div class="table-container">
+                    <table class="table-modern">
+                        <thead>
+                            <tr>
+                                <th class="text-left">ТТ</th>
+                                <th>Продажи</th>
+                                <th>Выручка ₽</th>
+                                <th>Товаров в матрице</th>
+                                <th>Доля %</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${storeRows.map(r => {
+                                const share = storeGrandRevenue > 0 ? (r.revenue / storeGrandRevenue) * 100 : 0;
+                                return `
+                                <tr>
+                                    <td class="text-left font-medium text-gray-700">${esc(r.tt)}</td>
+                                    <td>${fmt(r.qty)}</td>
+                                    <td>${fmt(r.revenue)}</td>
+                                    <td>${r.matrixCount}</td>
+                                    <td>${fmtPct(share)}</td>
+                                </tr>`;
+                            }).join('')}
+                            ${storeRows.length === 0 ? '<tr><td colspan="5" class="text-center py-4 text-gray-400">Нет данных</td></tr>' : ''}
+                        </tbody>
+                    </table>
+                </div>
+            </div>`;
+
+            html += `</div>`;
+            return html;
+        }
+
+        function exportAnalytics() {
+            const codeLookup = {};
+            const nameLookup = {};
+            Object.entries(matrix).forEach(([code, p]) => {
+                codeLookup[normCode(code)] = p;
+                const n = (p.nomenclature || p.name || '').trim().toLowerCase();
+                if (n) nameLookup[n] = p;
+            });
+
+            function findProduct(sale) {
+                if (sale.code) { const c = normCode(String(sale.code)); if (codeLookup[c]) return codeLookup[c]; }
+                if (sale.name) { const n = sale.name.trim().toLowerCase(); if (nameLookup[n]) return nameLookup[n]; }
+                return null;
+            }
+
+            const enriched = sales.map(s => {
+                const prod = findProduct(s);
+                return {
+                    group: s.group || (prod ? (prod.group || '') : ''),
+                    name: s.name || (prod ? (prod.nomenclature || prod.name || '') : ''),
+                    code: s.code || (prod ? prod.code : ''),
+                    quantity: s.quantity || 0,
+                    revenue: (s.quantity || 0) * (prod ? (prod.inPrice || 0) : 0),
+                    tt: s.tt || ''
+                };
+            });
+
+            const wb = XLSX.utils.book_new();
+
+            // Sheet 1: Summary
+            const totalQty = enriched.reduce((s, r) => s + r.quantity, 0);
+            const totalRev = enriched.reduce((s, r) => s + r.revenue, 0);
+            const activeStores = new Set(enriched.map(r => r.tt));
+            const summaryData = [
+                ['Показатель', 'Значение'],
+                ['Всего продаж (шт)', totalQty],
+                ['Выручка (закупка) ₽', totalRev],
+                ['Товаров в матрице', Object.keys(matrix).length],
+                ['Активных ТТ', activeStores.size]
+            ];
+            const ws1 = XLSX.utils.aoa_to_sheet(summaryData);
+            ws1['!cols'] = [{ wch: 25 }, { wch: 20 }];
+            XLSX.utils.book_append_sheet(wb, ws1, 'Сводка');
+
+            // Sheet 2: By group with ABC
+            const groupMap = {};
+            enriched.forEach(s => {
+                const gr = s.group || 'Без группы';
+                if (!groupMap[gr]) groupMap[gr] = { qty: 0, revenue: 0 };
+                groupMap[gr].qty += s.quantity;
+                groupMap[gr].revenue += s.revenue;
+            });
+            const gRows = Object.entries(groupMap).map(([gr, d]) => ({ group: gr, qty: d.qty, revenue: d.revenue })).sort((a, b) => b.revenue - a.revenue);
+            const gGrand = gRows.reduce((s, r) => s + r.revenue, 0);
+            let gCum = 0;
+            gRows.forEach(r => {
+                gCum += r.revenue;
+                const pct = gGrand > 0 ? (gCum / gGrand) * 100 : 0;
+                r.share = gGrand > 0 ? (r.revenue / gGrand) * 100 : 0;
+                r.abc = pct <= 80 ? 'A' : pct <= 95 ? 'B' : 'C';
+            });
+            const groupHeaders = ['Группа', 'Кол-во продаж', 'Выручка ₽', 'Доля %', 'ABC'];
+            const groupData = gRows.map(r => [r.group, r.qty, Math.round(r.revenue), parseFloat(r.share.toFixed(1)), r.abc]);
+            const ws2 = SharedUtils.createStyledSheet(groupData, groupHeaders, [0]);
+            XLSX.utils.book_append_sheet(wb, ws2, 'По группам');
+
+            // Sheet 3: Top products
+            const prodMap = {};
+            enriched.forEach(s => {
+                const key = (s.code || '') + '|' + (s.name || '');
+                if (!prodMap[key]) prodMap[key] = { code: s.code, name: s.name, group: s.group, qty: 0, revenue: 0 };
+                prodMap[key].qty += s.quantity;
+                prodMap[key].revenue += s.revenue;
+            });
+            const pRows = Object.values(prodMap).sort((a, b) => b.qty - a.qty).slice(0, 20);
+            const pGrand = pRows.reduce((s, r) => s + r.revenue, 0);
+            const prodHeaders = ['Код', 'Наименование', 'Группа', 'Продажи', 'Выручка ₽', 'Доля %'];
+            const prodData = pRows.map(r => [r.code, r.name, r.group, r.qty, Math.round(r.revenue), parseFloat((pGrand > 0 ? (r.revenue / pGrand) * 100 : 0).toFixed(1))]);
+            const ws3 = SharedUtils.createStyledSheet(prodData, prodHeaders, [0, 1, 2]);
+            XLSX.utils.book_append_sheet(wb, ws3, 'Топ товары');
+
+            // Sheet 4: By store
+            const storeMap = {};
+            enriched.forEach(s => {
+                const tt = s.tt || 'Неизвестно';
+                if (!storeMap[tt]) storeMap[tt] = { qty: 0, revenue: 0 };
+                storeMap[tt].qty += s.quantity;
+                storeMap[tt].revenue += s.revenue;
+            });
+            const storeMatrixCount = {};
+            stores.forEach(s => {
+                storeMatrixCount[s.tt] = 0;
+                Object.keys(matrixMarks).forEach(code => {
+                    if (matrixMarks[code][s.tt] === 'ДА') storeMatrixCount[s.tt]++;
+                });
+            });
+            const sRows = Object.entries(storeMap).map(([tt, d]) => ({ tt, qty: d.qty, revenue: d.revenue, matrixCount: storeMatrixCount[tt] || 0 })).sort((a, b) => b.revenue - a.revenue);
+            const sGrand = sRows.reduce((s, r) => s + r.revenue, 0);
+            const storeHeaders = ['ТТ', 'Продажи', 'Выручка ₽', 'Товаров в матрице', 'Доля %'];
+            const storeData = sRows.map(r => [r.tt, r.qty, Math.round(r.revenue), r.matrixCount, parseFloat((sGrand > 0 ? (r.revenue / sGrand) * 100 : 0).toFixed(1))]);
+            const ws4 = SharedUtils.createStyledSheet(storeData, storeHeaders, [0]);
+            XLSX.utils.book_append_sheet(wb, ws4, 'По магазинам');
+
+            const d = new Date();
+            XLSX.writeFile(wb, `аналитика_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}.xlsx`);
+        }
+
         // === ФАЙЛОВЫЕ ПАРСЕРЫ ===
         function handleFile(input, type) {
+            resetSavedOrders();
             const file = input.files[0];
             if (!file) return;
             const reader = new FileReader();
@@ -1161,8 +2170,31 @@
                     const data = new Uint8Array(e.target.result);
                     const wb = XLSX.read(data, { type: 'array' });
                     const json = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' });
-                    if (type === 'sales') parseSalesFile(json);
-                    else if (type === 'stocks') parseStocksFile(json);
+                    if (type === 'sales') {
+                        // Пробуем оба парсера: иерархический и простой
+                        const hierItems = parseSalesHierarchical(json);
+                        const simpleItems = parseSalesSimple(json);
+                        console.log(`Парсинг продаж: иерархический=${hierItems.length}, простой=${simpleItems.length}`);
+                        sales = hierItems.length >= simpleItems.length ? hierItems : simpleItems;
+                        save(KEYS.SALES, sales);
+                        alert(`Загружено ${sales.length} продаж`);
+                    }
+                    else if (type === 'stocks') {
+                        const localItems = parseStocksLocal(json);
+                        console.log(`Парсинг остатков: локальный=${localItems.length}`);
+                        stocks = localItems;
+                        // Обновляем ассортимент из остатков
+                        stocks.forEach(s => {
+                            if (s.code && !matrix[s.code]) {
+                                matrix[s.code] = { nomenclature: s.name || '', code: s.code, group: '', packaging: 'ШТ', inPrice: 0, quant: 1 };
+                            } else if (s.code && matrix[s.code] && !matrix[s.code].nomenclature) {
+                                matrix[s.code].nomenclature = s.name || '';
+                            }
+                        });
+                        save(KEYS.STOCKS, stocks);
+                        save(KEYS.ASSORTMENT, matrix);
+                        alert(`Загружено ${stocks.length} остатков`);
+                    }
                     render();
                 } catch (err) { console.error('Parse error:', err); alert('Ошибка: ' + err.message); }
             };
@@ -1170,77 +2202,92 @@
             input.value = '';
         }
 
-        // Парсинг ПРОДАЖ с ТТ
-        function parseSalesFile(json) {
-            const salesItems = [];
+        // Парсинг ПРОДАЖ — иерархический формат (ТТ → Кат → Гр → Товар)
+        function parseSalesHierarchical(json) {
+            const items = [];
             let curTT = '';
             let curCategory = '';
             let curGroup = '';
             const foundTTs = new Set();
 
-            console.log('=== Парсинг продаж с ТТ ===');
-
             for (let i = 0; i < json.length; i++) {
                 const r = json[i];
                 if (!r || r.length < 1) continue;
-
                 const c0 = String(r[0] || '').trim();
-                const c1 = String(r[1] || '').trim();
-                const qty = parseFloat(String(r[4] || r[1] || '').replace(/\s/g, '').replace(',', '.')) || 0;
-
                 if (!c0) continue;
 
-                // Пропускаем заголовки
                 if (c0.includes('В отчет выведены') || c0.includes('Валовая прибыль') ||
                     c0 === 'Склад' || c0 === 'Количество' || c0 === 'Номенклатура' ||
                     c0 === 'Параметры:' || c0 === 'Отбор:' || c0 === 'Отбор' || /^номенклатур/i.test(c0)) {
                     continue;
                 }
 
-                // Определяем ТТ по строке типа "Основной склад (КРЫМ, Бахчисарай, ул. Мира, д. 3)"
-                if (c0.includes('Основной склад') || c0.includes('основной склад') || /склад.*\(.*\)/i.test(c0)) {
+                if (/склад|магазин|основной/i.test(c0) && !c0.includes('(кат)') && !c0.includes('(гр)')) {
                     curTT = c0.trim();
                     foundTTs.add(curTT);
-                    console.log('ТТ:', curTT.substring(0, 60));
                     continue;
                 }
 
-                // Категория (кат)
                 if (c0.includes('(кат)')) {
                     curCategory = c0.replace(/\s*\(кат.*\)/i, '').replace(/\s*\(шт\)/i, '').replace(/\s*\(кг\)/i, '').trim();
                     curGroup = '';
                     continue;
                 }
 
-                // Группа (гр)
                 if (c0.includes('(гр)')) {
                     curGroup = c0.replace(/\s*\(гр.*\)/i, '').replace(/\s*\(шт\)/i, '').replace(/\s*\(кг\)/i, '').trim();
                     continue;
                 }
 
-                // Товар с продажами
-                if (qty > 0 && c0.length > 3 && curTT) {
-                    const group = curGroup || curCategory || '';
-                    salesItems.push({ tt: curTT, name: c0, quantity: qty, group });
+                if (c0.length > 2 && curTT && !/^\s*$/.test(c0)) {
+                    if (/склад|магазин|основной/i.test(c0) && c0.length < 80) continue;
+                    
+                    let qty = 0;
+                    for (const col of [4, 1, 3, 2]) {
+                        const val = parseFloat(String(r[col] || '').replace(/\s/g, '').replace(',', '.'));
+                        if (val > 0) { qty = val; break; }
+                    }
+                    if (qty > 0) {
+                        const group = curGroup || curCategory || '';
+                        items.push({ tt: curTT, name: c0, quantity: qty, group });
+                    }
                 }
             }
-
-            sales = salesItems;
-            save(KEYS.SALES, sales);
-            console.log(`Продаж: ${salesItems.length}, ТТ: ${foundTTs.size}`);
-            alert(`Загружено ${salesItems.length} продаж\nТТ: ${foundTTs.size}`);
+            return items;
         }
 
-        // Парсинг ОСТАТКОВ
-        function parseStocksFile(json) {
+        // Простой парсинг продаж (по названию товара)
+        function parseSalesSimple(json) {
+            const items = [];
+            let curTT = '';
+            for (let i = 0; i < json.length; i++) {
+                const r = json[i];
+                if (!r || r.length < 1) continue;
+                const c0 = String(r[0] || '').trim();
+                if (!c0) continue;
+                if (c0.includes('В отчет выведены') || c0.includes('Валовая прибыль') ||
+                    c0 === 'Склад' || c0 === 'Количество' || c0 === 'Номенклатура' ||
+                    c0 === 'Параметры:' || c0 === 'Отбор:' || c0 === 'Отбор') continue;
+                if (/склад|магазин|основной/i.test(c0) && !c0.includes('(кат)') && !c0.includes('(гр)')) {
+                    curTT = c0.trim();
+                    continue;
+                }
+                const qty = parseFloat(String(r[4] || r[1] || '').replace(/\s/g, '').replace(',', '.')) || 0;
+                if (qty > 0 && c0.length > 3 && curTT) {
+                    items.push({ tt: curTT, name: c0, quantity: qty, group: '' });
+                }
+            }
+            return items;
+        }
+
+        // Парсинг ОСТАТКОВ — локальный
+        function parseStocksLocal(json) {
             let lastCol = 0;
             for (let i = 0; i < json.length; i++) if (json[i]) lastCol = Math.max(lastCol, json[i].length - 1);
 
-            const stockItems = [];
+            const items = [];
             const foundTTs = new Set();
             let curTT = '';
-
-            console.log('=== Парсинг остатков ===');
 
             for (let i = 3; i < json.length; i++) {
                 const r = json[i];
@@ -1268,23 +2315,10 @@
                         }
                     }
                     
-                    stockItems.push({ tt: curTT, code: normC, name: c0, currentStock, daysPresent, totalDays });
-                    
-                    if (!matrix[normC]) {
-                        matrix[normC] = { nomenclature: c0, code: normC, group: '', packaging: 'ШТ', inPrice: 0, quant: 1 };
-                    } else if (!matrix[normC].nomenclature) {
-                        matrix[normC].nomenclature = c0;
-                    }
-                    
-                    if (currentStock > 0) matrix[normC][curTT] = 'ДА';
+                    items.push({ tt: curTT, code: normC, name: c0, currentStock, daysPresent, totalDays });
                 }
             }
-
-            stocks = stockItems;
-            save(KEYS.STOCKS, stocks);
-            save(KEYS.MATRIX, matrix);
-            console.log(`Остатков: ${stockItems.length}, ТТ: ${foundTTs.size}`);
-            alert(`Загружено ${stockItems.length} остатков\nТТ: ${foundTTs.size}`);
+            return items;
         }
 
         function exportOrder() {
@@ -1294,59 +2328,170 @@
             stocks.forEach(s => stockMap.set(`${s.tt}_${s.code}`, s));
 
             const salesByTTCode = {};
+            const nameToCode = {};
+            Object.entries(matrix).forEach(([code, p]) => {
+                if (p.nomenclature) nameToCode[p.nomenclature.trim().toLowerCase()] = code;
+            });
             sales.forEach(s => {
-                const product = Object.values(matrix).find(p => p.nomenclature === s.name);
-                if (product && s.tt) {
-                    const key = `${s.tt}_${product.code}`;
+                if (!s.tt) return;
+                if (s.code) {
+                    const key = `${s.tt}_${normCode(s.code)}`;
                     salesByTTCode[key] = (salesByTTCode[key] || 0) + s.quantity;
+                } else if (s.name) {
+                    const normName = s.name.trim().toLowerCase();
+                    let code = nameToCode[normName];
+                    if (!code) {
+                        const entry = Object.entries(nameToCode).find(([name, c]) =>
+                            name.includes(normName) || normName.includes(name)
+                        );
+                        if (entry) code = entry[1];
+                    }
+                    if (code) {
+                        const key = `${s.tt}_${code}`;
+                        salesByTTCode[key] = (salesByTTCode[key] || 0) + s.quantity;
+                    }
                 }
             });
             
-            const rows = [['ТТ', 'Код', 'Наименование', 'Группа', 'Продажи', 'Дней', 'Ср./день', 'Остаток', 'Заказ', 'Сумма', 'Статус']];
+            const rows = [['№ Маг.', 'ТТ', 'Код', 'Наименование', 'Группа', 'Продажи', 'Дней', 'Ср./день', 'Остаток', 'Заказ', 'Сумма', 'Статус']];
             
             stores.forEach(store => {
                 Object.entries(matrix).forEach(([code, p]) => {
-                    const inMatrix = p[store.tt] === 'ДА';
                     const key = `${store.tt}_${code}`;
                     const stockData = stockMap.get(key);
+                    const codeInMatrix = !!matrixMarks[code];
+                    const markForTT = codeInMatrix ? (matrixMarks[code][store.tt] || 'НЕТ') : null;
+                    const matrixDA = markForTT === 'ДА';
 
-                    if (!inMatrix && !stockData) { rows.push([store.tt, code, p.nomenclature || '', p.group || '', 0, 0, 0, 0, 0, 0, 'нет в матрице']); return; }
-                    if (!stockData) { rows.push([store.tt, code, p.nomenclature || '', p.group || '', salesByTTCode[key] || 0, 0, 0, 0, 0, 0, 'нет остатков']); return; }
+                    if (!matrixDA && !stockData) return;
+                    if (!stockData) { rows.push([store.storeNumber || store.tt2 || '', store.tt, code, p.nomenclature || '', p.group || '', salesByTTCode[key] || 0, 0, 0, 0, 0, 0, 'нет остатков']); return; }
 
                     const currentStock = stockData.currentStock || 0;
                     const daysPresent = stockData.daysPresent || 0;
                     const totalSales = salesByTTCode[key] || 0;
                     const avgSalesPerDay = daysPresent > 0 ? totalSales / daysPresent : 0;
                     const quant = p.quant || 1;
-                    const order = calcOrder(currentStock, avgSalesPerDay, period, quant);
+                    const shelf = p.shelf || 0;
+                    const packaging = p.packaging || 'ШТ';
+                    const order = calcOrder(currentStock, avgSalesPerDay, period, quant, shelf, packaging);
 
-                    rows.push([store.tt, code, p.nomenclature || '', p.group || '', totalSales.toFixed(0), daysPresent, avgSalesPerDay.toFixed(3), currentStock.toFixed(2), order, (order * (p.inPrice || 0)).toFixed(2), order > 0 ? `заказ ${order}` : 'достаточно']);
+                    let status;
+                    if (matrixDA) {
+                        status = order > 0 ? 'заказ' : 'достаточно';
+                    } else if (codeInMatrix && markForTT === 'НЕТ') {
+                        status = 'Не в матрице';
+                    } else {
+                        status = 'Вне матрицы';
+                    }
+
+                    rows.push([store.storeNumber || store.tt2 || '', store.tt, code, p.nomenclature || '', p.group || '', totalSales.toFixed(0), daysPresent, avgSalesPerDay.toFixed(3), currentStock.toFixed(2), order, (order * (p.inPrice || 0)).toFixed(2), status]);
                 });
             });
             
+            const headers = rows.shift();
+            const ws = SharedUtils.createStyledSheet(rows, headers, [0, 1, 2, 3, 11]);
             const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Заказ');
-            XLSX.writeFile(wb, 'order.xlsx');
+            XLSX.utils.book_append_sheet(wb, ws, 'Заказ');
+            const d = new Date(); XLSX.writeFile(wb, `заказ_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}.xlsx`);
+        }
+
+        // === ПОПАП СУММ ЗАКАЗА ПО МАГАЗИНАМ ===
+        function showOrderSumsByStore(el) {
+            // Убираем предыдущий попап
+            document.querySelectorAll('.store-sums-popup').forEach(e => e.remove());
+
+            if (!savedOrderResults || savedOrderResults.length === 0) return;
+
+            // Считаем суммы по ТТ
+            const storeSums = {};
+            const storeCounts = {};
+            savedOrderResults.forEach(r => {
+                if (r.order > 0) {
+                    storeSums[r.tt] = (storeSums[r.tt] || 0) + r.sum;
+                    storeCounts[r.tt] = (storeCounts[r.tt] || 0) + 1;
+                }
+            });
+
+            const sortedStores = Object.entries(storeSums).sort((a, b) => b[1] - a[1]);
+            const totalSum = Object.values(storeSums).reduce((s, v) => s + v, 0);
+
+            const popup = document.createElement('div');
+            popup.className = 'store-sums-popup';
+            popup.style.cssText = 'position:fixed;z-index:200;background:white;border:1px solid #e5e7eb;border-radius:12px;padding:0;box-shadow:0 12px 40px rgba(0,0,0,0.2);min-width:320px;max-width:420px;max-height:70vh;overflow:hidden;pointer-events:auto;font-family:system-ui,sans-serif;';
+
+            let totalPositions = 0;
+            sortedStores.forEach(([, count]) => totalPositions += count);
+
+            popup.innerHTML = `
+                <div style="background:linear-gradient(135deg,#7c3aed,#6d28d9);color:white;padding:12px 16px;border-radius:12px 12px 0 0;">
+                    <div style="font-size:14px;font-weight:700;">Суммы заказов по магазинам</div>
+                    <div style="font-size:11px;opacity:0.8;margin-top:2px;">${sortedStores.length} магазинов • ${totalPositions} поз. на ${totalSum.toFixed(0)} ₽</div>
+                </div>
+                <div style="max-height:50vh;overflow-y:auto;padding:4px 0;">
+                    ${sortedStores.map(([tt, sum], i) => `
+                        <div style="display:flex;align-items:center;padding:8px 16px;gap:10px;${i % 2 === 0 ? 'background:#f9fafb;' : ''}border-bottom:1px solid #f3f4f6;">
+                            <div style="width:24px;height:24px;border-radius:6px;background:#ede9fe;color:#6d28d9;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">${i + 1}</div>
+                            <div style="flex:1;min-width:0;">
+                                <div style="font-size:12px;font-weight:600;color:#1f2937;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${tt}</div>
+                                <div style="font-size:10px;color:#6b7280;">${storeCounts[tt]} поз.</div>
+                            </div>
+                            <div style="font-size:13px;font-weight:700;color:#6d28d9;white-space:nowrap;">${sum.toFixed(0)} ₽</div>
+                        </div>
+                    `).join('')}
+                </div>
+                <div style="background:#f3f4f6;padding:10px 16px;border-radius:0 0 12px 12px;border-top:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center;">
+                    <span style="font-size:11px;color:#6b7280;">Итого:</span>
+                    <span style="font-size:15px;font-weight:800;color:#4c1d95;">${totalSum.toFixed(0)} ₽</span>
+                </div>
+                <div style="padding:4px 16px 8px;text-align:center;">
+                    <span style="font-size:9px;color:#9ca3af;">Кликните вне чтобы закрыть</span>
+                </div>
+            `;
+            document.body.appendChild(popup);
+
+            // Позиционируем попап
+            const rect = el.getBoundingClientRect();
+            let left = rect.left + rect.width / 2 - 160;
+            let top = rect.bottom + 8;
+            if (left < 8) left = 8;
+            if (left + 420 > window.innerWidth) left = window.innerWidth - 428;
+            if (top + 400 > window.innerHeight) top = rect.top - 400;
+            if (top < 8) top = 8;
+            popup.style.left = left + 'px';
+            popup.style.top = top + 'px';
+
+            // Закрытие по клику вне
+            setTimeout(() => {
+                function close(e) {
+                    if (!popup.contains(e.target) && e.target !== el) {
+                        popup.remove();
+                        document.removeEventListener('mousedown', close);
+                        document.removeEventListener('touchstart', close);
+                    }
+                }
+                document.addEventListener('mousedown', close);
+                document.addEventListener('touchstart', close);
+            }, 50);
         }
 
         function clearAll() {
-            [KEYS.MATRIX, KEYS.SALES, KEYS.STOCKS, KEYS.GROUP_MARKUPS, KEYS.CURRENT_SUPPLIER].forEach(k => localStorage.removeItem(k));
-            matrix = {}; sales = []; stocks = []; groupMarkups = {}; currentSupplier = '';
+            [KEYS.ASSORTMENT, KEYS.MATRIX_MARKS, KEYS.SALES, KEYS.STOCKS, KEYS.GROUP_MARKUPS].forEach(k => localStorage.removeItem(k));
+            matrix = {}; matrixMarks = {}; sales = []; stocks = []; groupMarkups = {};
+            resetSavedOrders();
             render();
             alert('Данные очищены');
         }
 
         // Инициализация с ожиданием облачного хранилища
         if (window.CloudStorage && !window.CloudStorage.isReady()) {
-            window.addEventListener('cloudStorageReady', () => { try { init(); } catch(e) { console.error('Init error:', e); } });
+            window.addEventListener('cloudStorageReady', () => { try { init(); } catch(e) { console.error('Init error:', e); document.getElementById('content').innerHTML = '<div class="p-4 text-red-600">Ошибка инициализации: ' + e.message + '</div>'; } });
         } else {
-            try { init(); } catch(e) { console.error('Init error:', e); }
+            try { init(); } catch(e) { console.error('Init error:', e); document.getElementById('content').innerHTML = '<div class="p-4 text-red-600">Ошибка инициализации: ' + e.message + '</div>'; }
         }
 
         // После загрузки из облака — перечитываем данные и перерисовываем
         window.addEventListener('cloudStorageReady', () => {
             loadStoresFromHTML();
-            matrix = load(KEYS.MATRIX, {});
             sales = load(KEYS.SALES, []);
             stocks = load(KEYS.STOCKS, []);
             render();
