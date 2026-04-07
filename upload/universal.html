@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Универсальный расчёт</title>
-    <!-- Version: 1.1 -->
+    <!-- Version: 1.2 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -834,7 +834,7 @@
                                 <th class="text-center">Упак.</th>
                                 <th class="text-left">Поставщик</th>
                                 <th class="text-right">Цена</th>
-                                <th class="text-right">Полка</th>
+                                <th class="text-right">Дом. полка</th>
                                 <th class="text-center">Квант</th>
                                 <th class="text-center w-10"></th>
                             </tr>
@@ -975,7 +975,7 @@
         }
 
         function exportAssortment() {
-            const headers = ['Группа', 'Наименование', 'Код', 'Упаковка', 'Поставщик', 'Цена', 'Полка', 'Квант'];
+            const headers = ['Группа', 'Наименование', 'Код', 'Упаковка', 'Поставщик', 'Цена', 'Дом. полка', 'Квант'];
             const data = [];
             Object.values(matrix).forEach(p => data.push([p.group || '', p.nomenclature || '', p.code, p.packaging || 'ШТ', p.supplier || '', p.price || 0, p.shelf || 0, p.quant || 1]));
             const ws = SharedUtils.createStyledSheet(data, headers, [0, 1, 4]);
@@ -1224,7 +1224,7 @@
                                     <th class="text-left">Наименование</th>
                                     <th class="text-center">Код</th>
                                     <th class="text-center">Вход. цена</th>
-                                    <th class="text-center bg-green-100">Полка ₽</th>
+                                    <th class="text-center bg-green-100">Цена на полке</th>
                                     <th class="text-center bg-orange-100">Наценка %</th>
                                     <th class="text-center">Доход ₽</th>
                                     <th class="text-center">Доход %</th>
@@ -1352,7 +1352,7 @@
         }
 
         function exportPrices() {
-            const headers = ['Группа', 'Наименование', 'Код', 'Вход. цена', 'Наценка %', 'Полка', 'Доход ₽', 'Доход %'];
+            const headers = ['Группа', 'Наименование', 'Код', 'Вход. цена', 'Наценка %', 'Цена на полке', 'Доход ₽', 'Доход %'];
             const data = [];
             Object.entries(matrix).forEach(([code, p]) => {
                 const inPrice = p.inPrice || 0;
@@ -1504,7 +1504,8 @@
 
                     if (!stockData) {
                         if (matrixDA) {
-                            results.push({ tt: store.tt, code, nomenclature: p.nomenclature || '', group: p.group || '', currentStock: 0, sales: salesByTTCode[key] || 0, daysPresent: 0, avgSalesPerDay: 0, order: 0, quant: p.quant || 1, shelf: p.shelf || 0, packaging: p.packaging || 'ШТ', inPrice: p.inPrice || 0, sum: 0, status: 'нет остатков', statusType: 'noStock', isAssortment: false });
+                            // Товар в матрице (ДА) но нет данных остатков — минимальный заказ 2 шт
+                            results.push({ tt: store.tt, code, nomenclature: p.nomenclature || '', group: p.group || '', currentStock: 0, sales: salesByTTCode[key] || 0, daysPresent: 0, avgSalesPerDay: 0, order: 2, quant: p.quant || 1, shelf: p.shelf || 0, packaging: p.packaging || 'ШТ', inPrice: p.inPrice || 0, sum: 2 * (p.inPrice || 0), status: 'заказ 2 (мин.)', statusType: 'order', isAssortment: false });
                         }
                         return;
                     }
@@ -1700,7 +1701,7 @@
                     <span style="color:#9ca3af">Период:</span><span>${period} дней</span>
                     <span style="color:#9ca3af">Прогноз продаж:</span><span style="font-weight:600;color:#fbbf24">${projectedSales} шт</span>
                     <span style="color:#9ca3af">Текущий остаток:</span><span style="font-weight:600">${r.currentStock.toFixed(2)} шт</span>
-                    <span style="color:#9ca3af">Полка (мин.):</span><span>${r.shelf || 0} шт</span>
+                    <span style="color:#9ca3af">Дом. полка:</span><span>${r.shelf || 0} шт</span>
                     <span style="color:#9ca3af">Дефицит:</span><span style="font-weight:600;color:#f87171">${need > 0 ? need + ' шт' : 'нет'}</span>
                     <span style="color:#9ca3af">Квант:</span><span>${r.quant} (${r.packaging})</span>
                     <span style="color:#9ca3af">Заказ:</span><span style="font-weight:700;color:#34d399">${r.order} шт</span>
@@ -2219,7 +2220,11 @@
                     const matrixDA = markForTT === 'ДА';
 
                     if (!matrixDA && !stockData) return;
-                    if (!stockData) { rows.push([store.storeNumber || store.tt2 || '', store.tt, code, p.nomenclature || '', p.group || '', salesByTTCode[key] || 0, 0, 0, 0, 0, 0, 'нет остатков']); return; }
+                    if (!stockData) {
+                        // Товар в матрице (ДА) но нет данных остатков — минимальный заказ 2 шт
+                        rows.push([store.storeNumber || store.tt2 || '', store.tt, code, p.nomenclature || '', p.group || '', salesByTTCode[key] || 0, 0, 0, 0, 2, (2 * (p.inPrice || 0)).toFixed(2), 'мин. заказ']);
+                        return;
+                    }
 
                     const currentStock = stockData.currentStock || 0;
                     const daysPresent = stockData.daysPresent || 0;
