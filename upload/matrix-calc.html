@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Расчёт матрицы</title>
-    <!-- Version: 7.6 -->
+    <!-- Version: 7.7 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -640,11 +640,18 @@
             const saved = getSavedAssortments();
             const existing = saved.findIndex(s => s.name === name);
             
+            // Собираем пометки обязательных для товаров в текущем ассортименте
+            const mandatory = {};
+            products.forEach(p => {
+                if (p.code && mandatoryProducts[p.code]) mandatory[p.code] = true;
+            });
+
             const record = {
                 name,
                 date: new Date().toISOString(),
                 count: products.length,
-                data: products
+                data: products,
+                mandatory: mandatory
             };
             
             if (existing >= 0) {
@@ -718,6 +725,15 @@
             }
             
             products = record.data;
+            
+            // Восстанавливаем пометки обязательных товаров
+            if (record.mandatory && typeof record.mandatory === 'object') {
+                Object.entries(record.mandatory).forEach(([code, val]) => {
+                    if (val) mandatoryProducts[code] = true;
+                });
+                save(KEYS.MANDATORY, mandatoryProducts);
+            }
+            
             save(KEYS.PRODUCTS, products);
             
             // Закрываем модальное окно
