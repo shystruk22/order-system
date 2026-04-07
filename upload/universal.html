@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Универсальный расчёт</title>
-    <!-- Version: 1.2 -->
+    <!-- Version: 1.3 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -103,7 +103,7 @@
         };
 
         // Поля каталога товаров (не ДА/НЕТ)
-        const CATALOG_FIELDS = ['code','nomenclature','name','group','packaging','supplier','quant','price','inPrice','shelf','markup'];
+        const CATALOG_FIELDS = ['code','nomenclature','name','group','packaging','supplier','quant','price','inPrice','shelfPrice','shelf','markup'];
 
         const normCode = (code) => String(code || '').trim().replace(/^0+/, '') || '0';
 
@@ -186,6 +186,7 @@
                         supplier: p.supplier || '',
                         price: p.price || 0,
                         inPrice: p.inPrice || p.price || 0,
+                        shelfPrice: p.shelfPrice || 0,
                         shelf: p.shelf || 0,
                         quant: p.quant || 1,
                         markup: defaultMarkup
@@ -834,6 +835,7 @@
                                 <th class="text-center">Упак.</th>
                                 <th class="text-left">Поставщик</th>
                                 <th class="text-right">Цена</th>
+                                <th class="text-right">Цена на полке</th>
                                 <th class="text-right">Дом. полка</th>
                                 <th class="text-center">Квант</th>
                                 <th class="text-center w-10"></th>
@@ -842,7 +844,7 @@
                         <tbody>
                             ${Object.entries(grouped).sort((a,b) => a[0].localeCompare(b[0], 'ru')).map(([gr, items]) => `
                                 <tr class="bg-sky-50 cursor-pointer hover:bg-sky-100" onclick="collapsedG['${esc(gr)}']=!collapsedG['${esc(gr)}'];render()">
-                                    <td colspan="9" class="font-semibold text-sky-800">
+                                    <td colspan="10" class="font-semibold text-sky-800">
                                         <span class="flex items-center gap-2">${collapsedG[gr] ? icons.chevronRight : icons.chevronDown}${gr} (${items.length})</span>
                                     </td>
                                 </tr>
@@ -854,6 +856,7 @@
                                         <td class="text-center text-gray-500">${p.packaging || 'ШТ'}</td>
                                         <td class="text-xs"><input type="text" value="${p.supplier || ''}" onchange="updateProduct('${esc(p.code)}', 'supplier', this.value)" class="input w-24 text-xs" placeholder="Поставщик"></td>
                                         <td class="text-right"><input type="number" step="0.01" value="${p.price || 0}" onchange="updateProduct('${esc(p.code)}', 'price', parseFloat(this.value)||0)" class="input w-16 text-right text-xs"></td>
+                                        <td class="text-right"><input type="number" step="0.01" value="${p.shelfPrice || 0}" onchange="updateProduct('${esc(p.code)}', 'shelfPrice', parseFloat(this.value)||0)" class="input w-16 text-right text-xs" placeholder="0"></td>
                                         <td class="text-right"><input type="number" step="0.01" value="${p.shelf || 0}" onchange="updateProduct('${esc(p.code)}', 'shelf', parseFloat(this.value)||0)" class="input w-16 text-right text-xs"></td>
                                         <td class="text-center"><input type="number" value="${p.quant || 1}" onchange="updateProduct('${esc(p.code)}', 'quant', parseFloat(this.value)||1)" class="input w-12 text-center text-xs" step="1"></td>
                                         <td class="text-center"><button onclick="event.stopPropagation();deleteProduct('${esc(p.code)}')" class="text-red-500 hover:text-red-700 p-1">${icons.trash}</button></td>
@@ -975,9 +978,9 @@
         }
 
         function exportAssortment() {
-            const headers = ['Группа', 'Наименование', 'Код', 'Упаковка', 'Поставщик', 'Цена', 'Дом. полка', 'Квант'];
+            const headers = ['Группа', 'Наименование', 'Код', 'Упаковка', 'Поставщик', 'Цена', 'Цена на полке', 'Дом. полка', 'Квант'];
             const data = [];
-            Object.values(matrix).forEach(p => data.push([p.group || '', p.nomenclature || '', p.code, p.packaging || 'ШТ', p.supplier || '', p.price || 0, p.shelf || 0, p.quant || 1]));
+            Object.values(matrix).forEach(p => data.push([p.group || '', p.nomenclature || '', p.code, p.packaging || 'ШТ', p.supplier || '', p.price || 0, p.shelfPrice || 0, p.shelf || 0, p.quant || 1]));
             const ws = SharedUtils.createStyledSheet(data, headers, [0, 1, 4]);
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, 'Ассортимент');
@@ -1153,7 +1156,7 @@
                 if (product) {
                     const inPrice = product.inPrice || 0;
                     const markup = product.markup ?? groupMarkups[product.group || ''] ?? defaultMarkup;
-                    const shelfPrice = inPrice * (1 + markup / 100);
+                    const shelfPrice = product.shelfPrice > 0 ? product.shelfPrice : inPrice * (1 + markup / 100);
                     totalPurchase += s.quantity * inPrice;
                     totalRevenue += s.quantity * shelfPrice;
                     totalProfit += s.quantity * (shelfPrice - inPrice);
@@ -1255,7 +1258,9 @@
                                         ${collapsedG['prices_' + gr] ? '' : items.map(p => {
                                             const inPrice = p.inPrice || 0;
                                             const markup = p.markup ?? groupMarkups[p.group || ''] ?? defaultMarkup;
-                                            const shelfPrice = Math.round(inPrice * (1 + markup / 100));
+                                            // Если задана цена на полке вручную — используем её, иначе считаем из наценки
+                                            const shelfPrice = p.shelfPrice > 0 ? p.shelfPrice : Math.round(inPrice * (1 + markup / 100));
+                                            const effectiveMarkup = inPrice > 0 ? Math.round(((shelfPrice - inPrice) / inPrice) * 100) : markup;
                                             const profit = shelfPrice - inPrice;
                                             const profitPercent = inPrice > 0 ? ((profit / inPrice) * 100).toFixed(1) : 0;
                                             const hasIndividual = p.markup !== undefined && p.markup !== null;
@@ -1357,9 +1362,10 @@
             Object.entries(matrix).forEach(([code, p]) => {
                 const inPrice = p.inPrice || 0;
                 const markup = p.markup ?? groupMarkups[p.group || ''] ?? defaultMarkup;
-                const shelfPrice = Math.round(inPrice * (1 + markup / 100));
+                const shelfPrice = p.shelfPrice > 0 ? p.shelfPrice : Math.round(inPrice * (1 + markup / 100));
+                const effectiveMarkup = p.shelfPrice > 0 ? Math.round(((p.shelfPrice - inPrice) / inPrice) * 100) : markup;
                 const profit = shelfPrice - inPrice;
-                data.push([p.group || '', p.nomenclature || '', code, inPrice, markup, shelfPrice, profit, inPrice > 0 ? ((profit / inPrice) * 100).toFixed(1) + '%' : '0%']);
+                data.push([p.group || '', p.nomenclature || '', code, inPrice, effectiveMarkup, shelfPrice, profit, inPrice > 0 ? ((profit / inPrice) * 100).toFixed(1) + '%' : '0%']);
             });
             const ws = SharedUtils.createStyledSheet(data, headers, [0, 1]);
             const wb = XLSX.utils.book_new();
