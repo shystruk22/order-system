@@ -1573,67 +1573,10 @@
                 </div>`;
         }
 
+        // Импорт матрицы с вкладки Матрица — работает через тот же merge-механизм
         function importMatrix(input) {
-            const file = input.files[0];
-            if (!file) return;
-            
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                try {
-                    const data = new Uint8Array(e.target.result);
-                    const workbook = XLSX.read(data, { type: 'array' });
-                    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-                    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-                    
-                    if (rows.length < 2) {
-                        alert('Файл пуст или не содержит данных');
-                        return;
-                    }
-                    
-                    // Первая строка - заголовки: Группа, Наименование, Код, Магазины...
-                    const headers = rows[0];
-                    const storeColumns = [];
-                    
-                    // Найти колонки с магазинами (начиная с 4-й колонки)
-                    for (let i = 3; i < headers.length; i++) {
-                        if (headers[i]) storeColumns.push({ index: i, tt: String(headers[i]).trim() });
-                    }
-                    
-                    let updated = 0;
-                    
-                    // Обработать строки данных
-                    for (let r = 1; r < rows.length; r++) {
-                        const row = rows[r];
-                        const code = normCode(row[2] || row[1]);
-                        if (!code || code === '0') continue;
-                        
-                        // Обновить статус матрицы для каждого магазина
-                        storeColumns.forEach(col => {
-                            const cellValue = String(row[col.index] || '').toUpperCase().trim();
-                            const inMatrix = cellValue === 'ДА' || cellValue === '1' || cellValue === 'TRUE' || cellValue === 'V' || cellValue === '✓';
-                            
-                            results.forEach(res => {
-                                if (normCode(res.code) === code && res.tt === col.tt) {
-                                    if (res.inMatrix !== (inMatrix ? 'ДА' : 'НЕТ')) {
-                                        res.inMatrix = inMatrix ? 'ДА' : 'НЕТ';
-                                        res.manualEdit = true;
-                                        updated++;
-                                    }
-                                }
-                            });
-                        });
-                    }
-                    
-                    save(KEYS.RESULTS, results);
-                    alert(`Импорт завершён. Обновлено записей: ${updated}`);
-                    render();
-                } catch (err) {
-                    console.error('Import error:', err);
-                    alert('Ошибка импорта: ' + err.message);
-                }
-            };
-            reader.readAsArrayBuffer(file);
-            input.value = '';
+            // Делегируем в handleMatrixUpload — та же логика слияния
+            handleMatrixUpload(input);
         }
 
         function toggleMatrixCell(code, tt) {
@@ -1947,42 +1890,127 @@
 
                     if (ttNames.length === 0) { alert('Не найдены колонки с торговыми точками в файле'); return; }
 
-                    const parsed = [];
+                    // Парсим матрицу из файла в Map: "code|tt" -> "ДА"/"НЕТ"
+                    const importMap = new Map();
+                    const importCodes = new Set();
+                    const importTTs = new Set(ttNames.map(t => t.name));
+
                     for (let i = 1; i < json.length; i++) {
                         const r = json[i];
                         if (!r || r.length < 3) continue;
-                        const group = String(r[0] || '').trim();
-                        const nomenclature = String(r[1] || '').trim();
                         const code = normCode(r[2]);
-                        if (!code || !nomenclature) continue;
+                        if (!code) continue;
+                        const nomenclature = String(r[1] || '').trim();
+                        if (!nomenclature) continue;
 
+                        importCodes.add(code);
                         ttNames.forEach(({ col, name }) => {
-                            const inMatrix = String(r[col] || '').trim().toUpperCase();
-                            parsed.push({
-                                tt: name,
-                                code: code,
-                                nomenclature: nomenclature,
-                                group: group,
-                                inMatrix: (inMatrix === 'ДА' || inMatrix === 'YES' || inMatrix === '1') ? 'ДА' : 'НЕТ',
-                                sales: 0,
-                                stock: 0,
-                                daysPresent: 0,
-                                abcSales: 'C',
-                                abcTurnover: 'C',
-                                abcWriteoff: 'C',
-                                points: 0
-                            });
+                            const val = String(r[col] || '').trim().toUpperCase();
+                            const inMatrix = (val === 'ДА' || val === 'YES' || val === '1') ? 'ДА' : 'НЕТ';
+                            importMap.set(`${code}|${name}`, inMatrix);
                         });
                     }
 
-                    if (parsed.length === 0) { alert('Не удалось прочитать данные матрицы из файла'); return; }
+                    if (importMap.size === 0) { alert('Не удалось прочитать данные матрицы из файла'); return; }
 
-                    if (results.length > 0 && !confirm(`Загрузить матрицу из файла (${parsed.length} записей)?\nТекущие результаты будут заменены.`)) return;
+                    // Если results пуст — создаем записи из файла (первый импорт без анализа)
+                    if (results.length === 0) {
+                        if (!confirm(`Загрузить матрицу из файла (${importMap.size} записей)?\nАнализ не был рассчитан — данные будут только из файла.`)) return;
 
-                    results = parsed;
+                        const parsed = [];
+                        for (let i = 1; i < json.length; i++) {
+                            const r = json[i];
+                            if (!r || r.length < 3) continue;
+                            const group = String(r[0] || '').trim();
+                            const nomenclature = String(r[1] || '').trim();
+                            const code = normCode(r[2]);
+                            if (!code || !nomenclature) continue;
+
+                            ttNames.forEach(({ col, name }) => {
+                                const val = String(r[col] || '').trim().toUpperCase();
+                                parsed.push({
+                                    tt: name, code: code, nomenclature: nomenclature,
+                                    group: group,
+                                    inMatrix: (val === 'ДА' || val === 'YES' || val === '1') ? 'ДА' : 'НЕТ',
+                                    sales: 0, stock: 0, daysPresent: 0, totalDays: 0,
+                                    avgPerDay: 0, turnoverIndex: 999, writeoff: 0, writeoffPercent: 0,
+                                    abcSales: 'C', abcTurnover: 'C', abcWriteoff: 'A',
+                                    abcScore: 5, abcClass: 'C', hasPrice: false,
+                                    isMandatory: false, manualEdit: true
+                                });
+                            });
+                        }
+                        results = parsed;
+                        save(KEYS.RESULTS, results);
+                        render();
+                        alert(`Загружено ${parsed.length} записей матрицы из файла`);
+                        return;
+                    }
+
+                    // РЕЖИМ СЛИЯНИЯ (merge): обновляем inMatrix из файла, не затирая ABC-данные
+                    let updatedDA = 0, updatedNET = 0, setToNET = 0;
+                    const resultsCodes = new Set(results.map(r => r.code));
+                    const resultsTTs = new Set(results.map(r => r.tt));
+
+                    results.forEach(r => {
+                        const key = `${normCode(r.code)}|${r.tt}`;
+                        const imported = importMap.get(key);
+
+                        if (imported !== undefined) {
+                            // Запись есть в файле — обновляем
+                            if (r.inMatrix !== imported) {
+                                if (imported === 'ДА') updatedDA++;
+                                else updatedNET++;
+                                r.inMatrix = imported;
+                                r.manualEdit = true;
+                            }
+                        } else {
+                            // Записи нет в файле — проверяем: код есть в файле, но ТТ удалён?
+                            // или ТТ есть в файле, но код удалён?
+                            const codeInFile = importCodes.has(normCode(r.code));
+                            const ttInFile = importTTs.has(r.tt);
+
+                            if (codeInFile && ttInFile) {
+                                // Код и ТТ есть, но комбинации нет = в файле было "НЕТ"
+                                if (r.inMatrix === 'ДА') {
+                                    r.inMatrix = 'НЕТ';
+                                    r.manualEdit = true;
+                                    setToNET++;
+                                }
+                            } else if (!codeInFile || !ttInFile) {
+                                // Товар или магазин был удалён из файла — убираем из матрицы
+                                if (r.inMatrix === 'ДА') {
+                                    r.inMatrix = 'НЕТ';
+                                    r.manualEdit = true;
+                                    setToNET++;
+                                }
+                            }
+                        }
+                    });
+
+                    // Обновляем названия товаров и групп из файла
+                    for (let i = 1; i < json.length; i++) {
+                        const r = json[i];
+                        if (!r || r.length < 3) continue;
+                        const code = normCode(r[2]);
+                        if (!code) continue;
+                        const group = String(r[0] || '').trim();
+                        const nomenclature = String(r[1] || '').trim();
+                        if (!nomenclature) continue;
+
+                        results.forEach(res => {
+                            if (normCode(res.code) === code) {
+                                if (nomenclature && nomenclature !== '0') res.nomenclature = nomenclature;
+                                if (group) res.group = group;
+                            }
+                        });
+                    }
+
                     save(KEYS.RESULTS, results);
                     render();
-                    alert(`Загружено ${parsed.length} записей матрицы из файла`);
+
+                    const msg = `Матрица обновлена из файла:\n• Установлено ДА: ${updatedDA}\n• Установлено НЕТ: ${updatedNET}\n• Убрано (нет в файле): ${setToNET}`;
+                    alert(msg);
                 } catch (err) {
                     console.error('Matrix parse error:', err);
                     alert('Ошибка чтения матрицы: ' + err.message);
