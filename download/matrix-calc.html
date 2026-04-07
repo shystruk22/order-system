@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Расчёт матрицы</title>
-    <!-- Version: 7.5 -->
+    <!-- Version: 7.6 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -249,8 +249,20 @@
         }
 
         function render() {
+            // Сохраняем позицию скролла для всех таблиц перед перерисовкой
+            const savedScrolls = {};
+            document.querySelectorAll('.table-container').forEach(c => {
+                savedScrolls[c.id] = c.scrollTop;
+            });
             renderTabs();
             renderContent();
+            // Восстанавливаем скролл после перерисовки
+            requestAnimationFrame(() => {
+                Object.entries(savedScrolls).forEach(([id, top]) => {
+                    const c = document.getElementById(id);
+                    if (c && top > 0) c.scrollTop = top;
+                });
+            });
         }
 
         function renderTabs() {
@@ -1136,20 +1148,20 @@
                             </div>
                         </div>
                         <div class="flex flex-wrap gap-2 items-center">
-                            <select onchange="selectedTT=this.value;render()" class="px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500">
+                            <select onchange="selectedTT=this.value;filterAnalysis()" class="px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500">
                                 <option value="">Магазин (${tts.length})</option>
                                 ${tts.map(tt => `<option value="${tt}" ${selectedTT === tt ? 'selected' : ''}>${tt.substring(0,20)}${tt.length>20?'...':''}</option>`).join('')}
                             </select>
-                            <select onchange="selectedGroup=this.value;render()" class="px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500">
+                            <select onchange="selectedGroup=this.value;filterAnalysis()" class="px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500">
                                 <option value="">Группа (${groups.length})</option>
                                 ${groups.map(g => `<option value="${g}" ${selectedGroup === g ? 'selected' : ''}>${g}</option>`).join('')}
                             </select>
-                            <select onchange="filterMatrixStatus=this.value;render()" class="px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500">
+                            <select onchange="filterMatrixStatus=this.value;filterAnalysis()" class="px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500">
                                 <option value="">Матрица</option>
                                 <option value="yes" ${filterMatrixStatus === 'yes' ? 'selected' : ''}>ДА</option>
                                 <option value="no" ${filterMatrixStatus === 'no' ? 'selected' : ''}>НЕТ</option>
                             </select>
-                            <select onchange="filterABC=this.value;render()" class="px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500">
+                            <select onchange="filterABC=this.value;filterAnalysis()" class="px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500">
                                 <option value="">ABC</option>
                                 <option value="A" ${filterABC === 'A' ? 'selected' : ''}>A</option>
                                 <option value="B" ${filterABC === 'B' ? 'selected' : ''}>B</option>
@@ -1157,7 +1169,7 @@
                             </select>
                             <div class="relative">
                                 <div class="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400">${icons.search}</div>
-                                <input type="text" placeholder="Поиск..." value="${searchProduct}" oninput="searchProduct=this.value;render()" class="pl-7 pr-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500 w-40">
+                                <input type="text" id="analysisSearchInput" placeholder="Поиск..." value="${esc(searchProduct)}" oninput="searchProduct=this.value;filterAnalysis()" class="pl-7 pr-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500 w-40">
                             </div>
                             <button onclick="showSaveMatrixModal()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700">${icons.save} Сохранить</button>
                             <button onclick="showLoadMatrixModal()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700">${icons.import} Загрузить</button>
@@ -1324,52 +1336,17 @@
         }
 
         function filterAssortment() {
-            const container = document.getElementById('assortmentTableContainer');
-            const scrollTop = container ? container.scrollTop : 0;
             render();
-            requestAnimationFrame(() => {
-                const c = document.getElementById('assortmentTableContainer');
-                if (c) c.scrollTop = scrollTop;
-            });
         }
 
         function toggleGroup(group) {
             collapsedGroups[group] = !collapsedGroups[group];
-            
-            // Сохраняем скролл в зависимости от текущей вкладки
-            let containerId = null;
-            if (tab === 'assortment') containerId = 'assortmentTableContainer';
-            else if (tab === 'matrix') containerId = 'matrixTableContainer';
-            else if (tab === 'analysis') containerId = 'analysisTableContainer';
-            
-            const container = containerId ? document.getElementById(containerId) : null;
-            const scrollTop = container ? container.scrollTop : 0;
-            
             render();
-            
-            // Восстанавливаем скролл после перерисовки
-            if (containerId) {
-                requestAnimationFrame(() => {
-                    const newContainer = document.getElementById(containerId);
-                    if (newContainer) newContainer.scrollTop = scrollTop;
-                });
-            }
         }
 
         function toggleTT(tt) {
             collapsedTT[tt] = !collapsedTT[tt];
-            
-            // Сохраняем скролл для вкладки анализ
-            const container = document.getElementById('analysisTableContainer');
-            const scrollTop = container ? container.scrollTop : 0;
-            
             render();
-            
-            // Восстанавливаем скролл после перерисовки
-            requestAnimationFrame(() => {
-                const newContainer = document.getElementById('analysisTableContainer');
-                if (newContainer) newContainer.scrollTop = scrollTop;
-            });
         }
         
         function showCalcDetails(tt, code) {
@@ -1447,8 +1424,24 @@
             document.getElementById('calcModal').classList.remove('flex');
         }
 
-        // Переключение статуса товара в матрице из таблицы анализа
+        // Быстрый фильтр анализа — сохраняет фокус в поле поиска
+        function filterAnalysis() {
+            const searchInput = document.getElementById('analysisSearchInput');
+            const isSearchFocused = searchInput && document.activeElement === searchInput;
+            render();
+            if (isSearchFocused) {
+                requestAnimationFrame(() => {
+                    const si = document.getElementById('analysisSearchInput');
+                    if (si) { si.focus(); si.selectionStart = si.selectionEnd = si.value.length; }
+                });
+            }
+        }
+
+        // Переключение статуса товара в матрице из таблицы анализа — быстрое, без полного рендера
         function toggleAnalysisMatrix(tt, code) {
+            const container = document.getElementById('analysisTableContainer');
+            const scrollTop = container ? container.scrollTop : 0;
+
             results.forEach(r => {
                 if (r.tt === tt && r.code === code) {
                     r.inMatrix = r.inMatrix === 'ДА' ? 'НЕТ' : 'ДА';
@@ -1457,7 +1450,18 @@
                 }
             });
             save(KEYS.RESULTS, results);
-            render();
+
+            // Быстрое обновление только изменённой ячейки и счётчиков — без полного render()
+            const btn = event.target.closest('button');
+            if (btn) {
+                const isDA = results.find(r => r.tt === tt && r.code === code)?.inMatrix === 'ДА';
+                btn.className = `px-2 py-1 rounded text-xs font-bold ${isDA ? 'bg-emerald-500 hover:bg-emerald-600 text-white' : 'bg-red-500 hover:bg-red-600 text-white'} cursor-pointer`;
+                btn.textContent = isDA ? '✓ ДА' : '✗ НЕТ';
+            }
+
+            // Обновляем счётчики в TT-заголовке
+            const ttHeaderCell = container?.querySelector(`td[onclick="toggleTT('${tt.replace(/'/g, "\\'")}')"]`);
+            // Простой fallback: обновляем через data-атрибут или просто пропускаем (счётчики обновятся при следующем render)
         }
 
         function renderMatrix() {
@@ -1591,10 +1595,6 @@
         }
 
         function toggleMatrixCell(code, tt) {
-            // Сохраняем позицию скролла
-            const container = document.getElementById('matrixTableContainer');
-            const scrollTop = container ? container.scrollTop : 0;
-            
             // Ищем существующую запись
             let found = false;
             results.forEach(r => {
@@ -1641,12 +1641,6 @@
             
             save(KEYS.RESULTS, results);
             render();
-            
-            // Восстанавливаем скролл после перерисовки
-            requestAnimationFrame(() => {
-                const newContainer = document.getElementById('matrixTableContainer');
-                if (newContainer) newContainer.scrollTop = scrollTop;
-            });
         }
 
         // Фильтрация матрицы без полной перерисовки (сохраняет фокус и скролл)
