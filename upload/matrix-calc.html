@@ -487,7 +487,7 @@
                                     id="assortmentSearchInput"
                                     placeholder="Поиск по названию или коду..." 
                                     value="${assortmentSearch}" 
-                                    oninput="assortmentSearch=this.value;filterAssortment()"
+                                    oninput="debounceSearchAssort(this)"
                                     class="pl-8 pr-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500 w-56"
                                 >
                                 <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400">${icons.search}</span>
@@ -1210,7 +1210,7 @@
                             </select>
                             <div class="relative">
                                 <div class="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400">${icons.search}</div>
-                                <input type="text" id="analysisSearchInput" placeholder="Поиск..." value="${esc(searchProduct)}" oninput="searchProduct=this.value;filterAnalysis()" class="pl-7 pr-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500 w-40">
+                                <input type="text" id="analysisSearchInput" placeholder="Поиск..." value="${esc(searchProduct)}" oninput="debounceSearchAnalysis(this)" class="pl-7 pr-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500 w-40">
                             </div>
                             <button onclick="showSaveMatrixModal()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700">${icons.save} Сохранить</button>
                             <button onclick="showLoadMatrixModal()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700">${icons.import} Загрузить</button>
@@ -1376,6 +1376,21 @@
             `;
         }
 
+        let searchTimeoutAssort = null;
+        function debounceSearchAssort(input) {
+            const val = input.value;
+            const pos = input.selectionStart;
+            clearTimeout(searchTimeoutAssort);
+            searchTimeoutAssort = setTimeout(() => {
+                assortmentSearch = val;
+                render();
+                setTimeout(() => {
+                    const el = document.getElementById('assortmentSearchInput');
+                    if (el) { el.focus(); el.setSelectionRange(pos, pos); }
+                }, 10);
+            }, 300);
+        }
+
         function filterAssortment() {
             render();
         }
@@ -1465,17 +1480,24 @@
             document.getElementById('calcModal').classList.remove('flex');
         }
 
-        // Быстрый фильтр анализа — сохраняет фокус в поле поиска
+        let searchTimeoutAnalysis = null;
+        function debounceSearchAnalysis(input) {
+            const val = input.value;
+            const pos = input.selectionStart;
+            clearTimeout(searchTimeoutAnalysis);
+            searchTimeoutAnalysis = setTimeout(() => {
+                searchProduct = val;
+                render();
+                setTimeout(() => {
+                    const el = document.getElementById('analysisSearchInput');
+                    if (el) { el.focus(); el.setSelectionRange(pos, pos); }
+                }, 10);
+            }, 300);
+        }
+
+        // Быстрый фильтр анализа (для select-ов)
         function filterAnalysis() {
-            const searchInput = document.getElementById('analysisSearchInput');
-            const isSearchFocused = searchInput && document.activeElement === searchInput;
             render();
-            if (isSearchFocused) {
-                requestAnimationFrame(() => {
-                    const si = document.getElementById('analysisSearchInput');
-                    if (si) { si.focus(); si.selectionStart = si.selectionEnd = si.value.length; }
-                });
-            }
         }
 
         // Переключение статуса товара в матрице из таблицы анализа — быстрое, без полного рендера

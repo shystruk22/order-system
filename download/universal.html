@@ -816,7 +816,7 @@
                             <span class="text-xs">Групп: </span><strong>${allGroups.length}</strong>
                         </div>
                         <div class="relative">
-                            <input type="text" placeholder="Поиск по названию или коду..." value="${searchAssort}" oninput="searchAssort=this.value;render()" class="pl-8 pr-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-sky-400 w-56">
+                            <input type="text" id="assortSearchInput" placeholder="Поиск по названию или коду..." value="${searchAssort}" oninput="debounceSearchAssort(this)" class="pl-8 pr-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-sky-400 w-56">
                             <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400">${icons.search}</span>
                             ${searchAssort ? `<button onclick="searchAssort='';render()" class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">✕</button>` : ''}
                         </div>
@@ -1434,6 +1434,36 @@
             }, 300);
         }
 
+        let searchTimeoutAssort = null;
+        function debounceSearchAssort(input) {
+            const val = input.value;
+            const pos = input.selectionStart;
+            clearTimeout(searchTimeoutAssort);
+            searchTimeoutAssort = setTimeout(() => {
+                searchAssort = val;
+                render();
+                setTimeout(() => {
+                    const el = document.getElementById('assortSearchInput');
+                    if (el) { el.focus(); el.setSelectionRange(pos, pos); }
+                }, 10);
+            }, 300);
+        }
+
+        let searchTimeoutAnalytics = null;
+        function debounceSearchAnalytics(input) {
+            const val = input.value;
+            const pos = input.selectionStart;
+            clearTimeout(searchTimeoutAnalytics);
+            searchTimeoutAnalytics = setTimeout(() => {
+                searchAnalytics = val;
+                render();
+                setTimeout(() => {
+                    const el = document.getElementById('analyticsSearchInput');
+                    if (el) { el.focus(); el.setSelectionRange(pos, pos); }
+                }, 10);
+            }, 300);
+        }
+
         let renderTimeoutPrices = null;
         function renderPricesDebounced() {
             clearTimeout(renderTimeoutPrices);
@@ -1919,7 +1949,7 @@
             html += `<div class="bg-white rounded-lg border border-gray-200 p-3">
                 <div class="flex flex-wrap gap-2 items-center">
                     <div class="relative">
-                        <input type="text" placeholder="Поиск по товару..." value="${esc(searchAnalytics)}" oninput="searchAnalytics=this.value;render()" class="pl-8 pr-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-violet-400 w-56">
+                        <input type="text" id="analyticsSearchInput" placeholder="Поиск по товару..." value="${esc(searchAnalytics)}" oninput="debounceSearchAnalytics(this)" class="pl-8 pr-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-violet-400 w-56">
                         <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400">${icons.search}</span>
                         ${searchAnalytics ? `<button onclick="searchAnalytics='';render()" class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">✕</button>` : ''}
                     </div>
