@@ -307,6 +307,7 @@
     //   Кол 5: Цена (входная)
     //   Кол 6: Полка (минимальный остаток)
     //   Кол 7: Квант (шаг заказа для КГ)
+    //   Кол 8: Объём
     // ============================================================================
     function parseAssortment(json) {
         const items = [];
@@ -340,10 +341,11 @@
             const shelfPrice = parseFloat(String(r[6] || '0').replace(',', '.')) || 0;
             const shelf = parseFloat(String(r[7] || '0').replace(',', '.')) || 0;
             const quant = parseFloat(String(r[8] || '1').replace(',', '.')) || 1;
+            const volume = parseFloat(String(r[9] || '0').replace(',', '.')) || 0;
 
             items.push({
                 code, nomenclature: name, group, packaging, supplier,
-                price, inPrice: price, shelfPrice, shelf, quant
+                price, inPrice: price, shelfPrice, shelf, quant, volume
             });
 
             if (shelf > 0) newShelf[code] = shelf;

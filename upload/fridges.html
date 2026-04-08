@@ -1919,8 +1919,13 @@
 
         // Exports
         function exportAssortment() {
-            const data = products.map(p => ({ 'Код': p.code, 'Наименование': p.name, 'Категория': p.category, 'Объем': p.volume, 'Тара': p.container, 'Приоритет': p.priority }));
-            const ws = XLSX.utils.json_to_sheet(data);
+            const headers = ['Группа','Наименование','Код','Упак.','Поставщик','Продажи','Цена','Закупка','Цена на полке','Дом. полка','Маржа','Квант','Объём'];
+            const rows = products.map(p => {
+                const totalSales = getTotalSales(p.code);
+                const margin = calcMargin(p);
+                return [p.group || '', p.nomenclature || p.name || '', p.code || '', p.packaging || 'ШТ', p.supplier || '', totalSales, p.price || 0, p.inPrice || 0, p.shelfPrice || 0, p.shelf || 0, margin, p.quant || 0, p.volume || 0];
+            });
+            const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, 'Ассортимент');
             XLSX.writeFile(wb, 'fridge_assortment.xlsx');

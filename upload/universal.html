@@ -104,7 +104,7 @@
         };
 
         // Поля каталога товаров (не ДА/НЕТ)
-        const CATALOG_FIELDS = ['code','nomenclature','name','group','packaging','supplier','quant','price','inPrice','shelfPrice','shelf','markup'];
+        const CATALOG_FIELDS = ['code','nomenclature','name','group','packaging','supplier','quant','volume','price','inPrice','shelfPrice','shelf','markup'];
 
         const normCode = (code) => String(code || '').trim().replace(/^0+/, '') || '0';
 
@@ -143,7 +143,7 @@
                     group: p.group || '', packaging: p.packaging || 'ШТ',
                     supplier: p.supplier || '', price: p.price || 0,
                     inPrice: p.inPrice || 0, shelfPrice: p.shelfPrice || 0,
-                    shelf: p.shelf || 0, quant: p.quant || 1, markup: p.markup || 0
+                    shelf: p.shelf || 0, quant: p.quant || 1, volume: p.volume || 0, markup: p.markup || 0
                 }))
             };
             SharedUtils.save(ASSORTMENTS_KEY, saved);
@@ -211,6 +211,7 @@
                         shelfPrice: p.shelfPrice || 0,
                         shelf: p.shelf || 0,
                         quant: p.quant || 1,
+                        volume: p.volume || 0,
                         markup: defaultMarkup
                     };
                 }
@@ -861,13 +862,14 @@
                                 <th class="text-right">Цена на полке</th>
                                 <th class="text-right">Дом. полка</th>
                                 <th class="text-center">Квант</th>
+                                <th class="text-center">Объём</th>
                                 <th class="text-center w-10"></th>
                             </tr>
                         </thead>
                         <tbody>
                             ${Object.entries(grouped).sort((a,b) => a[0].localeCompare(b[0], 'ru')).map(([gr, items]) => `
                                 <tr class="bg-sky-50 cursor-pointer hover:bg-sky-100" onclick="collapsedG['${esc(gr)}']=!collapsedG['${esc(gr)}'];render()">
-                                    <td colspan="10" class="font-semibold text-sky-800">
+                                    <td colspan="11" class="font-semibold text-sky-800">
                                         <span class="flex items-center gap-2">${collapsedG[gr] ? icons.chevronRight : icons.chevronDown}${gr} (${items.length})</span>
                                     </td>
                                 </tr>
@@ -882,6 +884,7 @@
                                         <td class="text-right"><input type="number" step="0.01" value="${p.shelfPrice || 0}" onchange="updateProduct('${esc(p.code)}', 'shelfPrice', parseFloat(this.value)||0)" class="input w-16 text-right text-xs" placeholder="0"></td>
                                         <td class="text-right"><input type="number" step="0.01" value="${p.shelf || 0}" onchange="updateProduct('${esc(p.code)}', 'shelf', parseFloat(this.value)||0)" class="input w-16 text-right text-xs"></td>
                                         <td class="text-center"><input type="number" value="${p.quant || 1}" onchange="updateProduct('${esc(p.code)}', 'quant', parseFloat(this.value)||1)" class="input w-12 text-center text-xs" step="1"></td>
+                                        <td><input type="number" step="0.01" value="${p.volume || 0}" onchange="updateProduct('${esc(p.code)}', 'volume', parseFloat(this.value)||0)" class="input w-16 text-center text-sm"></td>
                                         <td class="text-center"><button onclick="event.stopPropagation();deleteProduct('${esc(p.code)}')" class="text-red-500 hover:text-red-700 p-1">${icons.trash}</button></td>
                                     </tr>
                                 `).join('')}
@@ -902,6 +905,7 @@
                         <div class="flex gap-2">
                             <input type="text" id="newProductPackaging" placeholder="Упак" value="ШТ" class="input w-20">
                             <input type="number" id="newProductQuant" placeholder="Квант" value="1" class="input w-20">
+                            <input type="number" id="newProductVolume" step="0.01" placeholder="Объём" value="0" class="input w-20">
                             <input type="number" id="newProductPrice" placeholder="Вх. цена" class="input flex-1">
                         </div>
                     </div>
@@ -962,6 +966,7 @@
                 group: document.getElementById('newProductGroup').value.trim(),
                 packaging: document.getElementById('newProductPackaging').value.trim() || 'ШТ',
                 quant: parseFloat(document.getElementById('newProductQuant').value) || 1,
+                volume: parseFloat(document.getElementById('newProductVolume').value) || 0,
                 inPrice: parseFloat(document.getElementById('newProductPrice').value) || 0,
                 markup: defaultMarkup
             };
@@ -995,6 +1000,7 @@
                             shelfPrice: parseFloat(row['Цена на полке'] || 0) || 0,
                             shelf: parseFloat(row['Дом. полка'] || 0) || 0,
                             quant: parseFloat(row['Квант']) || 1,
+                            volume: parseFloat(row['Объём'] || row['Объем'] || 0) || 0,
                             markup: defaultMarkup
                         };
                     });
@@ -1008,9 +1014,9 @@
         }
 
         function exportAssortment() {
-            const headers = ['Группа', 'Наименование', 'Код', 'Упаковка', 'Поставщик', 'Цена', 'Цена на полке', 'Дом. полка', 'Квант'];
+            const headers = ['Группа', 'Наименование', 'Код', 'Упаковка', 'Поставщик', 'Цена', 'Цена на полке', 'Дом. полка', 'Квант', 'Объём'];
             const data = [];
-            Object.values(matrix).forEach(p => data.push([p.group || '', p.nomenclature || '', p.code, p.packaging || 'ШТ', p.supplier || '', p.price || 0, p.shelfPrice || 0, p.shelf || 0, p.quant || 1]));
+            Object.values(matrix).forEach(p => data.push([p.group || '', p.nomenclature || '', p.code, p.packaging || 'ШТ', p.supplier || '', p.price || 0, p.shelfPrice || 0, p.shelf || 0, p.quant || 1, p.volume || 0]));
             const ws = SharedUtils.createStyledSheet(data, headers, [0, 1, 4]);
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, 'Ассортимент');
