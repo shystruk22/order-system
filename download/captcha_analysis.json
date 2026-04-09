@@ -1,0 +1,28 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "I can see this is a Yandex SmartCaptcha challenge. The page shows a main image with a couple (appears to be a wedding photo) with several pink/red symbols overlaid on it. Below the main image, there's text that says \"Press in the following order:\" followed by 5 small thumbnail symbols in a specific sequence.\n\nThe challenge requires clicking on the symbols in the main image in the order shown by the thumbnails below. The thumbnails appear to show 5 different symbols (possibly arrows or geometric shapes) that need to be clicked sequentially on the main image.\n\nThe background of the page shows a scenic landscape with colorful hot air balloons flying over rocky terrain and mountains, which is typical of Yandex's captcha design aesthetic.\n\nTo complete this captcha, you would need to identify each symbol in the main image and click them in the exact order shown by the thumbnail sequence below the main image. The \"Submit\" button is visible at the bottom of the captcha panel to submit your answer once you've clicked the symbols in the correct order.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1774936259,
+  "id": "202603311350458ed860fdf70b44f9",
+  "model": "glm-4.6v",
+  "object": "chat.completion",
+  "request_id": "202603311350458ed860fdf70b44f9",
+  "usage": {
+    "completion_tokens": 214,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 1048,
+    "prompt_tokens_details": {
+      "cached_tokens": 4
+    },
+    "total_tokens": 1262
+  }
+}
