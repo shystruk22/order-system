@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Заказ рыбы</title>
-    <!-- Version: 1.0 -->
+    <!-- Version: 1.1 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -66,7 +66,7 @@
         let sales = []; // {tt, name, quantity, group} - продажи С ТТ
         let stocks = []; // {tt, name, code, currentStock, daysPresent, totalDays}
         let stores = []; // [{tt}]
-        let period = 21;
+        let period = 3;
         let defaultMarkup = 25;
 
         let searchAssort = '';
@@ -76,6 +76,7 @@
         let filterGroup = '';
         let collapsedG = {};
         let collapsedTT = {};
+        let collapsedInTransit = {};
         let savedOrderResults = null; // Сохранённые результаты расчёта заказа
         let savedOrderStats = null;   // Сохранённая статистика заказа
         let orderEdits = {};          // Ручные правки заказа: {"tt_code": value}
@@ -380,6 +381,7 @@
             stocks = load(KEYS.STOCKS, []);
             deliverySchedule = load(KEYS.SCHEDULE, {});
             inTransitOrders = load(KEYS.INTRANSIT, []);
+            autoCloseDeliveredOrders();
 
             // Загрузка с миграцией: старый формат (всё в matrix) → новый (matrix + matrixMarks)
             const savedAssort = load(KEYS.ASSORTMENT, null);
@@ -747,15 +749,48 @@
                     ${delivered.map(o => {
                         const itemsTotal = (o.items || []).reduce((s, i) => s + (i.qty || 0), 0);
                         const itemsSum = (o.items || []).reduce((s, i) => s + (i.sum || 0), 0);
+                        const arrivedCount = (o.items || []).filter(i => i.arrived !== false).length;
+                        const notArrivedCount = (o.items || []).filter(i => i.arrived === false).length;
+                        const collapsed = collapsedInTransit[o.id];
                         return `
-                        <div class="bg-white rounded-lg border border-gray-200 mb-2 opacity-70">
-                            <div class="flex items-center justify-between px-4 py-2 bg-green-50 border-b border-green-100">
+                        <div class="bg-white rounded-lg border border-gray-200 mb-2 opacity-60 hover:opacity-80 transition-opacity">
+                            <div class="flex items-center justify-between px-4 py-2 bg-green-50 border-b border-green-100 cursor-pointer" onclick="collapsedInTransit[${o.id}]=!collapsedInTransit[${o.id}];render()">
                                 <div class="flex items-center gap-2">
-                                    <span class="bg-green-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">Доставлено</span>
+                                    <span class="bg-green-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">✓ Доставлено</span>
                                     <div class="text-xs text-gray-600">${esc(o.supplier || '')} → ${esc(o.store || '')} • ${itemsTotal} шт • ${itemsSum.toFixed(0)} ₽</div>
+                                    ${notArrivedCount > 0 ? `<span class="bg-red-100 text-red-700 text-[10px] px-1.5 py-0.5 rounded-full font-medium">! ${notArrivedCount} не приехало</span>` : ''}
                                 </div>
-                                <button onclick="deleteInTransitOrder(${o.id})" class="btn px-2 py-0.5 text-xs text-red-500 hover:text-red-700 cursor-pointer">Удалить</button>
+                                <div class="flex items-center gap-2">
+                                    <span class="text-[10px] text-gray-400">${o.expectedDate || ''}</span>
+                                    <span class="text-gray-400 text-xs">${collapsed ? '▶' : '▼'}</span>
+                                    <button onclick="event.stopPropagation();deleteInTransitOrder(${o.id})" class="btn px-2 py-0.5 text-xs text-red-500 hover:text-red-700 cursor-pointer" title="Удалить">${icons.trash}</button>
+                                </div>
                             </div>
+                            ${collapsed ? '' : `
+                            <div class="overflow-x-auto">
+                                <table class="w-full border-collapse text-xs">
+                                    <thead><tr class="bg-gray-50">
+                                        <th class="text-left px-3 py-1 text-gray-500 font-medium border-b">Код</th>
+                                        <th class="text-left px-3 py-1 text-gray-500 font-medium border-b">Наименование</th>
+                                        <th class="text-center px-3 py-1 text-gray-500 font-medium border-b">Заказано</th>
+                                        <th class="text-center px-3 py-1 text-gray-500 font-medium border-b">Статус</th>
+                                    </tr></thead>
+                                    <tbody>
+                                        ${(o.items || []).map((item, idx) => `
+                                        <tr class="hover:bg-gray-50 ${item.arrived === false ? 'bg-red-50' : ''}">
+                                            <td class="text-left px-3 py-1 font-mono text-gray-600">${item.code || ''}</td>
+                                            <td class="text-left px-3 py-1 text-gray-700">${esc(item.name || '')}</td>
+                                            <td class="text-center px-3 py-1 font-medium">${item.qty || 0}</td>
+                                            <td class="text-center px-3 py-1">
+                                                ${item.arrived === false
+                                                    ? `<span class="text-red-600 font-medium cursor-pointer hover:underline" onclick="toggleItemArrived(${o.id}, ${idx})">✗ Не приехало</span>`
+                                                    : `<span class="text-green-600 cursor-pointer hover:underline" onclick="toggleItemArrived(${o.id}, ${idx})">✓ Приехало</span>`
+                                                }
+                                            </td>
+                                        </tr>`).join('')}
+                                    </tbody>
+                                </table>
+                            </div>`}
                         </div>`;
                     }).join('')}
                 </div>` : '');
@@ -801,6 +836,15 @@
             if (delivered.length === 0) { alert('Нет доставленных заказов'); return; }
             if (!confirm(`Удалить ${delivered.length} доставленных заказов?`)) return;
             inTransitOrders = inTransitOrders.filter(o => o.status !== 'delivered');
+            save(KEYS.INTRANSIT, inTransitOrders);
+            render();
+        }
+
+        // Переключение статуса товара в доставленном заказе (приехало / не приехало)
+        function toggleItemArrived(orderId, itemIdx) {
+            const order = inTransitOrders.find(o => o.id === orderId);
+            if (!order || !order.items || !order.items[itemIdx]) return;
+            order.items[itemIdx].arrived = !order.items[itemIdx].arrived;
             save(KEYS.INTRANSIT, inTransitOrders);
             render();
         }
@@ -890,7 +934,7 @@
                         <div class="flex flex-wrap items-center gap-3">
                             <div class="flex items-center gap-1.5 bg-gray-50 px-2.5 py-1.5 rounded-md border border-gray-200">
                                 <label class="text-xs text-gray-500">Период:</label>
-                                <input type="number" value="${period}" onchange="period=parseInt(this.value)||21" class="input w-12 text-center" min="1" max="60">
+                                <input type="number" value="${period}" onchange="period=parseInt(this.value)||3" class="input w-12 text-center" min="1" max="60">
                                 <span class="text-xs text-gray-400">дн.</span>
                             </div>
 
@@ -1377,6 +1421,46 @@
         }
 
         // === ХЕЛПЕРЫ ДЛЯ РЫБНОГО ЗАКАЗА ===
+
+        // Автоматическое закрытие заказов, у которых expectedDate <= сегодня
+        function autoCloseDeliveredOrders() {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            let closed = 0;
+            inTransitOrders.forEach(o => {
+                if (o.status === 'in_transit' && o.expectedDate) {
+                    const exp = new Date(o.expectedDate);
+                    exp.setHours(0, 0, 0, 0);
+                    if (exp <= today) {
+                        o.status = 'delivered';
+                        o.deliveredAt = today.toISOString().split('T')[0];
+                        // Инициализируем arrived для каждого товара
+                        if (!o.items) o.items = [];
+                        o.items.forEach(item => {
+                            if (item.arrived === undefined) item.arrived = true; // по умолчанию всё приехало
+                        });
+                        closed++;
+                    }
+                }
+            });
+            if (closed > 0) {
+                save(KEYS.INTRANSIT, inTransitOrders);
+                console.log(`[FishOrder] Автозакрыто ${closed} заказ(ов) по графику доставок`);
+            }
+        }
+
+        // Количество доставленных товаров для ТТ+код (для прибавки к остатку)
+        function getDeliveredQty(tt, code) {
+            let total = 0;
+            inTransitOrders.forEach(o => {
+                if (o.status === 'delivered' && o.store === tt) {
+                    const item = (o.items || []).find(i => i.code === code && i.arrived !== false);
+                    if (item) total += (item.qty || 0);
+                }
+            });
+            return total;
+        }
+
         function getNextDeliveryDate(supplier, storeName) {
             if (!deliverySchedule[supplier] || !deliverySchedule[supplier][storeName]) return null;
             const days = deliverySchedule[supplier][storeName];
@@ -1576,7 +1660,9 @@
                     const supplier = p.supplier || '';
                     const daysUntil = getDaysUntilDelivery(supplier, store.tt);
                     const inTransitQty = getInTransitQty(store.tt, code);
+                    const deliveredQty = getDeliveredQty(store.tt, code);
                     const currentStock = stockData ? (stockData.currentStock || 0) : 0;
+                    const effectiveStock = currentStock + deliveredQty;
                     const totalSales = salesByTTCode[key] || 0;
 
                     // Calculate estimated sales based on weekend/weekday
@@ -1597,7 +1683,7 @@
 
                     const quant = p.quant || 1;
                     const inPrice = p.inPrice || 0;
-                    let rawOrder = estimatedSales - currentStock - inTransitQty;
+                    let rawOrder = estimatedSales - effectiveStock - inTransitQty;
                     // Round up to quant
                     let order = rawOrder > 0 ? Math.ceil(rawOrder / quant) * quant : 0;
 
@@ -1612,7 +1698,8 @@
 
                     results.push({
                         tt: store.tt, code, nomenclature: p.nomenclature || stockData?.name || '',
-                        group: p.group || '', supplier, currentStock, sales: totalSales,
+                        group: p.group || '', supplier, currentStock, deliveredQty, effectiveStock,
+                        sales: totalSales,
                         weekendAvg: weekendAvgDisplay, daysUntil, inTransitQty,
                         order, quant, inPrice, sum,
                         status: order > 0 ? `заказ ${order}` : 'достаточно',
@@ -1739,7 +1826,7 @@
                                                 <td class="text-center text-xs text-gray-600">${r.supplier || '—'}</td>
                                                 <td class="text-center">${r.sales.toFixed(0)}</td>
                                                 <td class="text-center ${r.weekendAvg > 0 ? 'text-orange-600 font-semibold' : 'text-gray-400'}">${r.weekendAvg > 0 ? r.weekendAvg.toFixed(1) : '—'}</td>
-                                                <td class="text-center">${r.currentStock.toFixed(2)}</td>
+                                                <td class="text-center">${r.deliveredQty > 0 ? r.currentStock.toFixed(2) + ' <span class="text-emerald-600 font-medium">(+' + r.deliveredQty + ')</span>' : r.currentStock.toFixed(2)}</td>
                                                 <td class="text-center ${r.inTransitQty > 0 ? 'text-blue-600 font-semibold' : 'text-gray-400'}">${r.inTransitQty > 0 ? r.inTransitQty : '0'}</td>
                                                 <td class="text-center ${r.daysUntil >= 99 ? 'text-red-500' : r.daysUntil <= 1 ? 'text-amber-600 font-semibold' : ''}">${r.daysUntil >= 99 ? '∞' : r.daysUntil}</td>
                                                 <td class="text-center font-semibold bg-emerald-100">
@@ -2051,7 +2138,7 @@
                 return;
             }
 
-            const rows = [['№ Маг.', 'ТТ', 'Код', 'Наименование', 'Группа', 'Поставщик', 'Продажи', 'Продажи вых.', 'Остаток', 'В пути', 'Дн. до дост.', 'Заказ', 'Сумма', 'Статус']];
+            const rows = [['№ Маг.', 'ТТ', 'Код', 'Наименование', 'Группа', 'Поставщик', 'Продажи', 'Продажи вых.', 'Остаток', 'Доставлено', 'В пути', 'Дн. до дост.', 'Заказ', 'Сумма', 'Статус']];
 
             savedOrderResults.forEach(r => {
                 const editKey = `${r.tt}_${r.code}`;
@@ -2063,6 +2150,7 @@
                     (r.sales || 0).toFixed(0),
                     r.weekendAvg > 0 ? r.weekendAvg.toFixed(1) : '—',
                     (r.currentStock || 0).toFixed(2),
+                    r.deliveredQty || 0,
                     r.inTransitQty || 0,
                     r.daysUntil >= 99 ? '∞' : r.daysUntil,
                     orderQty,
