@@ -1056,14 +1056,25 @@
 
             if (codeCol === -1) { alert('Не найдена колонка "Код товара"'); return; }
 
-            // TT-колонки: после Код, кроме известных не-TT — только те, что есть в stores
+            // TT-колонки: после Код, кроме известных не-TT — сопоставляем с stores
             const knownNonTT = new Set(['группа', 'упак', 'вес. код', 'вес.код', 'упаковка', 'наименование товара', 'наименование', 'наим', 'код товара', 'код']);
-            // Собираем все возможные имена ТТ из stores (tt, tt2 и любые строковые поля)
+            // Собираем ВСЕ строковые значения из каждого store для сопоставления
             const existingTTSet = new Set();
+            const storeTTMap = {}; // name -> canonical tt
             stores.forEach(s => {
-              if (s.tt) existingTTSet.add(String(s.tt).trim());
-              if (s.tt2) existingTTSet.add(String(s.tt2).trim());
-              if (s.ttInFactory) existingTTSet.add(String(s.ttInFactory).trim());
+              const canonical = String(s.tt || '').trim();
+              if (canonical) {
+                existingTTSet.add(canonical);
+                storeTTMap[canonical] = canonical;
+              }
+              // Все остальные строковые поля тоже добавляем
+              Object.values(s).forEach(v => {
+                if (typeof v === 'string' && v.trim()) {
+                  const val = v.trim();
+                  existingTTSet.add(val);
+                  if (!storeTTMap[val]) storeTTMap[val] = canonical;
+                }
+              });
             });
             const ttColumns = [];
             for (let c = codeCol + 1; c < headers.length; c++) {
@@ -1075,7 +1086,15 @@
               }
             }
 
-            if (ttColumns.length === 0) { alert('Ни одна ТТ из файла не найдена в списке магазинов.\nСначала загрузите справочник магазинов.'); return; }
+            if (ttColumns.length === 0) {
+              const storeTTs = [...existingTTSet].slice(0, 5).join(', ');
+              const fileTTs = [];
+              for (let c = codeCol + 1; c < headers.length; c++) {
+                if (headers[c] && !knownNonTT.has(headers[c])) fileTTs.push(String(headersRaw[c] || '').trim());
+              }
+              alert(`Ни одна ТТ из файла не найдена в списке магазинов.\n\nМагазины в системе (${existingTTSet.size}):\n${storeTTs}${existingTTSet.size > 5 ? '...' : ''}\n\nТТ из файла (${fileTTs.length}):\n${fileTTs.slice(0, 5).join(', ')}${fileTTs.length > 5 ? '...' : ''}`);
+              return;
+            }
 
             // Батч-обновление матрицы
             const newMatrix = { ...matrix };
