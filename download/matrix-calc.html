@@ -1807,50 +1807,14 @@
 
             const tts = [...new Set(filteredResults.map(r => r.tt))].sort((a, b) => a.localeCompare(b, 'ru'));
             
-            // Группируем по группам
-            const grouped = {};
+            // Собираем данные в единый формат: {code, nomenclature, tt1: 'ДА'/'НЕТ', ...}
+            const matrixData = {};
             filteredResults.forEach(r => {
-                const gr = r.group || 'Без группы';
-                if (!grouped[gr]) grouped[gr] = {};
-                if (!grouped[gr][r.code]) {
-                    grouped[gr][r.code] = {
-                        group: gr,
-                        nomenclature: r.nomenclature,
-                        code: r.code,
-                        tts: {}
-                    };
-                }
-                grouped[gr][r.code].tts[r.tt] = r.inMatrix;
+                if (!matrixData[r.code]) matrixData[r.code] = { code: r.code, nomenclature: r.nomenclature };
+                matrixData[r.code][r.tt] = r.inMatrix;
             });
             
-            const headers = ['Группа', 'Наименование', 'Код', ...tts];
-            const data = [];
-            const merges = []; // Для объединения ячеек групп
-            let currentRow = 1; // Начинаем с 1 (после заголовка)
-            
-            // Сортируем группы и добавляем данные
-            Object.keys(grouped).sort((a, b) => a.localeCompare(b, 'ru')).forEach(gr => {
-                const items = Object.values(grouped[gr]);
-                const startRow = currentRow;
-                
-                // Добавляем товары группы
-                items.forEach((item, idx) => {
-                    const row = [
-                        item.group,
-                        item.nomenclature,
-                        item.code,
-                        ...tts.map(tt => item.tts[tt] || 'НЕТ')
-                    ];
-                    data.push(row);
-                    currentRow++;
-                });
-            });
-            
-            const ws = SharedUtils.createStyledSheet(data, headers, [0, 1]); // Группа и Наименование - по левому краю
-            
-            const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, 'Матрица');
-            XLSX.writeFile(wb, `матрица_${new Date().toISOString().slice(0, 10)}.xlsx`);
+            SharedUtils.exportMatrixExcel(Object.values(matrixData), tts);
         }
 
         function exportAnalysis() {
@@ -1944,97 +1908,51 @@
             input.value = '';
         }
 
-        // Загрузка матрицы из Excel файла (формат экспорта: Группа | Наим | Код | ТТ1 | ТТ2 | ...)
+        // Загрузка матрицы из Excel файла — единый формат (автоопределение старого/нового)
         function handleMatrixUpload(input) {
             const file = input.files[0];
             if (!file) return;
 
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                try {
-                    const data = new Uint8Array(e.target.result);
-                    const wb = XLSX.read(data, { type: 'array' });
-                    const json = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' });
+            SharedUtils.importMatrixExcel(file).then(({ marks, products }) => {
+                const importCodes = new Set(Object.keys(marks));
+                const importTTs = new Set(Object.keys(marks).flatMap(code => Object.keys(marks[code])));
 
-                    if (json.length < 2) { alert('Файл пуст или неверный формат'); return; }
+                // Если results пуст — создаём записи из файла (первый импорт без анализа)
+                if (results.length === 0) {
+                    if (!confirm(`Загрузить матрицу из файла (${products.length} товаров)?\nАнализ не был рассчитан — данные будут только из файла.`)) return;
 
-                    const headers = json[0].map(h => String(h || '').trim());
-                    const ttStartCol = 3;
-                    const ttNames = [];
-                    for (let c = ttStartCol; c < headers.length; c++) {
-                        if (headers[c]) ttNames.push({ col: c, name: headers[c] });
-                    }
-
-                    if (ttNames.length === 0) { alert('Не найдены колонки с торговыми точками в файле'); return; }
-
-                    // Парсим матрицу из файла в Map: "code|tt" -> "ДА"/"НЕТ"
-                    const importMap = new Map();
-                    const importCodes = new Set();
-                    const importTTs = new Set(ttNames.map(t => t.name));
-
-                    for (let i = 1; i < json.length; i++) {
-                        const r = json[i];
-                        if (!r || r.length < 3) continue;
-                        const code = normCode(r[2]);
-                        if (!code) continue;
-                        const nomenclature = String(r[1] || '').trim();
-                        if (!nomenclature) continue;
-
-                        importCodes.add(code);
-                        ttNames.forEach(({ col, name }) => {
-                            const val = String(r[col] || '').trim().toUpperCase();
-                            const inMatrix = (val === 'ДА' || val === 'YES' || val === '1') ? 'ДА' : 'НЕТ';
-                            importMap.set(`${code}|${name}`, inMatrix);
-                        });
-                    }
-
-                    if (importMap.size === 0) { alert('Не удалось прочитать данные матрицы из файла'); return; }
-
-                    // Если results пуст — создаем записи из файла (первый импорт без анализа)
-                    if (results.length === 0) {
-                        if (!confirm(`Загрузить матрицу из файла (${importMap.size} записей)?\nАнализ не был рассчитан — данные будут только из файла.`)) return;
-
-                        const parsed = [];
-                        for (let i = 1; i < json.length; i++) {
-                            const r = json[i];
-                            if (!r || r.length < 3) continue;
-                            const group = String(r[0] || '').trim();
-                            const nomenclature = String(r[1] || '').trim();
-                            const code = normCode(r[2]);
-                            if (!code || !nomenclature) continue;
-
-                            ttNames.forEach(({ col, name }) => {
-                                const val = String(r[col] || '').trim().toUpperCase();
-                                parsed.push({
-                                    tt: name, code: code, nomenclature: nomenclature,
-                                    group: group,
-                                    inMatrix: (val === 'ДА' || val === 'YES' || val === '1') ? 'ДА' : 'НЕТ',
-                                    sales: 0, stock: 0, daysPresent: 0, totalDays: 0,
-                                    avgPerDay: 0, turnoverIndex: 999, writeoff: 0, writeoffPercent: 0,
-                                    abcSales: 'C', abcTurnover: 'C', abcWriteoff: 'A',
-                                    abcScore: 5, abcClass: 'C', hasPrice: false,
-                                    isMandatory: false, manualEdit: true
-                                });
+                    const parsed = [];
+                    products.forEach(p => {
+                        Object.entries(marks[p.code] || {}).forEach(([tt, val]) => {
+                            parsed.push({
+                                tt, code: p.code, nomenclature: p.nomenclature,
+                                group: p.group,
+                                inMatrix: val,
+                                sales: 0, stock: 0, daysPresent: 0, totalDays: 0,
+                                avgPerDay: 0, turnoverIndex: 999, writeoff: 0, writeoffPercent: 0,
+                                abcSales: 'C', abcTurnover: 'C', abcWriteoff: 'A',
+                                abcScore: 5, abcClass: 'C', hasPrice: false,
+                                isMandatory: false, manualEdit: true
                             });
-                        }
-                        results = parsed;
-                        save(KEYS.RESULTS, results);
-                        render();
-                        alert(`Загружено ${parsed.length} записей матрицы из файла`);
-                        return;
-                    }
+                        });
+                    });
+                    results = parsed;
+                    save(KEYS.RESULTS, results);
+                    render();
+                    alert(`Загружено ${parsed.length} записей матрицы из файла`);
+                    return;
+                }
 
-                    // РЕЖИМ СЛИЯНИЯ (merge): обновляем inMatrix из файла, не затирая ABC-данные
-                    let updatedDA = 0, updatedNET = 0, setToNET = 0;
-                    const resultsCodes = new Set(results.map(r => r.code));
-                    const resultsTTs = new Set(results.map(r => r.tt));
+                // РЕЖИМ СЛИЯНИЯ: обновляем inMatrix из файла, не затирая ABC-данные
+                let updatedDA = 0, updatedNET = 0, setToNET = 0;
 
-                    results.forEach(r => {
-                        const key = `${normCode(r.code)}|${r.tt}`;
-                        const imported = importMap.get(key);
+                results.forEach(r => {
+                    const code = normCode(r.code);
+                    const codeMarks = marks[code];
 
+                    if (codeMarks) {
+                        const imported = codeMarks[r.tt];
                         if (imported !== undefined) {
-                            // Запись есть в файле — обновляем
                             if (r.inMatrix !== imported) {
                                 if (imported === 'ДА') updatedDA++;
                                 else updatedNET++;
@@ -2042,58 +1960,43 @@
                                 r.manualEdit = true;
                             }
                         } else {
-                            // Записи нет в файле — проверяем: код есть в файле, но ТТ удалён?
-                            // или ТТ есть в файле, но код удалён?
-                            const codeInFile = importCodes.has(normCode(r.code));
-                            const ttInFile = importTTs.has(r.tt);
-
-                            if (codeInFile && ttInFile) {
-                                // Код и ТТ есть, но комбинации нет = в файле было "НЕТ"
-                                if (r.inMatrix === 'ДА') {
-                                    r.inMatrix = 'НЕТ';
-                                    r.manualEdit = true;
-                                    setToNET++;
-                                }
-                            } else if (!codeInFile || !ttInFile) {
-                                // Товар или магазин был удалён из файла — убираем из матрицы
-                                if (r.inMatrix === 'ДА') {
-                                    r.inMatrix = 'НЕТ';
-                                    r.manualEdit = true;
-                                    setToNET++;
-                                }
+                            // ТТ есть в results, но нет в файле для этого кода
+                            if (r.inMatrix === 'ДА') {
+                                r.inMatrix = 'НЕТ';
+                                r.manualEdit = true;
+                                setToNET++;
                             }
                         }
-                    });
-
-                    // Обновляем названия товаров и групп из файла
-                    for (let i = 1; i < json.length; i++) {
-                        const r = json[i];
-                        if (!r || r.length < 3) continue;
-                        const code = normCode(r[2]);
-                        if (!code) continue;
-                        const group = String(r[0] || '').trim();
-                        const nomenclature = String(r[1] || '').trim();
-                        if (!nomenclature) continue;
-
-                        results.forEach(res => {
-                            if (normCode(res.code) === code) {
-                                if (nomenclature && nomenclature !== '0') res.nomenclature = nomenclature;
-                                if (group) res.group = group;
-                            }
-                        });
+                    } else {
+                        // Код отсутствует в файле — убираем из матрицы
+                        if (r.inMatrix === 'ДА') {
+                            r.inMatrix = 'НЕТ';
+                            r.manualEdit = true;
+                            setToNET++;
+                        }
                     }
+                });
 
-                    save(KEYS.RESULTS, results);
-                    render();
+                // Обновляем названия товаров и групп из файла
+                products.forEach(p => {
+                    results.forEach(res => {
+                        if (normCode(res.code) === p.code) {
+                            if (p.nomenclature && p.nomenclature !== '0') res.nomenclature = p.nomenclature;
+                            if (p.group) res.group = p.group;
+                        }
+                    });
+                });
 
-                    const msg = `Матрица обновлена из файла:\n• Установлено ДА: ${updatedDA}\n• Установлено НЕТ: ${updatedNET}\n• Убрано (нет в файле): ${setToNET}`;
-                    alert(msg);
-                } catch (err) {
-                    console.error('Matrix parse error:', err);
-                    alert('Ошибка чтения матрицы: ' + err.message);
-                }
-            };
-            reader.readAsArrayBuffer(file);
+                save(KEYS.RESULTS, results);
+                render();
+
+                const msg = `Матрица обновлена из файла:\n• Установлено ДА: ${updatedDA}\n• Установлено НЕТ: ${updatedNET}\n• Убрано (нет в файле): ${setToNET}`;
+                alert(msg);
+            }).catch(err => {
+                console.error('Matrix parse error:', err);
+                alert('Ошибка чтения матрицы: ' + err.message);
+            });
+
             input.value = '';
         }
 

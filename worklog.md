@@ -266,3 +266,23 @@ Stage Summary:
 - assortment.html v1.0 created at /home/z/my-project/upload/assortment.html
 - index.html updated with new "Ассортимент" card in navigation
 - Full bidirectional sync with matrix-calc.html and universal.html via shared localStorage
+
+---
+Task ID: 1
+Agent: Main Agent
+Task: Унификация формата экспорта/импорта матриц во всех файлах
+
+Work Log:
+- Изучил текущие форматы матриц в matrix-calc.html (v7.8), universal.html (v1.5), sneki.html (v12.3)
+- Выявлены несовместимости: sneki экспортирует с доп. колонками (Упак, Вес.код), использует 'Да'/'Нет' вместо 'ДА'/'НЕТ'
+- Добавил в shared-utils.js v3.1: exportMatrixExcel() и importMatrixExcel() с автоопределением формата
+- Обновил matrix-calc.html: экспорт через SharedUtils.exportMatrixExcel(), импорт через SharedUtils.importMatrixExcel()
+- Обновил universal.html: экспорт через SharedUtils.exportMatrixExcel(), импорт через SharedUtils.importMatrixExcel()
+- Обновил sneki.html: экспорт в единый формат (Наименование товара / Код товара / ТТ...), импорт с автоопределением + батч-обновление + добавление новых товаров
+- Скопировал все файлы в /download/
+
+Stage Summary:
+- Единый формат: Наименование товара / Код товара / ТТ1 / ТТ2 / ... с ДА/НЕТ
+- Импорт автоматически определяет старый формат (с Группа, Упак, Вес.код) и новый
+- Все три файла теперь экспортируют и импортируют одинаково
+- Sneki теперь добавляет новые товары при импорте матрицы (раньше игнорировал)

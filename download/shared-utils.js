@@ -1,6 +1,6 @@
 // ============================================================================
 // shared-utils.js — Общие утилиты для всех страниц (кроме sneki.html)
-// Версия 3.0 — унифицированная библиотека
+// Версия 3.1 — унифицированная библиотека + единый формат матрицы
 // ============================================================================
 
 (function() {
@@ -495,6 +495,124 @@
     }
 
     // ============================================================================
+    // ЕДИНЫЙ ЭКСПОРТ МАТРИЦЫ
+    // Формат: Наименование товара / Код товара / ТТ1 / ТТ2 / ... / ТТn
+    // Значения: ДА / НЕТ
+    // ============================================================================
+    function exportMatrixExcel(items, storeList, filename) {
+        if (!items || items.length === 0) return;
+
+        const headers = ['Наименование товара', 'Код товара', ...storeList];
+        const data = items.map(p => [
+            p.nomenclature || '',
+            p.code || '',
+            ...storeList.map(tt => {
+                const val = p[tt];
+                return (val === 'ДА' || val === 'YES' || val === '1') ? 'ДА' : 'НЕТ';
+            })
+        ]);
+
+        const ws = createStyledSheet(data, headers, [0]);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Матрица');
+        XLSX.writeFile(wb, filename || `матрица_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    }
+
+    // ============================================================================
+    // ЕДИНЫЙ ИМПОРТ МАТРИЦЫ (автоопределение формата)
+    // Поддерживает:
+    //   Новый формат:  Наименование товара / Код товара / ТТ1 / ТТ2 / ...
+    //   Старый формат matrix-calc/universal: Группа / Наименование / Код / ТТ1 / ТТ2 / ...
+    //   Старый формат sneki: Группа / Наименование / Код товара / Упак / Вес. код / ТТ1 / ...
+    // Возвращает Promise: { marks, products, ttNames }
+    //   marks = { code: { tt1: 'ДА'/'НЕТ', tt2: 'ДА'/'НЕТ', ... } }
+    //   products = [{ code, nomenclature, group }]
+    //   ttNames = ['ТТ1', 'ТТ2', ...]
+    // ============================================================================
+    function importMatrixExcel(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const wb = XLSX.read(data, { type: 'array' });
+                    const json = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' });
+
+                    if (json.length < 2) { reject(new Error('Файл пуст или неверный формат')); return; }
+
+                    const headersRaw = json[0];
+                    const headers = headersRaw.map(h => String(h || '').trim().toLowerCase());
+
+                    // Автоопределение позиции колонок
+                    let codeCol = -1, nameCol = -1, groupCol = -1;
+
+                    headers.forEach((h, i) => {
+                        if (h === 'код товара' || h === 'код') codeCol = i;
+                        if (h === 'наименование товара' || h === 'наименование' || h === 'наим') nameCol = i;
+                        if (h === 'группа') groupCol = i;
+                    });
+
+                    if (codeCol === -1) { reject(new Error('Не найдена колонка "Код товара" в файле')); return; }
+
+                    // TT-колонки: всё после колонки Код, кроме известных не-TT колонок
+                    const knownNonTT = new Set([
+                        'группа', 'упак', 'вес. код', 'вес.код', 'упаковка',
+                        'наименование товара', 'наименование', 'наим', 'код товара', 'код'
+                    ]);
+                    const ttColumns = [];
+                    for (let c = codeCol + 1; c < headers.length; c++) {
+                        if (headers[c] && !knownNonTT.has(headers[c])) {
+                            ttColumns.push({ col: c, name: String(headersRaw[c] || '').trim() });
+                        }
+                    }
+
+                    if (ttColumns.length === 0) { reject(new Error('Не найдены колонки с торговыми точками в файле')); return; }
+
+                    const marks = {};
+                    const products = [];
+
+                    for (let i = 1; i < json.length; i++) {
+                        const r = json[i];
+                        if (!r || r.length < 2) continue;
+
+                        const code = normCode(r[codeCol]);
+                        if (!code) continue;
+
+                        const nomenclature = nameCol >= 0 ? String(r[nameCol] || '').trim() : '';
+                        const group = groupCol >= 0 ? String(r[groupCol] || '').trim() : '';
+
+                        if (!nomenclature) continue;
+
+                        if (!marks[code]) {
+                            marks[code] = {};
+                            products.push({ code, nomenclature, group });
+                        } else {
+                            const existing = products.find(p => p.code === code);
+                            if (existing) {
+                                if (!existing.nomenclature && nomenclature) existing.nomenclature = nomenclature;
+                                if (!existing.group && group) existing.group = group;
+                            }
+                        }
+
+                        ttColumns.forEach(({ col, name }) => {
+                            const val = String(r[col] || '').trim().toUpperCase();
+                            marks[code][name] = (val === 'ДА' || val === 'YES' || val === '1') ? 'ДА' : 'НЕТ';
+                        });
+                    }
+
+                    if (Object.keys(marks).length === 0) { reject(new Error('Не удалось прочитать данные матрицы из файла')); return; }
+
+                    resolve({ marks, products, ttNames: ttColumns.map(t => t.name) });
+                } catch (err) {
+                    reject(err);
+                }
+            };
+            reader.onerror = () => reject(new Error('Ошибка чтения файла'));
+            reader.readAsArrayBuffer(file);
+        });
+    }
+
+    // ============================================================================
     // БАЗОВЫЙ ЭКСПОРТ В EXCEL
     // ============================================================================
     function exportToExcel(data, filename) {
@@ -609,6 +727,8 @@
         parseStoresData,
         calculateOrder,
         createStyledSheet,
+        exportMatrixExcel,
+        importMatrixExcel,
         exportToExcel,
         migrateOldKeys,
         markDirty,
@@ -626,5 +746,5 @@
         migrateOldKeys();
     }
 
-    console.log('[SharedUtils] Загружен v3.0');
+    console.log('[SharedUtils] Загружен v3.1');
 })();

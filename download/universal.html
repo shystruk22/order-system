@@ -1124,59 +1124,50 @@
             resetSavedOrders();
             const file = input.files[0];
             if (!file) return;
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                try {
-                    const data = new Uint8Array(e.target.result);
-                    const wb = XLSX.read(data, { type: 'array' });
-                    const json = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
-                    const headers = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 })[0] || [];
-                    
-                    json.forEach(row => {
-                        const code = normCode(String(row['Код'] || ''));
-                        if (!code) return;
-                        
-                        if (!matrix[code]) {
-                            matrix[code] = { nomenclature: String(row['Наименование'] || '').trim(), code, group: String(row['Группа'] || '').trim() };
-                        } else {
-                            if (!matrix[code].group) matrix[code].group = String(row['Группа'] || '').trim();
-                            if (!matrix[code].nomenclature) matrix[code].nomenclature = String(row['Наименование'] || '').trim();
+
+            SharedUtils.importMatrixExcel(file).then(({ marks, products }) => {
+                products.forEach(p => {
+                    const code = p.code;
+                    if (!matrix[code]) {
+                        matrix[code] = { nomenclature: p.nomenclature, code, group: p.group };
+                    } else {
+                        if (!matrix[code].group && p.group) matrix[code].group = p.group;
+                        if (!matrix[code].nomenclature && p.nomenclature) matrix[code].nomenclature = p.nomenclature;
+                    }
+
+                    if (!matrixMarks[code]) matrixMarks[code] = {};
+                    Object.entries(marks[code] || {}).forEach(([tt, val]) => {
+                        if (stores.some(s => s.tt === tt)) {
+                            matrixMarks[code][tt] = val;
                         }
-                        
-                        if (!matrixMarks[code]) matrixMarks[code] = {};
-                        headers.forEach((h, i) => {
-                            if (i > 2 && h) {
-                                const ttName = String(h).trim();
-                                if (stores.some(s => s.tt === ttName)) {
-                                    const val = String(row[ttName] || Object.values(row)[i] || '').toUpperCase();
-                                    matrixMarks[code][ttName] = val === 'ДА' || val === 'YES' || val === '1' ? 'ДА' : 'НЕТ';
-                                }
-                            }
-                        });
                     });
-                    save(KEYS.ASSORTMENT, matrix);
-                    save(KEYS.MATRIX_MARKS, matrixMarks);
-                    render();
-                    alert(`Ассортимент: ${Object.keys(matrix).length} товаров\nОтметки матрицы: ${Object.keys(matrixMarks).length} товаров`);
-                } catch (err) { alert('Ошибка: ' + err.message); }
-            };
-            reader.readAsArrayBuffer(file);
+                });
+
+                save(KEYS.ASSORTMENT, matrix);
+                save(KEYS.MATRIX_MARKS, matrixMarks);
+                render();
+                alert(`Ассортимент: ${Object.keys(matrix).length} товаров\nОтметки матрицы: ${Object.keys(matrixMarks).length} товаров`);
+            }).catch(err => {
+                alert('Ошибка: ' + err.message);
+            });
+
             input.value = '';
         }
 
         function exportMatrix() {
             if (Object.keys(matrix).length === 0) { alert('Нет данных'); return; }
-            const headers = ['Группа', 'Наименование', 'Код', ...stores.map(s => s.tt)];
-            const data = [];
-            Object.entries(matrix).forEach(([code, p]) => {
-                const row = [p.group || '', p.nomenclature || '', code];
-                stores.forEach(s => row.push((matrixMarks[code] && matrixMarks[code][s.tt] === 'ДА') ? 'ДА' : 'НЕТ'));
-                data.push(row);
+
+            // Собираем данные в единый формат
+            const storeList = stores.map(s => s.tt);
+            const items = Object.entries(matrix).map(([code, p]) => {
+                const item = { code, nomenclature: p.nomenclature || '' };
+                storeList.forEach(tt => {
+                    item[tt] = (matrixMarks[code] && matrixMarks[code][tt] === 'ДА') ? 'ДА' : 'НЕТ';
+                });
+                return item;
             });
-            const ws = SharedUtils.createStyledSheet(data, headers, [0, 1]);
-            const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, 'Матрица');
-            const d = new Date(); XLSX.writeFile(wb, `матрица_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}.xlsx`);
+
+            SharedUtils.exportMatrixExcel(items, storeList);
         }
 
         // === ЦЕНЫ ===
