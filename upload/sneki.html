@@ -283,7 +283,7 @@
       const chartRef4 = useRef(null);
       const chartInstances = useRef({});
 
-      const fileInputRefs = { sales: useRef(null), stocks: useRef(null), matrix: useRef(null) };
+      const fileInputRefs = { assortment: useRef(null), sales: useRef(null), stocks: useRef(null), matrix: useRef(null) };
 
       // Load on mount — ждём завершения синхронизации с облаком
       useEffect(() => {
@@ -1533,7 +1533,16 @@
             {/* Upload Tab */}
             {tab === 'upload' && (
               <div className="space-y-2">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                  <div onClick={() => fileInputRefs.assortment.current?.click()} className="bg-white rounded-lg border border-gray-200 p-4 cursor-pointer hover:border-gray-400 transition-colors">
+                    <div className="flex flex-col items-center text-center">
+                      <div className="p-3 bg-amber-50 rounded-lg text-amber-600 mb-3"><PackageIcon /></div>
+                      <h3 className="font-medium text-gray-800 mb-1">Ассортимент</h3>
+                      <p className="text-xs text-gray-400">Да | Группа | Код | Упак | Наим.</p>
+                      <input ref={fileInputRefs.assortment} type="file" accept=".xlsx,.xls" onChange={e => e.target.files?.[0] && handleFile(e.target.files[0], 'assortment')} className="hidden" />
+                      {products.length > 0 && <p className="mt-2 text-sm text-amber-600 font-medium">{products.length} товаров</p>}
+                    </div>
+                  </div>
                   <div onClick={() => fileInputRefs.sales.current?.click()} className="bg-white rounded-lg border border-gray-200 p-4 cursor-pointer hover:border-gray-400 transition-colors">
                     <div className="flex flex-col items-center text-center">
                       <div className="p-3 bg-emerald-50 rounded-lg text-emerald-600 mb-3"><SalesIcon /></div>
