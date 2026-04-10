@@ -1174,8 +1174,13 @@
             setMatrix(newMatrix);
             save(KEYS.MATRIX, newMatrix);
 
+            console.log('[Matrix Import] codes in file:', [...new Set(Object.keys(marks))].slice(0, 10));
+            console.log('[Matrix Import] codes in matrix:', Object.keys(newMatrix).slice(0, 10));
+            console.log('[Matrix Import] ttColumns:', ttColumns.map(t => t.name));
+            console.log('[Matrix Import] sample entry:', newMatrix[Object.keys(newMatrix)[0]]);
+
             const addedMsg = added > 0 ? `\nДобавлено новых товаров: ${added}` : '';
-            alert(`Обновлено ${updated} значений матрицы${addedMsg}`);
+            alert(`Обновлено ${updated} значений матрицы${addedMsg}\nВсего товаров в матрице: ${Object.keys(newMatrix).length}`);
           } catch (err) { alert('Ошибка: ' + err.message); }
         };
         reader.readAsArrayBuffer(file);
