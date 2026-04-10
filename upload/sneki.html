@@ -1019,12 +1019,12 @@
         XLSX.writeFile(wb, `sneki_analytics_${new Date().toISOString().slice(0, 10)}.xlsx`);
       }, [sales, matrix, stocks, analyticsGroup, analyticsTT]);
 
-      // Reset all data
+      // Reset — только продажи, остатки и остатки РЦ. Магазины, матрица, ассортимент и настройки остаются.
       const resetAllData = useCallback(() => {
-        if (!confirm('Удалить все загруженные данные?')) return;
-        Object.values(KEYS).forEach(key => localStorage.removeItem(key));
-        setProducts([]); setMatrix({}); setStores([]); setSales([]); setStocks([]); setRcStocks({}); setShelfValues({}); setQuants({}); setGroupMarkups({}); setGroupQuants({}); setManualPrices({}); setRcManualOrders({}); setResults([]); setRcResults([]); setGroupDays({});
-        alert('Все данные удалены');
+        if (!confirm('Сбросить продажи, остатки и остатки РЦ?\nМагазины, матрица и настройки останутся.')) return;
+        [KEYS.SALES, KEYS.STOCKS, KEYS.RC_STOCKS, KEYS.RESULTS, KEYS.RC_RESULTS].forEach(key => localStorage.removeItem(key));
+        setSales([]); setStocks([]); setRcStocks({}); setResults([]); setRcResults([]);
+        alert('Продажи, остатки и остатки РЦ очищены');
       }, []);
 
       // Add new product
@@ -1151,18 +1151,20 @@
               const group = groupCol >= 0 ? String(row[groupCol] || '').trim() : '';
               if (!nomenclature) continue;
 
-              ttColumns.forEach(({ tt, col }) => {
+              ttColumns.forEach(({ name: tt, col }) => {
                 const val = String(row[col] || '').trim().toUpperCase();
                 const inMatrix = (val === 'ДА' || val === 'YES' || val === '1') ? 'ДА' : 'НЕТ';
 
                 if (!newMatrix[code]) {
                   // Добавляем новый товар из файла
-                  newMatrix[code] = {
+                  const newEntry = {
                     code, nomenclature, group,
                     packaging: 'ШТ', weightCode: '', inPrice: 0, outPrice: 0,
-                    shelf: 0, quant: 1,
-                    [tt]: inMatrix
+                    shelf: 0, quant: 1
                   };
+                  stores.forEach(s => { newEntry[s.tt] = 'НЕТ'; });
+                  newEntry[tt] = inMatrix;
+                  newMatrix[code] = newEntry;
                   added++;
                 } else {
                   if (newMatrix[code][tt] !== inMatrix) updated++;
