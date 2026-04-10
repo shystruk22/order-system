@@ -1058,7 +1058,13 @@
 
             // TT-колонки: после Код, кроме известных не-TT — только те, что есть в stores
             const knownNonTT = new Set(['группа', 'упак', 'вес. код', 'вес.код', 'упаковка', 'наименование товара', 'наименование', 'наим', 'код товара', 'код']);
-            const existingTTSet = new Set(stores.map(s => s.tt));
+            // Собираем все возможные имена ТТ из stores (tt, tt2 и любые строковые поля)
+            const existingTTSet = new Set();
+            stores.forEach(s => {
+              if (s.tt) existingTTSet.add(String(s.tt).trim());
+              if (s.tt2) existingTTSet.add(String(s.tt2).trim());
+              if (s.ttInFactory) existingTTSet.add(String(s.ttInFactory).trim());
+            });
             const ttColumns = [];
             for (let c = codeCol + 1; c < headers.length; c++) {
               if (headers[c] && !knownNonTT.has(headers[c])) {
@@ -1113,7 +1119,7 @@
           } catch (err) { alert('Ошибка: ' + err.message); }
         };
         reader.readAsArrayBuffer(file);
-      }, [matrix]);
+      }, [matrix, stores]);
 
       // Mass update orders
       const massUpdateOrders = useCallback((action, value) => {
