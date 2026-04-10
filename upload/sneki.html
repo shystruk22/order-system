@@ -283,7 +283,7 @@
       const chartRef4 = useRef(null);
       const chartInstances = useRef({});
 
-      const fileInputRefs = { assortment: useRef(null), sales: useRef(null), stocks: useRef(null), matrix: useRef(null) };
+      const fileInputRefs = { assortment: useRef(null), sales: useRef(null), stocks: useRef(null), matrix: useRef(null), stores: useRef(null) };
 
       // Load on mount — ждём завершения синхронизации с облаком
       useEffect(() => {
@@ -509,6 +509,39 @@
               setStocks(items);
               // НЕ добавляем новые ТТ автоматически - используем только те, что есть в списке магазинов
               alert(`Загружено ${items.length} остатков, найдено ${foundTTs.size} ТТ\n(расчёт только по магазинам из списка)`);
+            }
+            else if (type === 'stores') {
+              // Парсинг справочника магазинов
+              const parsedStores = [];
+              for (let i = 1; i < json.length; i++) {
+                const r = json[i];
+                if (!r || r.length < 2 || !r[0]) continue;
+                parsedStores.push({
+                  tt: String(r[0] || '').trim(),
+                  tt2: String(r[1] || '').trim(),
+                  codeSabina: String(r[2] || '').trim(),
+                  priority: parseInt(String(r[3])) || 0,
+                  eranis: String(r[4] || '').trim(),
+                  fiasCode: String(r[5] || '').trim(),
+                  storeNumber: String(r[6] || '').trim(),
+                  codeKanzler: String(r[7] || '').trim(),
+                  codeAlliance: String(r[8] || '').trim(),
+                  latitude: parseFloat(String(r[9])) || 0,
+                  longitude: parseFloat(String(r[10])) || 0,
+                  fridges: parseInt(String(r[11])) || 0,
+                  doors: parseInt(String(r[12])) || 0,
+                  phone: String(r[13] || '').trim(),
+                  ttInFactory: String(r[14] || '').trim(),
+                  storeNumberFactory: String(r[15] || '').trim(),
+                  oldName: String(r[16] || '').trim(),
+                  cranes: parseInt(String(r[17])) || 0,
+                  priceType: String(r[18] || '').trim(),
+                  fridgeCabinets: parseInt(String(r[19])) || 0
+                });
+              }
+              setStores(parsedStores);
+              save(KEYS.STORES, parsedStores);
+              alert(`Загружено ${parsedStores.length} магазинов`);
             }
           } catch (err) { console.error('Parse error:', err); alert('Ошибка: ' + err.message); }
         };
@@ -1492,7 +1525,16 @@
             {/* Upload Tab */}
             {tab === 'upload' && (
               <div className="space-y-2">
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+                  <div onClick={() => fileInputRefs.stores.current?.click()} className="bg-white rounded-lg border border-gray-200 p-4 cursor-pointer hover:border-gray-400 transition-colors">
+                    <div className="flex flex-col items-center text-center">
+                      <div className="p-3 bg-violet-50 rounded-lg text-violet-600 mb-3"><MapPinIcon /></div>
+                      <h3 className="font-medium text-gray-800 mb-1">Магазины</h3>
+                      <p className="text-xs text-gray-400">Справочник ТТ</p>
+                      <input ref={fileInputRefs.stores} type="file" accept=".xlsx,.xls" onChange={e => e.target.files?.[0] && handleFile(e.target.files[0], 'stores')} className="hidden" />
+                      {stores.length > 0 && <p className="mt-2 text-sm text-violet-600 font-medium">{stores.length} магазинов</p>}
+                    </div>
+                  </div>
                   <div onClick={() => fileInputRefs.assortment.current?.click()} className="bg-white rounded-lg border border-gray-200 p-4 cursor-pointer hover:border-gray-400 transition-colors">
                     <div className="flex flex-col items-center text-center">
                       <div className="p-3 bg-amber-50 rounded-lg text-amber-600 mb-3"><PackageIcon /></div>
