@@ -70,7 +70,7 @@
       STOCKS: 'sneki_stocks_v2',
       SHELF_VALUES: 'sneki_shelfValues_v2',
       QUANTS: 'sneki_quants_v2',
-      STORES: 'stores_data_v1',
+      STORES: 'shared_stores_v1',
       GROUP_MARKUPS: 'sneki_groupMarkups_v2',
       GROUP_QUANTS: 'sneki_groupQuants_v2',
       MANUAL_PRICES: 'sneki_manualPrices_v2',
@@ -294,6 +294,14 @@
           }
           // Теперь загружаем из localStorage (уже актуальные данные)
           const savedStores = load(KEYS.STORES, []);
+          // Миграция: если в новом ключе пусто — пробуем старый
+          if (savedStores.length === 0) {
+            const oldStores = load('stores_data_v1', []);
+            if (oldStores.length > 0) {
+              savedStores.push(...oldStores);
+              save(KEYS.STORES, savedStores);
+            }
+          }
         const savedSales = load(KEYS.SALES, []);
         const savedStocks = load(KEYS.STOCKS, []);
         const savedRcStocks = load(KEYS.RC_STOCKS, {});
