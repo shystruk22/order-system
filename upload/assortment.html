@@ -8,407 +8,289 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
+    <script src="config.js"></script>
     <script src="shared-utils.js"></script>
+    <script src="storage.js"></script>
+    <script src="shared-data.js"></script>
     <style>
         * { font-family: system-ui, -apple-system, sans-serif; box-sizing: border-box; }
         .btn { transition: all 0.2s; }
         .btn:hover { opacity: 0.9; }
         input:focus, select:focus { outline: none; }
         .input { padding: 0.35rem 0.4rem; border: 1px solid #d1d5db; border-radius: 0.375rem; font-size: 0.75rem; background: white; }
-        .input:focus { border-color: #0ea5e9; }
+        .input:focus { border-color: #0d9488; }
         .table-container { overflow: auto; max-height: 75vh; border-radius: 0.5rem; border: 1px solid #e5e7eb; }
         .table-modern { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
         .table-modern thead { position: sticky; top: 0; z-index: 30; }
         .table-modern th { padding: 0.46rem 0.5rem; text-align: center; font-weight: 600; color: #374151; background: #f3f4f6; border: 1px solid #d1d5db; white-space: nowrap; font-size: 0.7rem; }
+        .table-modern th.text-left { text-align: left; }
         .table-modern td { padding: 0.35rem 0.4rem; border: 1px solid #e5e7eb; text-align: center; }
-        .group-header { background: #e0f2fe; font-weight: 600; color: #0c4a6e; }
+        .table-modern td.text-left { text-align: left; }
+        .cell-wrap { white-space: normal; word-wrap: break-word; }
+        .group-header { background: #ccfbf1; font-weight: 600; color: #134e4a; }
         .cell-input { width: 100%; padding: 0.2rem 0.3rem; border: 1px solid transparent; border-radius: 0.25rem; font-size: 0.7rem; background: transparent; text-align: inherit; }
         .cell-input:hover { border-color: #d1d5db; background: white; }
-        .cell-input:focus { border-color: #0ea5e9; background: white; outline: none; }
+        .cell-input:focus { border-color: #0d9488; background: white; outline: none; }
         .cell-input-num { width: 100%; padding: 0.2rem 0.3rem; border: 1px solid transparent; border-radius: 0.25rem; font-size: 0.7rem; background: transparent; text-align: center; }
         .cell-input-num:hover { border-color: #d1d5db; background: white; }
-        .cell-input-num:focus { border-color: #0ea5e9; background: white; outline: none; }
+        .cell-input-num:focus { border-color: #0d9488; background: white; outline: none; }
         .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 50; }
         .modal-content { background: white; border-radius: 0.75rem; border: 1px solid #e5e7eb; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); width: 100%; max-height: 85vh; overflow: hidden; display: flex; flex-direction: column; }
+        .drop-zone { border: 2px dashed #d1d5db; border-radius: 0.75rem; padding: 2rem; text-align: center; transition: all 0.2s; cursor: pointer; }
+        .drop-zone:hover, .drop-zone.drag-over { border-color: #0d9488; background: #f0fdfa; }
     </style>
 </head>
 <body class="min-h-screen bg-gray-100">
-    <div class="max-w-7xl mx-auto p-3">
-        <!-- Header -->
-        <div class="bg-white rounded-lg border border-gray-200 p-3 mb-3">
-            <div class="flex justify-between items-center flex-wrap gap-2">
-                <div class="flex items-center gap-3">
-                    <div class="text-xl font-bold text-gray-800">&#128230; Ассортимент</div>
-                    <span class="text-xs text-gray-400">v1.0</span>
-                    <span class="bg-sky-100 text-sky-800 rounded-md px-2 py-0.5 text-xs font-medium" id="productCount">0 товаров</span>
-                </div>
-                <div class="flex gap-2">
-                    <button onclick="showLoadModal()" class="btn px-3 py-2 text-sm font-medium text-white bg-sky-600 rounded-md hover:bg-sky-700">&#128194; Загрузить</button>
-                    <button onclick="exportAssortment()" class="btn px-3 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700">&#128228; Экспорт</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Toolbar: search, filters, actions -->
-        <div class="bg-white rounded-lg border border-gray-200 p-3 mb-3">
-            <div class="flex justify-between items-center flex-wrap gap-3">
-                <div class="flex gap-2 items-center flex-wrap">
-                    <div class="relative">
-                        <input type="text" id="searchInput" placeholder="Поиск по названию или коду..." oninput="debounceSearch(this)" class="input w-60 pr-7">
-                        <span id="searchClear" class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer hidden" onclick="clearSearch()">&times;</span>
+    <div class="bg-white border-b border-gray-200">
+        <div class="px-3 py-2">
+            <div class="flex items-center gap-2">
+                <a href="index.html" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors">
+                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+                    <span>Назад</span>
+                </a>
+                <div class="flex items-center gap-2 px-2">
+                    <div class="p-1.5 bg-teal-100 rounded-lg text-teal-600">
+                        <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
                     </div>
-                    <select id="groupFilter" onchange="selectedGroup=this.value;render()" class="input bg-white w-40">
-                        <option value="">Все группы</option>
-                    </select>
-                    <select id="supplierFilter" onchange="selectedSupplier=this.value;render()" class="input bg-white w-40">
-                        <option value="">Все поставщики</option>
-                    </select>
+                    <h1 class="text-base font-semibold text-gray-900">Ассортимент</h1>
                 </div>
-                <div class="flex gap-2">
-                    <button onclick="showAddProductModal()" class="btn px-3 py-2 text-sm font-medium text-white bg-emerald-600 rounded-md hover:bg-emerald-700">＋ Добавить</button>
-                    <button onclick="bulkSetSupplier()" class="btn px-3 py-2 text-sm font-medium text-white bg-purple-600 rounded-md hover:bg-purple-700" title="Массово назначить поставщика для группы">&#128101; Поставщик</button>
-                    <button onclick="showSaveModal()" class="btn px-3 py-2 text-sm font-medium text-white bg-amber-600 rounded-md hover:bg-amber-700">&#128190; Сохранить</button>
+                <div class="flex gap-0.5 ml-2 bg-gray-100 rounded-lg p-0.5" id="tabs"></div>
+                <div class="ml-auto flex gap-2">
+                    <span class="bg-teal-100 text-teal-800 rounded-lg px-2 py-1 text-xs" id="statsProducts">0 тов.</span>
+                    <span class="bg-emerald-100 text-emerald-800 rounded-lg px-2 py-1 text-xs" id="statsGroups">0 гр.</span>
                 </div>
             </div>
         </div>
-
-        <!-- Stats + Table -->
-        <div id="content" class="space-y-3"></div>
     </div>
-
-    <!-- Hidden file input for import -->
-    <input type="file" id="importInput" accept=".xlsx,.xls,.csv" class="hidden" onchange="handleImport(this)">
+    <div class="px-3 py-3" id="content"></div>
 
     <script>
         // ============================================================================
-        // GLOBALS
+        // STATE
         // ============================================================================
+        let tab = 'assortment';
+        let products = [];             // Working array of products
+        let currentLoadedAssortment = null; // Name of loaded saved list
+        let defaultMarkup = 25;
+        let searchQuery = '';
+        let filterGroup = '';
+        let collapsedGroups = {};
+        let _searchTimeout = null;
+        let importPreviewData = null;  // For import tab preview
+        let importMode = 'replace';    // 'replace' or 'merge'
+
+        // ============================================================================
+        // UTILITIES
+        // ============================================================================
+        const normCode = SharedUtils.normCode;
         const esc = SharedUtils.esc;
-        const KEYS = {
-            PRODUCTS: SharedUtils.STORAGE_KEYS.PRODUCTS,
-            SAVED_ASSORTMENTS: SharedUtils.STORAGE_KEYS.SAVED_ASSORTMENTS
+        const load = (key, def) => SharedUtils.load(key, def);
+        const save = (key, data) => SharedUtils.save(key, data);
+
+        const ASSORTMENTS_KEY = SharedUtils.STORAGE_KEYS.SAVED_ASSORTMENTS;
+        const PRODUCTS_KEY = SharedUtils.STORAGE_KEYS.PRODUCTS;
+        const UNIV_PRODUCTS_KEY = SharedUtils.STORAGE_KEYS.UNIV_PRODUCTS;
+
+        // ============================================================================
+        // ICONS (same SVGs as universal.html)
+        // ============================================================================
+        const icons = {
+            upload: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>`,
+            list: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/></svg>`,
+            grid: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>`,
+            dollar: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>`,
+            download: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`,
+            search: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`,
+            check: `<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>`,
+            x: `<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`,
+            chevronRight: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="9 18 15 12 9 6"/></svg>`,
+            chevronDown: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="6 9 12 15 18 9"/></svg>`,
+            trash: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`,
+            plus: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
+            save: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>`,
+            import: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`,
+            export: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M16 10l4-4-4-4"/><line x1="20" y1="6" x2="12" y2="6"/><path d="M20 6h-8v12"/></svg>`,
+            db: `<svg class="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>`,
+            package: `<svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>`
         };
 
-        let products = [];
-        let collapsedGroups = {};
-        let searchQuery = '';
-        let selectedGroup = '';
-        let selectedSupplier = '';
-        let searchTimeout = null;
-
         // ============================================================================
-        // SAVE / LOAD (using SharedUtils which supports LZ-String)
+        // SYNC — save to ALL storage locations
         // ============================================================================
-        function save(key, data) {
-            SharedUtils.save(key, data);
+        function syncAll() {
+            // Save as array for matrix-calc
+            save(PRODUCTS_KEY, products);
+            // Save as object for universal
+            const obj = {};
+            products.forEach(p => {
+                if (p.code) obj[p.code] = {
+                    ...p,
+                    markup: p.markup || defaultMarkup,
+                    inPrice: p.inPrice || p.price || 0
+                };
+            });
+            save(UNIV_PRODUCTS_KEY, obj);
+            // Notify SharedData for cross-tab sync
+            if (window.SharedData) SharedData.saveProducts(products, 'assortment');
+            // Sync to saved list if one is loaded
+            syncToSavedAssortment();
         }
 
-        function load(key, defaultValue) {
-            return SharedUtils.load(key, defaultValue);
+        function syncToSavedAssortment() {
+            if (!currentLoadedAssortment) return;
+            const saved = getSavedAssortments();
+            const idx = saved.findIndex(s => s.name === currentLoadedAssortment);
+            if (idx < 0) return;
+            saved[idx] = {
+                ...saved[idx],
+                date: new Date().toISOString(),
+                count: products.length,
+                data: products.map(p => ({
+                    code: p.code, nomenclature: p.nomenclature || '',
+                    group: p.group || '', packaging: p.packaging || 'ШТ',
+                    supplier: p.supplier || '', price: p.price || 0,
+                    inPrice: p.inPrice || 0, shelfPrice: p.shelfPrice || 0,
+                    shelf: p.shelf || 0, quant: p.quant || 1, volume: p.volume || 0, markup: p.markup || defaultMarkup
+                }))
+            };
+            save(ASSORTMENTS_KEY, saved);
         }
 
         // ============================================================================
-        // INIT
+        // SAVED ASSORTMENTS
         // ============================================================================
-        function init() {
-            products = load(KEYS.PRODUCTS, []);
-            render();
+        function getSavedAssortments() {
+            try {
+                let data = load(ASSORTMENTS_KEY, null);
+                if (!data || !Array.isArray(data)) data = [];
+                return data;
+            } catch { return []; }
+        }
 
-            // Listen for changes from other tabs
-            window.addEventListener('storage', (e) => {
-                if (e.key === KEYS.PRODUCTS) {
-                    products = load(KEYS.PRODUCTS, []);
-                    render();
+        function loadAssortmentByName(name) {
+            const saved = getSavedAssortments();
+            const record = saved.find(s => s.name === name);
+            if (!record) { alert('Ассортимент не найден'); return; }
+
+            const count = products.length;
+            if (count > 0) {
+                if (!confirm(`Загрузить "${name}" (${record.count} товаров)?\nТекущий ассортимент (${count} товаров) будет заменен.`)) return;
+            }
+
+            products = [];
+            (record.data || []).forEach(p => {
+                if (p.code) {
+                    products.push({
+                        code: normCode(p.code),
+                        nomenclature: p.nomenclature || p.name || '',
+                        group: p.group || '',
+                        packaging: p.packaging || 'ШТ',
+                        supplier: p.supplier || '',
+                        price: p.price || 0,
+                        inPrice: p.inPrice || p.price || 0,
+                        shelfPrice: p.shelfPrice || 0,
+                        shelf: p.shelf || 0,
+                        quant: p.quant || 1,
+                        volume: p.volume || 0,
+                        markup: p.markup || defaultMarkup
+                    });
                 }
             });
+
+            currentLoadedAssortment = name;
+            syncAll();
+            render();
+            alert(`Загружено: ${products.length} товаров из "${name}"`);
+        }
+
+        function deleteAssortmentByName(name) {
+            if (!confirm(`Удалить сохранённый список "${name}"?`)) return;
+            const saved = getSavedAssortments();
+            const filtered = saved.filter(s => s.name !== name);
+            save(ASSORTMENTS_KEY, filtered);
+            if (currentLoadedAssortment === name) currentLoadedAssortment = null;
+            render();
+        }
+
+        function saveToAssortmentList() {
+            if (products.length === 0) { alert('Нет товаров для сохранения'); return; }
+            const name = prompt('Введите название:', currentLoadedAssortment || `Ассортимент ${new Date().toLocaleDateString('ru-RU')}`);
+            if (!name) return;
+            const saved = getSavedAssortments();
+            const existingIdx = saved.findIndex(s => s.name === name);
+            const record = {
+                name,
+                date: new Date().toISOString(),
+                count: products.length,
+                data: products.map(p => ({
+                    code: p.code, nomenclature: p.nomenclature || '',
+                    group: p.group || '', packaging: p.packaging || 'ШТ',
+                    supplier: p.supplier || '', price: p.price || 0,
+                    inPrice: p.inPrice || 0, shelfPrice: p.shelfPrice || 0,
+                    shelf: p.shelf || 0, quant: p.quant || 1, volume: p.volume || 0, markup: p.markup || defaultMarkup
+                }))
+            };
+            if (existingIdx >= 0) {
+                if (!confirm(`"${name}" уже существует. Перезаписать?`)) return;
+                saved[existingIdx] = record;
+            } else {
+                saved.push(record);
+            }
+            currentLoadedAssortment = name;
+            save(ASSORTMENTS_KEY, saved);
+            alert(`Сохранено: "${name}" (${products.length} товаров)`);
+            render();
         }
 
         // ============================================================================
-        // DEBOUNCED SEARCH
+        // DEBOUNCE SEARCH
         // ============================================================================
-        function debounceSearch(input) {
-            const val = input.value;
-            const pos = input.selectionStart;
-            clearTimeout(searchTimeout);
-            searchTimeout = setTimeout(() => {
+        function debounceSearch(inputEl) {
+            if (_searchTimeout) clearTimeout(_searchTimeout);
+            const val = inputEl.value;
+            const pos = inputEl.selectionStart;
+            _searchTimeout = setTimeout(() => {
                 searchQuery = val;
-                // Show/hide clear button
-                const clearBtn = document.getElementById('searchClear');
-                if (clearBtn) clearBtn.classList.toggle('hidden', !val);
-                render();
-                setTimeout(() => {
-                    const el = document.getElementById('searchInput');
-                    if (el) { el.focus(); el.setSelectionRange(pos, pos); }
-                }, 10);
+                renderAssortment();
+                const el = document.getElementById('assortmentSearchInput');
+                if (el) { el.focus(); el.setSelectionRange(pos, pos); }
             }, 300);
         }
 
-        function clearSearch() {
-            searchQuery = '';
-            const el = document.getElementById('searchInput');
-            if (el) el.value = '';
-            const clearBtn = document.getElementById('searchClear');
-            if (clearBtn) clearBtn.classList.add('hidden');
-            render();
-            setTimeout(() => {
-                if (el) el.focus();
-            }, 10);
+        // ============================================================================
+        // HELPER: get all groups
+        // ============================================================================
+        function getAllGroups() {
+            const groups = new Set();
+            products.forEach(p => { if (p.group) groups.add(p.group); });
+            return Array.from(groups).sort((a, b) => a.localeCompare(b, 'ru'));
         }
 
         // ============================================================================
-        // RENDER FILTER DROPDOWNS
-        // ============================================================================
-        function renderFilterDropdowns() {
-            const groups = [...new Set(products.map(p => p.group || '').filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ru'));
-            const suppliers = [...new Set(products.map(p => p.supplier || '').filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ru'));
-
-            const groupFilter = document.getElementById('groupFilter');
-            const supplierFilter = document.getElementById('supplierFilter');
-            if (groupFilter) {
-                const currentGroup = groupFilter.value;
-                groupFilter.innerHTML = '<option value="">Все группы</option>' +
-                    groups.map(g => `<option value="${esc(g)}" ${g === currentGroup ? 'selected' : ''}>${esc(g)}</option>`).join('');
-            }
-            if (supplierFilter) {
-                const currentSupplier = supplierFilter.value;
-                supplierFilter.innerHTML = '<option value="">Все поставщики</option>' +
-                    suppliers.map(s => `<option value="${esc(s)}" ${s === currentSupplier ? 'selected' : ''}>${esc(s)}</option>`).join('');
-            }
-        }
-
-        // ============================================================================
-        // RENDER — MAIN
-        // ============================================================================
-        function render() {
-            const content = document.getElementById('content');
-
-            // Update product count badge
-            const countBadge = document.getElementById('productCount');
-            if (countBadge) countBadge.textContent = products.length + ' товаров';
-
-            // Render filter dropdowns
-            renderFilterDropdowns();
-
-            // If no products, show empty state
-            if (products.length === 0) {
-                content.innerHTML = `
-                    <div class="bg-white rounded-lg border border-gray-200 p-8 text-center">
-                        <div class="text-5xl mb-3 opacity-30">&#128230;</div>
-                        <div class="text-gray-500 text-lg mb-1">Нет товаров</div>
-                        <div class="text-gray-400 text-sm mb-4">Загрузите ассортимент из файла или добавьте товары вручную</div>
-                        <div class="flex justify-center gap-3">
-                            <button onclick="document.getElementById('importInput').click()" class="btn px-4 py-2 text-sm font-medium text-white bg-sky-600 rounded-lg hover:bg-sky-700">&#128194; Загрузить из Excel</button>
-                            <button onclick="showAddProductModal()" class="btn px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700">＋ Добавить товар</button>
-                        </div>
-                    </div>`;
-                return;
-            }
-
-            // Filter products
-            let filtered = products;
-            if (searchQuery) {
-                const q = searchQuery.toLowerCase();
-                filtered = filtered.filter(p =>
-                    (p.nomenclature || '').toLowerCase().includes(q) ||
-                    (p.code || '').toLowerCase().includes(q) ||
-                    (p.group || '').toLowerCase().includes(q) ||
-                    (p.supplier || '').toLowerCase().includes(q)
-                );
-            }
-            if (selectedGroup) {
-                filtered = filtered.filter(p => (p.group || '') === selectedGroup);
-            }
-            if (selectedSupplier) {
-                filtered = filtered.filter(p => (p.supplier || '') === selectedSupplier);
-            }
-
-            // Compute stats
-            const allGroups = [...new Set(products.map(p => p.group || '').filter(Boolean))];
-            const allSuppliers = [...new Set(products.map(p => p.supplier || '').filter(Boolean))];
-            const pricedCount = products.filter(p => (p.price || 0) > 0).length;
-
-            // Group filtered products
-            const grouped = {};
-            filtered.forEach(p => {
-                const g = p.group || 'Без группы';
-                if (!grouped[g]) grouped[g] = [];
-                grouped[g].push(p);
-            });
-            const sortedGroups = Object.keys(grouped).sort((a, b) => a.localeCompare(b, 'ru'));
-
-            // Known suppliers for datalist
-            const knownSuppliers = [...new Set(products.map(p => p.supplier || '').filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ru'));
-
-            content.innerHTML = `
-                <!-- Stats bar -->
-                <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-                    <div class="bg-white rounded-lg border border-gray-200 p-3 text-center">
-                        <div class="text-2xl font-bold text-sky-600">${products.length}</div>
-                        <div class="text-xs text-gray-500">Товаров${searchQuery || selectedGroup || selectedSupplier ? ' (всего)' : ''}</div>
-                        ${filtered.length !== products.length ? `<div class="text-xs text-sky-500 font-medium mt-0.5">Показано: ${filtered.length}</div>` : ''}
-                    </div>
-                    <div class="bg-white rounded-lg border border-gray-200 p-3 text-center">
-                        <div class="text-2xl font-bold text-emerald-600">${allGroups.length}</div>
-                        <div class="text-xs text-gray-500">Групп</div>
-                    </div>
-                    <div class="bg-white rounded-lg border border-gray-200 p-3 text-center">
-                        <div class="text-2xl font-bold text-amber-600">${allSuppliers.length}</div>
-                        <div class="text-xs text-gray-500">Поставщиков</div>
-                    </div>
-                    <div class="bg-white rounded-lg border border-gray-200 p-3 text-center">
-                        <div class="text-2xl font-bold text-purple-600">${pricedCount}</div>
-                        <div class="text-xs text-gray-500">С ценой &gt; 0</div>
-                    </div>
-                </div>
-
-                <!-- Table -->
-                <div class="bg-white rounded-lg border border-gray-200 overflow-hidden">
-                    <div class="table-container" id="tableContainer">
-                        <table class="table-modern">
-                            <thead>
-                                <tr>
-                                    <th style="min-width:30px">▼</th>
-                                    <th class="text-left" style="min-width:100px">Группа</th>
-                                    <th class="text-left" style="min-width:240px">Наименование</th>
-                                    <th style="min-width:70px">Код</th>
-                                    <th style="min-width:50px">Упак.</th>
-                                    <th style="min-width:120px">Поставщик</th>
-                                    <th style="min-width:65px">Цена</th>
-                                    <th style="min-width:65px">Цена на полке</th>
-                                    <th style="min-width:65px">Дом. полка</th>
-                                    <th style="min-width:55px">Квант</th>
-                                    <th style="min-width:60px">Объём</th>
-                                    <th style="min-width:40px">Действ.</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${sortedGroups.map(gr => {
-                                    const items = grouped[gr];
-                                    const isCollapsed = collapsedGroups[gr] !== false;
-                                    return `
-                                        <tr class="group-header cursor-pointer select-none" onclick="toggleGroup('${esc(gr)}')">
-                                            <td class="text-center px-1 py-1">
-                                                <span class="text-[10px]">${isCollapsed ? '&#9654;' : '&#9660;'}</span>
-                                            </td>
-                                            <td colspan="11" class="text-left py-1 px-2">
-                                                <div class="flex items-center gap-2">
-                                                    <span class="font-semibold">${esc(gr)}</span>
-                                                    <span class="text-[10px] bg-sky-200 text-sky-800 px-1.5 py-0.5 rounded-full font-medium">${items.length}</span>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                        ${isCollapsed ? '' : items.map(p => `
-                                            <tr class="hover:bg-gray-50" id="row_${esc(p.code)}">
-                                                <td class="text-center px-1 py-0.5 text-[10px] text-gray-400">${items.indexOf(p) + 1}</td>
-                                                <td>
-                                                    <input type="text" value="${esc(p.group || '')}" onchange="updateProduct('${esc(p.code)}', 'group', this.value)" class="cell-input">
-                                                </td>
-                                                <td class="text-left">
-                                                    <input type="text" value="${esc(p.nomenclature || '')}" onchange="updateProduct('${esc(p.code)}', 'nomenclature', this.value)" class="cell-input">
-                                                </td>
-                                                <td>
-                                                    <span class="font-mono text-[10px] text-gray-600">${esc(p.code)}</span>
-                                                </td>
-                                                <td>
-                                                    <input type="text" value="${esc(p.packaging || 'ШТ')}" onchange="updateProduct('${esc(p.code)}', 'packaging', this.value.toUpperCase())" class="cell-input" style="text-align:center; width:50px">
-                                                </td>
-                                                <td>
-                                                    <input type="text" value="${esc(p.supplier || '')}" onchange="updateProduct('${esc(p.code)}', 'supplier', this.value)" class="cell-input" list="supplierList_${esc(gr.replace(/[^a-zA-Zа-яА-ЯёЁ0-9]/g, '_'))}">
-                                                </td>
-                                                <td>
-                                                    <input type="number" step="0.01" value="${p.price || ''}" onchange="updateProduct('${esc(p.code)}', 'price', parseFloat(this.value) || 0)" class="cell-input-num" style="width:65px">
-                                                </td>
-                                                <td>
-                                                    <input type="number" step="0.01" value="${p.shelfPrice || ''}" onchange="updateProduct('${esc(p.code)}', 'shelfPrice', parseFloat(this.value) || 0)" class="cell-input-num" style="width:65px">
-                                                </td>
-                                                <td>
-                                                    <input type="number" step="0.01" value="${p.shelf || ''}" onchange="updateProduct('${esc(p.code)}', 'shelf', parseFloat(this.value) || 0)" class="cell-input-num" style="width:65px">
-                                                </td>
-                                                <td>
-                                                    <input type="number" value="${p.quant || 1}" onchange="updateProduct('${esc(p.code)}', 'quant', parseInt(this.value) || 1)" class="cell-input-num" style="width:50px">
-                                                </td>
-                                                <td>
-                                                    <input type="number" step="0.01" value="${p.volume || 0}" onchange="updateProduct('${esc(p.code)}', 'volume', parseFloat(this.value) || 0)" class="cell-input-num" style="width:60px">
-                                                </td>
-                                                <td>
-                                                    <button onclick="deleteProduct('${esc(p.code)}')" class="p-1 text-red-500 hover:bg-red-100 rounded" title="Удалить">&#128465;</button>
-                                                </td>
-                                            </tr>
-                                        `).join('')}
-                                    `;
-                                }).join('')}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <!-- Supplier datalist -->
-                <datalist id="supplierList">
-                    ${knownSuppliers.map(s => `<option value="${esc(s)}">`).join('')}
-                </datalist>
-            `;
-
-            // Restore scroll position
-            const container = document.getElementById('tableContainer');
-            if (container && render._scrollTop) {
-                requestAnimationFrame(() => { container.scrollTop = render._scrollTop; });
-            }
-        }
-
-        // ============================================================================
-        // TOGGLE GROUP COLLAPSE
-        // ============================================================================
-        function toggleGroup(group) {
-            const container = document.getElementById('tableContainer');
-            if (container) render._scrollTop = container.scrollTop;
-            collapsedGroups[group] = !collapsedGroups[group];
-            render();
-        }
-
-        // ============================================================================
-        // UPDATE PRODUCT
+        // PRODUCT CRUD
         // ============================================================================
         function updateProduct(code, field, value) {
-            const product = products.find(p => p.code === code);
-            if (product) {
-                product[field] = value;
-                // Also keep inPrice in sync with price
-                if (field === 'price') product.inPrice = value;
-                save(KEYS.PRODUCTS, products);
-                // Update filter dropdowns if group or supplier changed
-                if (field === 'group' || field === 'supplier') {
-                    renderFilterDropdowns();
-                }
-            }
+            const p = products.find(item => item.code === code);
+            if (!p) return;
+            p[field] = value;
+            if (field === 'price') p.inPrice = value;
+            syncAll();
+            if (field === 'group') renderAssortment();
         }
 
-        // ============================================================================
-        // DELETE PRODUCT
-        // ============================================================================
         function deleteProduct(code) {
-            const product = products.find(p => p.code === code);
-            if (!product || !confirm(`Удалить "${product.nomenclature || code}"?`)) return;
-            const container = document.getElementById('tableContainer');
-            const scrollTop = container ? container.scrollTop : 0;
-            products = products.filter(p => p.code !== code);
-            save(KEYS.PRODUCTS, products);
-            render._scrollTop = scrollTop;
-            render();
-            requestAnimationFrame(() => {
-                const c = document.getElementById('tableContainer');
-                if (c) c.scrollTop = scrollTop;
-            });
+            const p = products.find(item => item.code === code);
+            if (!p || !confirm(`Удалить "${p.nomenclature || code}"?`)) return;
+            products = products.filter(item => item.code !== code);
+            syncAll();
+            renderAssortment();
         }
 
-        // ============================================================================
-        // ADD PRODUCT MODAL
-        // ============================================================================
         function showAddProductModal() {
             const existingModal = document.getElementById('addProductModal');
             if (existingModal) existingModal.remove();
 
-            // Known groups and suppliers for suggestions
-            const knownGroups = [...new Set(products.map(p => p.group || '').filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ru'));
+            const knownGroups = getAllGroups();
             const knownSuppliers = [...new Set(products.map(p => p.supplier || '').filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ru'));
 
             const modal = document.createElement('div');
@@ -418,18 +300,18 @@
             modal.innerHTML = `
                 <div class="modal-content max-w-lg p-6" onclick="event.stopPropagation()">
                     <div class="flex justify-between items-center mb-4">
-                        <h3 class="text-lg font-bold text-gray-800">＋ Добавить товар</h3>
+                        <h3 class="text-lg font-bold text-gray-800">${icons.plus} Добавить товар</h3>
                         <button onclick="document.getElementById('addProductModal').remove()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
                     </div>
                     <div class="space-y-3 text-sm">
                         <div class="grid grid-cols-2 gap-3">
                             <div>
-                                <label class="block font-medium text-gray-700 mb-1">Код товара <span class="text-red-500">*</span></label>
-                                <input type="text" id="newCode" placeholder="Код" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-sky-500">
+                                <label class="block font-medium text-gray-700 mb-1">Код товара *</label>
+                                <input type="text" id="newCode" placeholder="Код" class="input w-full">
                             </div>
                             <div>
                                 <label class="block font-medium text-gray-700 mb-1">Упаковка</label>
-                                <select id="newPackaging" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-sky-500 bg-white">
+                                <select id="newPackaging" class="input w-full bg-white">
                                     <option value="ШТ">ШТ</option>
                                     <option value="КГ">КГ</option>
                                     <option value="Ж/Б">Ж/Б</option>
@@ -437,19 +319,19 @@
                             </div>
                         </div>
                         <div>
-                            <label class="block font-medium text-gray-700 mb-1">Наименование <span class="text-red-500">*</span></label>
-                            <input type="text" id="newName" placeholder="Наименование товара" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-sky-500">
+                            <label class="block font-medium text-gray-700 mb-1">Наименование *</label>
+                            <input type="text" id="newName" placeholder="Наименование товара" class="input w-full">
                         </div>
                         <div>
                             <label class="block font-medium text-gray-700 mb-1">Группа</label>
-                            <input type="text" id="newGroup" placeholder="Группа" list="groupListAdd" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-sky-500">
+                            <input type="text" id="newGroup" placeholder="Группа" list="groupListAdd" class="input w-full">
                             <datalist id="groupListAdd">
                                 ${knownGroups.map(g => `<option value="${esc(g)}">`).join('')}
                             </datalist>
                         </div>
                         <div>
                             <label class="block font-medium text-gray-700 mb-1">Поставщик</label>
-                            <input type="text" id="newSupplier" placeholder="Поставщик" list="supplierListAdd" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-sky-500">
+                            <input type="text" id="newSupplier" placeholder="Поставщик" list="supplierListAdd" class="input w-full">
                             <datalist id="supplierListAdd">
                                 ${knownSuppliers.map(s => `<option value="${esc(s)}">`).join('')}
                             </datalist>
@@ -457,31 +339,31 @@
                         <div class="grid grid-cols-3 gap-3">
                             <div>
                                 <label class="block font-medium text-gray-700 mb-1">Цена</label>
-                                <input type="number" step="0.01" id="newPrice" placeholder="0.00" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-sky-500 text-center">
+                                <input type="number" step="0.01" id="newPrice" placeholder="0.00" class="input w-full text-center">
                             </div>
                             <div>
                                 <label class="block font-medium text-gray-700 mb-1">Цена на полке</label>
-                                <input type="number" step="0.01" id="newShelfPrice" placeholder="0.00" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-sky-500 text-center">
+                                <input type="number" step="0.01" id="newShelfPrice" placeholder="0.00" class="input w-full text-center">
                             </div>
                             <div>
                                 <label class="block font-medium text-gray-700 mb-1">Дом. полка</label>
-                                <input type="number" step="0.01" id="newShelf" placeholder="0" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-sky-500 text-center">
+                                <input type="number" step="0.01" id="newShelf" placeholder="0" class="input w-full text-center">
                             </div>
                         </div>
                         <div class="grid grid-cols-2 gap-3">
                             <div>
                                 <label class="block font-medium text-gray-700 mb-1">Квант</label>
-                                <input type="number" id="newQuant" value="1" min="1" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-sky-500 text-center">
+                                <input type="number" id="newQuant" value="1" min="1" class="input w-full text-center">
                             </div>
                             <div>
                                 <label class="block font-medium text-gray-700 mb-1">Объём</label>
-                                <input type="number" step="0.01" id="newVolume" value="0" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-sky-500 text-center">
+                                <input type="number" step="0.01" id="newVolume" value="0" class="input w-full text-center">
                             </div>
                         </div>
                     </div>
                     <div class="flex gap-3 mt-5">
                         <button onclick="document.getElementById('addProductModal').remove()" class="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">Отмена</button>
-                        <button onclick="saveNewProduct()" class="flex-1 px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700">Добавить</button>
+                        <button onclick="addNewProduct()" class="flex-1 px-4 py-2 text-sm font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700">Добавить</button>
                     </div>
                 </div>
             `;
@@ -489,61 +371,40 @@
             setTimeout(() => document.getElementById('newCode').focus(), 100);
         }
 
-        function saveNewProduct() {
-            const code = SharedUtils.normCode(document.getElementById('newCode').value.trim());
+        function addNewProduct() {
+            const code = normCode(document.getElementById('newCode').value.trim());
             const name = document.getElementById('newName').value.trim();
-
-            if (!code || code === '0') {
-                alert('Введите код товара');
-                document.getElementById('newCode').focus();
-                return;
-            }
-            if (!name) {
-                alert('Введите наименование товара');
-                document.getElementById('newName').focus();
-                return;
-            }
-            if (products.some(p => p.code === code)) {
-                alert(`Товар с кодом "${code}" уже существует!`);
-                document.getElementById('newCode').focus();
-                return;
-            }
+            if (!code || code === '0') { alert('Введите код товара'); document.getElementById('newCode').focus(); return; }
+            if (!name) { alert('Введите наименование'); document.getElementById('newName').focus(); return; }
+            if (products.some(p => p.code === code)) { alert(`Товар с кодом "${code}" уже существует!`); document.getElementById('newCode').focus(); return; }
 
             const price = parseFloat(document.getElementById('newPrice').value) || 0;
             const newProduct = {
-                code: code,
+                code,
                 nomenclature: name,
                 group: document.getElementById('newGroup').value.trim(),
                 packaging: (document.getElementById('newPackaging').value || 'ШТ').toUpperCase().trim(),
                 supplier: document.getElementById('newSupplier').value.trim(),
-                price: price,
+                price,
                 inPrice: price,
                 shelfPrice: parseFloat(document.getElementById('newShelfPrice').value) || 0,
                 shelf: parseFloat(document.getElementById('newShelf').value) || 0,
                 quant: parseInt(document.getElementById('newQuant').value) || 1,
-                volume: parseFloat(document.getElementById('newVolume').value) || 0
+                volume: parseFloat(document.getElementById('newVolume').value) || 0,
+                markup: defaultMarkup
             };
 
             products.push(newProduct);
-            save(KEYS.PRODUCTS, products);
-
-            // Remove group from collapsed so it's visible
             if (newProduct.group) delete collapsedGroups[newProduct.group];
-
+            syncAll();
             document.getElementById('addProductModal').remove();
-            render();
-
-            // Scroll to the new product
-            requestAnimationFrame(() => {
-                const row = document.getElementById('row_' + code);
-                if (row) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            });
+            renderAssortment();
         }
 
         // ============================================================================
         // IMPORT FROM EXCEL
         // ============================================================================
-        function handleImport(input) {
+        function importFromFile(input) {
             const file = input.files[0];
             if (!file) return;
             const reader = new FileReader();
@@ -551,23 +412,50 @@
                 try {
                     const data = new Uint8Array(e.target.result);
                     const wb = XLSX.read(data, { type: 'array' });
-                    const json = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' });
-                    const { items } = SharedUtils.parseAssortment(json);
+                    const sheet = wb.Sheets[wb.SheetNames[0]];
+
+                    // Try column-name approach first (universal style)
+                    let items = [];
+                    try {
+                        const json = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+                        json.forEach(row => {
+                            const code = normCode(String(row['Код'] || row['Код товара'] || ''));
+                            if (!code) return;
+                            const price = parseFloat(row['Цена'] || 0) || 0;
+                            items.push({
+                                code,
+                                nomenclature: String(row['Наименование'] || row['Номенклатура'] || '').trim(),
+                                group: String(row['Группа'] || row['Категория'] || '').trim(),
+                                packaging: String(row['Упак'] || row['Упаковка'] || 'ШТ').trim(),
+                                supplier: String(row['Поставщик'] || '').trim(),
+                                price,
+                                inPrice: parseFloat(row['Вх. цена'] || row['Цена'] || 0) || 0,
+                                shelfPrice: parseFloat(row['Цена на полке'] || 0) || 0,
+                                shelf: parseFloat(row['Дом. полка'] || 0) || 0,
+                                quant: parseFloat(row['Квант']) || 1,
+                                volume: parseFloat(row['Объём'] || row['Объем'] || 0) || 0,
+                                markup: defaultMarkup
+                            });
+                        });
+                    } catch (e1) {
+                        console.warn('Column-name import failed, trying index-based:', e1);
+                    }
+
+                    // Fallback to SharedUtils.parseAssortment (index-based)
+                    if (items.length === 0) {
+                        const rawJson = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+                        const result = SharedUtils.parseAssortment(rawJson);
+                        items = result.items.map(item => ({ ...item, markup: defaultMarkup }));
+                    }
 
                     if (items.length === 0) {
-                        alert('Не найдено товаров в файле. Проверьте формат (Группа | Наименование | Код | ...).');
+                        alert('Не найдено товаров в файле. Проверьте формат.');
                         return;
                     }
 
-                    if (products.length > 0) {
-                        if (!confirm(`Загрузить ${items.length} товаров?\nТекущий ассортимент (${products.length} товаров) будет заменён.`)) return;
-                    }
-
-                    products = items;
-                    save(KEYS.PRODUCTS, products);
-                    collapsedGroups = {};
-                    render();
-                    alert(`Импортировано ${products.length} товаров`);
+                    // Store for preview
+                    importPreviewData = items;
+                    renderImportPreview();
                 } catch (err) {
                     console.error('Import error:', err);
                     alert('Ошибка импорта: ' + err.message);
@@ -577,6 +465,45 @@
             input.value = '';
         }
 
+        function confirmImport() {
+            if (!importPreviewData || importPreviewData.length === 0) return;
+            const items = importPreviewData;
+
+            if (importMode === 'replace') {
+                if (products.length > 0) {
+                    if (!confirm(`Заменить текущий ассортимент (${products.length} товаров) на ${items.length} товаров из файла?`)) return;
+                }
+                products = items;
+                currentLoadedAssortment = null;
+            } else {
+                // Merge: add new, update existing
+                let added = 0, updated = 0, skipped = 0;
+                items.forEach(item => {
+                    const existing = products.find(p => p.code === item.code);
+                    if (existing) {
+                        Object.assign(existing, item);
+                        updated++;
+                    } else {
+                        products.push(item);
+                        added++;
+                    }
+                });
+                alert(`Слияние: ${added} добавлено, ${updated} обновлено`);
+            }
+
+            importPreviewData = null;
+            collapsedGroups = {};
+            syncAll();
+            tab = 'assortment';
+            render();
+            alert(`Импортировано: ${products.length} товаров`);
+        }
+
+        function cancelImport() {
+            importPreviewData = null;
+            renderImportTab();
+        }
+
         // ============================================================================
         // EXPORT TO EXCEL
         // ============================================================================
@@ -584,16 +511,8 @@
             if (products.length === 0) { alert('Нет данных для экспорта'); return; }
             const headers = ['Группа', 'Наименование', 'Код', 'Упаковка', 'Поставщик', 'Цена', 'Цена на полке', 'Дом. полка', 'Квант', 'Объём'];
             const data = products.map(p => [
-                p.group || '',
-                p.nomenclature || '',
-                p.code,
-                p.packaging || 'ШТ',
-                p.supplier || '',
-                p.price || 0,
-                p.shelfPrice || 0,
-                p.shelf || 0,
-                p.quant || 1,
-                p.volume || 0
+                p.group || '', p.nomenclature || '', p.code, p.packaging || 'ШТ',
+                p.supplier || '', p.price || 0, p.shelfPrice || 0, p.shelf || 0, p.quant || 1, p.volume || 0
             ]);
             const ws = SharedUtils.createStyledSheet(data, headers, [0, 1, 4]);
             const wb = XLSX.utils.book_new();
@@ -602,200 +521,463 @@
             XLSX.writeFile(wb, `ассортимент_${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}.xlsx`);
         }
 
-        // ============================================================================
-        // SAVE / LOAD ASSORTMENT SNAPSHOTS
-        // ============================================================================
-        function getSavedAssortments() {
-            return load(KEYS.SAVED_ASSORTMENTS, []);
+        function exportAllSavedLists() {
+            const saved = getSavedAssortments();
+            if (saved.length === 0) { alert('Нет сохранённых списков'); return; }
+            const headers = ['Список', 'Дата', 'Товаров', 'Группа', 'Наименование', 'Код', 'Упак.', 'Поставщик', 'Цена', 'Цена на полке', 'Дом. полка', 'Квант', 'Объём'];
+            const data = [];
+            saved.forEach(s => {
+                (s.data || []).forEach((p, i) => {
+                    data.push([
+                        i === 0 ? s.name : '', i === 0 ? new Date(s.date).toLocaleDateString('ru-RU') : '',
+                        i === 0 ? s.count : '',
+                        p.group || '', p.nomenclature || '', p.code, p.packaging || 'ШТ',
+                        p.supplier || '', p.price || 0, p.shelfPrice || 0, p.shelf || 0, p.quant || 1, p.volume || 0
+                    ]);
+                });
+            });
+            const ws = SharedUtils.createStyledSheet(data, headers, [0, 3, 4, 7]);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Списки');
+            const d = new Date();
+            XLSX.writeFile(wb, `списки_ассортимента_${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}.xlsx`);
         }
 
-        function showSaveModal() {
-            if (products.length === 0) {
-                alert('Нет данных для сохранения');
-                return;
-            }
-            const name = prompt('Введите название для сохранения:', `Ассортимент ${new Date().toLocaleDateString('ru-RU')}`);
-            if (!name) return;
-            const saved = getSavedAssortments();
-            const existing = saved.findIndex(s => s.name === name);
-            const record = {
-                name,
-                date: new Date().toISOString(),
-                count: products.length,
-                data: JSON.parse(JSON.stringify(products))
-            };
-            if (existing >= 0) {
-                if (!confirm(`"${name}" уже существует. Перезаписать?`)) return;
-                saved[existing] = record;
-            } else {
-                saved.push(record);
-            }
-            save(KEYS.SAVED_ASSORTMENTS, saved);
-            alert(`Сохранено: "${name}" (${products.length} товаров)`);
+        // ============================================================================
+        // RENDER — TABS
+        // ============================================================================
+        function renderTabs() {
+            const tabs = [
+                { id: 'assortment', label: 'Ассортимент', icon: icons.list },
+                { id: 'lists', label: 'Списки', icon: icons.save },
+                { id: 'import', label: 'Импорт', icon: icons.upload },
+            ];
+            document.getElementById('tabs').innerHTML = tabs.map(t => `
+                <button onclick="tab='${t.id}';render()" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${tab === t.id ? 'bg-teal-600 text-white shadow-sm' : 'text-gray-600 hover:bg-white hover:text-gray-900'}">
+                    ${t.icon}<span>${t.label}</span>
+                </button>
+            `).join('');
         }
 
-        function showLoadModal() {
-            const saved = getSavedAssortments();
-            if (saved.length === 0) {
-                // Show combined modal with import from file option
-                const modal = document.createElement('div');
-                modal.id = 'loadModal';
-                modal.className = 'modal-overlay';
-                modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-                modal.innerHTML = `
-                    <div class="modal-content max-w-lg p-6" onclick="event.stopPropagation()">
-                        <div class="flex justify-between items-center mb-4">
-                            <h3 class="text-lg font-bold text-gray-800">&#128194; Загрузить ассортимент</h3>
-                            <button onclick="document.getElementById('loadModal').remove()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
-                        </div>
-                        <div class="text-center py-8">
-                            <div class="text-5xl mb-3 opacity-30">&#128193;</div>
-                            <div class="text-gray-500 mb-4">Нет сохранённых ассортиментов</div>
-                            <div class="flex justify-center gap-3">
-                                <button onclick="document.getElementById('loadModal').remove(); document.getElementById('importInput').click()" class="btn px-4 py-2 text-sm font-medium text-white bg-sky-600 rounded-lg hover:bg-sky-700">&#128194; Загрузить из Excel</button>
-                                <button onclick="document.getElementById('loadModal').remove()" class="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">Закрыть</button>
-                            </div>
-                        </div>
-                    </div>
-                `;
-                document.body.appendChild(modal);
-                return;
-            }
+        function updateStats() {
+            document.getElementById('statsProducts').textContent = products.length + ' тов.';
+            document.getElementById('statsGroups').textContent = getAllGroups().length + ' гр.';
+        }
 
-            const modal = document.createElement('div');
-            modal.id = 'loadModal';
-            modal.className = 'modal-overlay';
-            modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-            modal.innerHTML = `
-                <div class="modal-content max-w-lg p-6" onclick="event.stopPropagation()">
-                    <div class="flex justify-between items-center mb-4">
-                        <h3 class="text-lg font-bold text-gray-800">&#128194; Загрузить ассортимент</h3>
-                        <button onclick="document.getElementById('loadModal').remove()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+        // ============================================================================
+        // RENDER — MAIN
+        // ============================================================================
+        function render() {
+            const content = document.getElementById('content');
+            const scrollTop = content.scrollTop;
+
+            renderTabs();
+            switch(tab) {
+                case 'assortment': content.innerHTML = renderAssortment(); break;
+                case 'lists': content.innerHTML = renderListsTab(); break;
+                case 'import': content.innerHTML = renderImportTab(); break;
+            }
+            updateStats();
+
+            content.scrollTop = scrollTop;
+        }
+
+        // ============================================================================
+        // RENDER — ASSORTMENT TAB
+        // ============================================================================
+        function renderAssortment() {
+            const totalItems = products.length;
+            const allGroups = getAllGroups();
+            const savedLists = getSavedAssortments();
+
+            let html = `<div class="bg-white rounded-lg border border-gray-200 p-3 mb-3">
+                <div class="flex flex-wrap justify-between items-center gap-2">
+                    <div class="flex flex-wrap gap-2 items-center">
+                        <div class="bg-teal-100 text-teal-800 rounded-lg px-3 py-1.5">
+                            <span class="text-xs">Товаров: </span><strong>${totalItems}</strong>
+                        </div>
+                        <div class="bg-emerald-100 text-emerald-800 rounded-lg px-3 py-1.5">
+                            <span class="text-xs">Групп: </span><strong>${allGroups.length}</strong>
+                        </div>
+                        <div class="relative">
+                            <input type="text" id="assortmentSearchInput" placeholder="Поиск по названию или коду..." value="${esc(searchQuery)}" oninput="debounceSearch(this)" class="pl-8 pr-7 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-teal-400 w-56">
+                            <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400">${icons.search}</span>
+                            ${searchQuery ? `<button onclick="searchQuery='';renderAssortment()" class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">✕</button>` : ''}
+                        </div>
+                        <select onchange="filterGroup=this.value;renderAssortment()" class="px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-teal-400 bg-white">
+                            <option value="">Все группы</option>
+                            ${allGroups.map(g => `<option value="${esc(g)}" ${filterGroup === g ? 'selected' : ''}>${esc(g)}</option>`).join('')}
+                        </select>
+                        ${savedLists.length > 0 ? `
+                        <select onchange="if(this.value){loadAssortmentByName(this.value);this.value=''}" class="px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-teal-400 bg-white">
+                            <option value="">📋 Загрузить список...</option>
+                            ${savedLists.map(s => `<option value="${esc(s.name)}" ${currentLoadedAssortment === s.name ? 'selected' : ''}>${currentLoadedAssortment === s.name ? '★ ' : ''}${esc(s.name)} (${s.count})</option>`).join('')}
+                        </select>
+                        ` : ''}
+                        ${currentLoadedAssortment ? `<span class="bg-teal-600 text-white rounded-lg px-2 py-1 text-xs font-medium">★ ${esc(currentLoadedAssortment)}</span>` : ''}
                     </div>
-                    <div class="flex-1 overflow-y-auto space-y-2 mb-4" style="max-height: 60vh">
-                        ${saved.map(s => {
-                            const safeName = s.name.replace(/'/g, "\\'").replace(/"/g, '&quot;');
-                            return `
-                            <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 border border-gray-100">
-                                <div class="flex-1 min-w-0">
-                                    <div class="font-medium text-sm text-gray-800 truncate">${esc(s.name)}</div>
-                                    <div class="text-xs text-gray-500">${s.count || '?'} товаров &bull; ${s.date ? new Date(s.date).toLocaleDateString('ru-RU') + ' ' + new Date(s.date).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : ''}</div>
-                                </div>
-                                <div class="flex gap-2 shrink-0 ml-3">
-                                    <button onclick="loadAssortment('${safeName}')" class="btn px-3 py-1 text-xs font-medium text-white bg-sky-600 rounded hover:bg-sky-700">Загрузить</button>
-                                    <button onclick="deleteSaved('${safeName}')" class="btn px-2 py-1 text-xs text-red-600 bg-red-50 rounded hover:bg-red-100 border border-red-200">Удалить</button>
-                                </div>
-                            </div>`;
-                        }).join('')}
-                    </div>
-                    <div class="border-t pt-3 flex gap-2">
-                        <button onclick="document.getElementById('loadModal').remove(); document.getElementById('importInput').click()" class="btn px-4 py-2 text-sm font-medium text-white bg-sky-600 rounded-lg hover:bg-sky-700">&#128194; Из Excel</button>
-                        <button onclick="document.getElementById('loadModal').remove()" class="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">Закрыть</button>
+                    <div class="flex gap-2">
+                        <button onclick="showAddProductModal()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700">${icons.plus} Добавить</button>
+                        <button onclick="saveToAssortmentList()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700">${icons.save} Сохранить</button>
+                        <button onclick="exportAssortment()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">${icons.export} Экспорт</button>
                     </div>
                 </div>
-            `;
-            document.body.appendChild(modal);
-        }
+            </div>`;
 
-        function loadAssortment(name) {
-            const saved = getSavedAssortments();
-            const record = saved.find(s => s.name === name);
-            if (!record) { alert('Не найден'); return; }
-            if (products.length > 0 && !confirm(`Загрузить "${name}"?\nТекущий ассортимент (${products.length} товаров) будет заменён.`)) return;
-            products = JSON.parse(JSON.stringify(record.data));
-            save(KEYS.PRODUCTS, products);
-            collapsedGroups = {};
-            const modal = document.getElementById('loadModal');
-            if (modal) modal.remove();
-            render();
-            alert(`Загружено: ${products.length} товаров из "${name}"`);
-        }
-
-        function deleteSaved(name) {
-            if (!confirm(`Удалить сохранение "${name}"?`)) return;
-            let saved = getSavedAssortments();
-            saved = saved.filter(s => s.name !== name);
-            save(KEYS.SAVED_ASSORTMENTS, saved);
-            const modal = document.getElementById('loadModal');
-            if (modal) modal.remove();
-            showLoadModal(); // Re-render modal
-        }
-
-        // ============================================================================
-        // BULK EDIT SUPPLIER
-        // ============================================================================
-        function bulkSetSupplier() {
-            const groups = [...new Set(products.map(p => p.group || '').filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ru'));
-            if (groups.length === 0) { alert('Нет групп в ассортименте'); return; }
-
-            const groupList = groups.map((g, i) => `${i + 1}. ${g} (${products.filter(p => p.group === g).length} шт.)`).join('\n');
-            const group = prompt(`Выберите группу (введите номер или точное название):\n\n${groupList}`);
-            if (!group) return;
-
-            // Try to match by number first
-            let selectedGroup = null;
-            const num = parseInt(group);
-            if (!isNaN(num) && num >= 1 && num <= groups.length) {
-                selectedGroup = groups[num - 1];
+            if (totalItems === 0) {
+                html += `<div class="text-center py-12">${icons.db}<p class="text-gray-500 mt-3">Нет товаров</p>
+                    <p class="text-gray-400 text-sm mt-1">Загрузите из файла или добавьте вручную</p>
+                    <div class="flex justify-center gap-3 mt-4">
+                        <button onclick="tab='import';render()" class="btn px-4 py-2 text-sm font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700">${icons.import} Импорт</button>
+                        <button onclick="showAddProductModal()" class="btn px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700">${icons.plus} Добавить</button>
+                    </div>
+                </div>`;
             } else {
-                // Exact match
-                const exact = groups.find(g => g === group.trim());
-                if (exact) {
-                    selectedGroup = exact;
+                const grouped = {};
+                products.forEach(p => {
+                    if (searchQuery) {
+                        const q = searchQuery.toLowerCase();
+                        if (!(p.nomenclature || '').toLowerCase().includes(q) &&
+                            !(p.code || '').toLowerCase().includes(q) &&
+                            !(p.group || '').toLowerCase().includes(q) &&
+                            !(p.supplier || '').toLowerCase().includes(q)) return;
+                    }
+                    if (filterGroup && p.group !== filterGroup) return;
+                    const gr = p.group || 'Без группы';
+                    if (!grouped[gr]) grouped[gr] = [];
+                    grouped[gr].push(p);
+                });
+
+                Object.keys(grouped).forEach(gr => {
+                    grouped[gr].sort((a, b) => (a.nomenclature || '').localeCompare(b.nomenclature || '', 'ru'));
+                });
+
+                const visibleCount = Object.values(grouped).reduce((sum, arr) => sum + arr.length, 0);
+
+                if (visibleCount === 0 && (searchQuery || filterGroup)) {
+                    html += `<div class="text-center py-8"><p class="text-gray-400">Ничего не найдено</p>
+                        <button onclick="searchQuery='';filterGroup='';renderAssortment()" class="btn mt-2 px-3 py-1.5 text-sm text-teal-600 hover:bg-teal-50 rounded-lg">Сбросить фильтры</button></div>`;
                 } else {
-                    // Case-insensitive match
-                    const lower = group.trim().toLowerCase();
-                    const ci = groups.find(g => g.toLowerCase() === lower);
-                    if (ci) selectedGroup = ci;
+                    html += `<div class="table-container">
+                        <table class="table-modern">
+                            <thead>
+                                <tr>
+                                    <th style="min-width:30px">⭐</th>
+                                    <th class="text-left" style="min-width:100px">Группа</th>
+                                    <th class="text-left" style="min-width:200px">Наименование</th>
+                                    <th style="min-width:60px">Код</th>
+                                    <th style="min-width:50px">Упак.</th>
+                                    <th style="min-width:120px">Поставщик</th>
+                                    <th style="min-width:65px">Цена</th>
+                                    <th style="min-width:75px">Цена на полке</th>
+                                    <th style="min-width:65px">Дом. полка</th>
+                                    <th style="min-width:55px">Квант</th>
+                                    <th style="min-width:60px">Объём</th>
+                                    <th style="min-width:40px">Действ.</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${Object.entries(grouped).sort((a, b) => a[0].localeCompare(b[0], 'ru')).map(([gr, items]) => `
+                                    <tr class="group-header cursor-pointer select-none" onclick="collapsedGroups['${esc(gr)}']=!collapsedGroups['${esc(gr)}'];renderAssortment()">
+                                        <td class="text-center px-1 py-1">
+                                            <span class="text-[10px]">${collapsedGroups[gr] ? '▶' : '▼'}</span>
+                                        </td>
+                                        <td colspan="11" class="text-left py-1 px-2">
+                                            <div class="flex items-center gap-2">
+                                                <span class="font-semibold">${esc(gr)}</span>
+                                                <span class="text-[10px] bg-teal-200 text-teal-800 px-1.5 py-0.5 rounded-full font-medium">${items.length}</span>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    ${collapsedGroups[gr] ? '' : items.map(p => `
+                                        <tr class="hover:bg-gray-50" id="row_${esc(p.code)}">
+                                            <td class="text-center px-1 py-0.5 text-[10px] text-gray-400">${items.indexOf(p) + 1}</td>
+                                            <td>
+                                                <input type="text" value="${esc(p.group || '')}" onchange="updateProduct('${esc(p.code)}', 'group', this.value)" class="cell-input">
+                                            </td>
+                                            <td class="text-left font-medium text-gray-700">
+                                                <input type="text" value="${esc(p.nomenclature || '')}" onchange="updateProduct('${esc(p.code)}', 'nomenclature', this.value)" class="cell-input">
+                                            </td>
+                                            <td class="font-mono text-[10px] text-gray-600">${esc(p.code)}</td>
+                                            <td>
+                                                <input type="text" value="${esc(p.packaging || 'ШТ')}" onchange="updateProduct('${esc(p.code)}', 'packaging', this.value.toUpperCase())" class="cell-input" style="text-align:center;width:50px">
+                                            </td>
+                                            <td>
+                                                <input type="text" value="${esc(p.supplier || '')}" onchange="updateProduct('${esc(p.code)}', 'supplier', this.value)" class="cell-input" list="supplierListDl">
+                                            </td>
+                                            <td>
+                                                <input type="number" step="0.01" value="${p.price || ''}" onchange="updateProduct('${esc(p.code)}', 'price', parseFloat(this.value)||0)" class="cell-input-num" style="width:65px">
+                                            </td>
+                                            <td>
+                                                <input type="number" step="0.01" value="${p.shelfPrice || ''}" onchange="updateProduct('${esc(p.code)}', 'shelfPrice', parseFloat(this.value)||0)" class="cell-input-num" style="width:70px">
+                                            </td>
+                                            <td>
+                                                <input type="number" step="0.01" value="${p.shelf || ''}" onchange="updateProduct('${esc(p.code)}', 'shelf', parseFloat(this.value)||0)" class="cell-input-num" style="width:65px">
+                                            </td>
+                                            <td>
+                                                <input type="number" value="${p.quant || 1}" onchange="updateProduct('${esc(p.code)}', 'quant', parseInt(this.value)||1)" class="cell-input-num" style="width:50px">
+                                            </td>
+                                            <td>
+                                                <input type="number" step="0.01" value="${p.volume || 0}" onchange="updateProduct('${esc(p.code)}', 'volume', parseFloat(this.value)||0)" class="cell-input-num" style="width:60px">
+                                            </td>
+                                            <td class="text-center">
+                                                <button onclick="deleteProduct('${esc(p.code)}')" class="p-1 text-red-500 hover:bg-red-100 rounded">${icons.trash}</button>
+                                            </td>
+                                        </tr>
+                                    `).join('')}
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>`;
+
+                    // Supplier datalist
+                    const knownSuppliers = [...new Set(products.map(p => p.supplier || '').filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ru'));
+                    html += `<datalist id="supplierListDl">${knownSuppliers.map(s => `<option value="${esc(s)}">`).join('')}</datalist>`;
                 }
             }
 
-            if (!selectedGroup) {
-                alert(`Группа "${group}" не найдена.`);
-                return;
-            }
-
-            const matching = products.filter(p => p.group === selectedGroup);
-            if (matching.length === 0) { alert(`В группе "${selectedGroup}" нет товаров`); return; }
-
-            // Show current supplier if all same
-            const currentSuppliers = [...new Set(matching.map(p => p.supplier || '').filter(Boolean))];
-            const defaultSupplier = currentSuppliers.length === 1 ? currentSuppliers[0] : '';
-            const supplier = prompt(`Поставщик для ${matching.length} товаров группы "${selectedGroup}":${defaultSupplier ? '\n(текущий: ' + defaultSupplier + ')' : ''}`, defaultSupplier);
-            if (supplier === null) return; // Cancelled
-            if (supplier.trim() === '' && !confirm(`Удалить поставщика у ${matching.length} товаров?`)) return;
-
-            const newSupplier = supplier.trim();
-            matching.forEach(p => p.supplier = newSupplier);
-            save(KEYS.PRODUCTS, products);
-            render();
-            alert(`Поставщик "${newSupplier || '(пусто)'}" назначен для ${matching.length} товаров группы "${selectedGroup}"`);
+            return html;
         }
 
         // ============================================================================
-        // KEYBOARD SHORTCUTS
+        // RENDER — LISTS TAB
         // ============================================================================
-        document.addEventListener('keydown', (e) => {
-            // Ctrl+F / Cmd+F — focus search
-            if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
-                const searchInput = document.getElementById('searchInput');
-                if (searchInput) {
-                    e.preventDefault();
-                    searchInput.focus();
-                    searchInput.select();
-                }
+        function renderListsTab() {
+            const saved = getSavedAssortments();
+
+            let html = `<div class="bg-white rounded-lg border border-gray-200 p-3 mb-3">
+                <div class="flex justify-between items-center">
+                    <div class="flex gap-2 items-center">
+                        <span class="bg-teal-100 text-teal-800 rounded-lg px-3 py-1.5">
+                            <span class="text-xs">Сохранённых списков: </span><strong>${saved.length}</strong>
+                        </span>
+                        ${currentLoadedAssortment ? `<span class="bg-teal-600 text-white rounded-lg px-2 py-1 text-xs font-medium">Текущий: ${esc(currentLoadedAssortment)}</span>` : ''}
+                    </div>
+                    <div class="flex gap-2">
+                        ${products.length > 0 ? `<button onclick="saveToAssortmentList()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700">${icons.plus} Сохранить текущий</button>` : ''}
+                        ${saved.length > 0 ? `<button onclick="exportAllSavedLists()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">${icons.export} Экспорт все</button>` : ''}
+                    </div>
+                </div>
+            </div>`;
+
+            if (saved.length === 0) {
+                html += `<div class="bg-white rounded-lg border border-gray-200 p-8 text-center">
+                    <div class="text-5xl mb-3 opacity-30">${icons.save}</div>
+                    <div class="text-gray-500 text-lg mb-1">Нет сохранённых списков</div>
+                    <div class="text-gray-400 text-sm">Сохраните текущий ассортимент или загрузите из файла</div>
+                </div>`;
+            } else {
+                html += `<div class="space-y-2">
+                    ${saved.sort((a, b) => new Date(b.date) - new Date(a.date)).map(s => {
+                        const isCurrent = currentLoadedAssortment === s.name;
+                        return `
+                        <div class="bg-white rounded-lg border ${isCurrent ? 'border-teal-400 ring-2 ring-teal-100' : 'border-gray-200'} p-4 hover:border-teal-300 transition-colors">
+                            <div class="flex justify-between items-center">
+                                <div>
+                                    <div class="flex items-center gap-2">
+                                        ${isCurrent ? '<span class="text-teal-600">★</span>' : ''}
+                                        <h3 class="font-semibold text-gray-800">${esc(s.name)}</h3>
+                                    </div>
+                                    <div class="text-xs text-gray-500 mt-1">
+                                        ${s.count || 0} товаров • ${new Date(s.date).toLocaleDateString('ru-RU')} ${new Date(s.date).toLocaleTimeString('ru-RU', {hour: '2-digit', minute: '2-digit'})}
+                                    </div>
+                                </div>
+                                <div class="flex gap-2">
+                                    <button onclick="loadAssortmentByName('${esc(s.name)}')" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium ${isCurrent ? 'text-teal-700 bg-teal-50 border border-teal-200' : 'text-gray-600 bg-gray-50 border border-gray-200 hover:bg-gray-100'} rounded-lg">${icons.download} Загрузить</button>
+                                    <button onclick="deleteAssortmentByName('${esc(s.name)}')" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-red-600 bg-red-50 border border-red-200 hover:bg-red-100 rounded-lg">${icons.trash} Удалить</button>
+                                </div>
+                            </div>
+                        </div>`;
+                    }).join('')}
+                </div>`;
             }
-            // Escape — close any open modal
-            if (e.key === 'Escape') {
-                const modals = document.querySelectorAll('.modal-overlay');
-                modals.forEach(m => m.remove());
-            }
-        });
+
+            return html;
+        }
 
         // ============================================================================
-        // START
+        // RENDER — IMPORT TAB
         // ============================================================================
-        init();
+        function renderImportTab() {
+            if (importPreviewData) {
+                return renderImportPreview();
+            }
+
+            let html = `<div class="bg-white rounded-lg border border-gray-200 p-3 mb-3">
+                <h2 class="text-lg font-semibold text-gray-800 mb-1">${icons.import} Импорт из Excel</h2>
+                <p class="text-sm text-gray-500">Загрузите файл Excel с ассортиментом. Поддерживаются форматы с заголовками колонок и индексные.</p>
+            </div>
+            <div class="bg-white rounded-lg border border-gray-200 p-6">
+                <div class="drop-zone" id="dropZone" onclick="document.getElementById('importFileInput').click()"
+                     ondragover="event.preventDefault();this.classList.add('drag-over')"
+                     ondragleave="this.classList.remove('drag-over')"
+                     ondrop="event.preventDefault();this.classList.remove('drag-over');handleDrop(event)">
+                    <div class="text-5xl mb-3 opacity-30">${icons.upload}</div>
+                    <div class="text-gray-600 font-medium mb-1">Перетащите файл сюда или нажмите для выбора</div>
+                    <div class="text-gray-400 text-sm">.xlsx, .xls</div>
+                    <input type="file" id="importFileInput" accept=".xlsx,.xls" onchange="importFromFile(this)" class="hidden">
+                </div>
+
+                <div class="mt-6 bg-gray-50 rounded-lg p-4">
+                    <h3 class="font-medium text-gray-700 mb-2">Ожидаемый формат колонок:</h3>
+                    <table class="table-modern">
+                        <thead>
+                            <tr>
+                                <th>Группа</th><th>Наименование</th><th>Код</th><th>Упак.</th><th>Поставщик</th><th>Цена</th><th>Цена на полке</th><th>Дом. полка</th><th>Квант</th><th>Объём</th>
+                            </tr>
+                        </thead>
+                    </table>
+                    <p class="text-xs text-gray-400 mt-2">Заголовки могут быть в строке 0, 1 или 2. Данные начинаются после заголовка.</p>
+                </div>
+            </div>`;
+
+            return html;
+        }
+
+        function handleDrop(e) {
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                const fakeInput = { files: files, value: '' };
+                importFromFile(fakeInput);
+            }
+        }
+
+        function renderImportPreview() {
+            if (!importPreviewData) return renderImportTab();
+            const items = importPreviewData;
+            const previewItems = items.slice(0, 20);
+
+            let html = `<div class="bg-white rounded-lg border border-gray-200 p-3 mb-3">
+                <div class="flex justify-between items-center">
+                    <div class="flex gap-2 items-center">
+                        <span class="bg-teal-100 text-teal-800 rounded-lg px-3 py-1.5">
+                            <span class="text-xs">Найдено: </span><strong>${items.length}</strong> товаров
+                        </span>
+                    </div>
+                    <div class="flex gap-2">
+                        <label class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50">
+                            <input type="radio" name="importMode" value="replace" ${importMode === 'replace' ? 'checked' : ''} onchange="importMode='replace'">
+                            Заменить текущий
+                        </label>
+                        <label class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50">
+                            <input type="radio" name="importMode" value="merge" ${importMode === 'merge' ? 'checked' : ''} onchange="importMode='merge'">
+                            Слить с текущим
+                        </label>
+                    </div>
+                </div>
+            </div>`;
+
+            html += `<div class="bg-white rounded-lg border border-gray-200 overflow-hidden mb-3">
+                <div class="table-container" style="max-height:50vh">
+                    <table class="table-modern">
+                        <thead>
+                            <tr>
+                                <th>#</th><th>Группа</th><th>Наименование</th><th>Код</th><th>Упак.</th><th>Поставщик</th><th>Цена</th><th>Цена на полке</th><th>Дом. полка</th><th>Квант</th><th>Объём</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${previewItems.map((p, i) => `
+                                <tr>
+                                    <td class="text-[10px] text-gray-400">${i + 1}</td>
+                                    <td class="text-xs">${esc(p.group || '')}</td>
+                                    <td class="text-xs font-medium text-left">${esc(p.nomenclature || '')}</td>
+                                    <td class="font-mono text-[10px]">${esc(p.code)}</td>
+                                    <td class="text-xs">${esc(p.packaging || 'ШТ')}</td>
+                                    <td class="text-xs">${esc(p.supplier || '')}</td>
+                                    <td class="text-xs">${p.price || 0}</td>
+                                    <td class="text-xs">${p.shelfPrice || 0}</td>
+                                    <td class="text-xs">${p.shelf || 0}</td>
+                                    <td class="text-xs">${p.quant || 1}</td>
+                                    <td class="text-xs">${p.volume || 0}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+                ${items.length > 20 ? `<div class="px-4 py-2 bg-gray-50 text-xs text-gray-500">Показано 20 из ${items.length} товаров</div>` : ''}
+            </div>`;
+
+            html += `<div class="flex gap-2 justify-center">
+                <button onclick="confirmImport()" class="btn inline-flex items-center gap-1.5 px-6 py-2 text-sm font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700">${icons.check} Подтвердить импорт (${items.length})</button>
+                <button onclick="cancelImport()" class="btn px-6 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">Отмена</button>
+            </div>`;
+
+            return html;
+        }
+
+        // ============================================================================
+        // INIT
+        // ============================================================================
+        function init() {
+            // Load products from shared storage (try matrix-calc format first, then universal)
+            const arrData = load(PRODUCTS_KEY, null);
+            const objData = load(UNIV_PRODUCTS_KEY, null);
+
+            if (Array.isArray(arrData) && arrData.length > 0) {
+                products = arrData;
+            } else if (objData && typeof objData === 'object' && Object.keys(objData).length > 0) {
+                // Convert object to array
+                products = Object.values(objData).map(p => ({
+                    code: p.code,
+                    nomenclature: p.nomenclature || p.name || '',
+                    group: p.group || '',
+                    packaging: p.packaging || 'ШТ',
+                    supplier: p.supplier || '',
+                    price: p.price || 0,
+                    inPrice: p.inPrice || p.price || 0,
+                    shelfPrice: p.shelfPrice || 0,
+                    shelf: p.shelf || 0,
+                    quant: p.quant || 1,
+                    volume: p.volume || 0,
+                    markup: p.markup || defaultMarkup
+                }));
+            } else {
+                products = [];
+            }
+
+            // Listen for changes from other tabs via SharedData
+            if (window.SharedData) {
+                SharedData.onChange(({source}) => {
+                    if (source !== 'assortment') {
+                        const newProducts = SharedData.getProducts();
+                        if (newProducts.length > 0) {
+                            products = newProducts;
+                            render();
+                        }
+                    }
+                });
+            }
+
+            // Also listen for direct localStorage events as fallback
+            window.addEventListener('storage', (e) => {
+                if (e.key === PRODUCTS_KEY || e.key === UNIV_PRODUCTS_KEY) {
+                    const arrData = load(PRODUCTS_KEY, null);
+                    const objData = load(UNIV_PRODUCTS_KEY, null);
+                    if (Array.isArray(arrData) && arrData.length > 0) {
+                        products = arrData;
+                    } else if (objData && typeof objData === 'object' && Object.keys(objData).length > 0) {
+                        products = Object.values(objData).map(p => ({
+                            code: p.code, nomenclature: p.nomenclature || p.name || '',
+                            group: p.group || '', packaging: p.packaging || 'ШТ',
+                            supplier: p.supplier || '', price: p.price || 0,
+                            inPrice: p.inPrice || p.price || 0, shelfPrice: p.shelfPrice || 0,
+                            shelf: p.shelf || 0, quant: p.quant || 1, volume: p.volume || 0,
+                            markup: p.markup || defaultMarkup
+                        }));
+                    }
+                    render();
+                }
+            });
+
+            render();
+        }
+
+        // Start after cloud storage is ready
+        if (window.CloudStorage && CloudStorage.waitForReady) {
+            CloudStorage.waitForReady().then(init);
+        } else {
+            document.addEventListener('DOMContentLoaded', init);
+        }
     </script>
 </body>
 </html>

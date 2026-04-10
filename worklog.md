@@ -221,3 +221,48 @@ Stage Summary:
 - Ассортимент единый для всех инструментов через shared storage
 - shared-utils.js обновлён для парсинга новой колонки из Excel
 
+---
+Task ID: 1
+Agent: main
+Task: Create assortment.html v1.0 standalone assortment management tool
+
+Work Log:
+- Created /home/z/my-project/upload/assortment.html v1.0
+- 3 tabs: Ассортимент, Списки, Импорт
+- Full inline editing of all product fields (group, nomenclature, packaging, supplier, price, shelfPrice, shelf, quant, volume)
+- Syncs to shared_products_v1 (array for matrix-calc), univ_products_v1 (object for universal), and SharedData
+- Debounce search (300ms) with cursor restoration
+- Import/Export Excel support (column-name and index-based parsing)
+- Saved lists management with load/delete/save/export-all
+- Import tab with drag-and-drop, preview table, replace/merge modes
+- Teal color scheme to differentiate from other files
+- Same CSS classes, icons, and layout patterns as universal.html
+- Waits for CloudStorage.ready before init
+
+Stage Summary:
+- assortment.html v1.0 created and saved (983 lines)
+- Syncs bidirectionally with all other files via shared localStorage
+---
+Task ID: 1
+Agent: main
+Task: Create assortment.html v1.0 standalone assortment management tool
+
+Work Log:
+- Created /home/z/my-project/upload/assortment.html v1.0 (983 lines)
+- 3 tabs: Ассортимент (main table), Списки (saved lists), Импорт (Excel import with preview)
+- Full inline editing of all product fields (group, name, supplier, price, shelfPrice, shelf, quant, volume, packaging)
+- syncAll() writes to: shared_products_v1 (array for matrix-calc), univ_products_v1 (object for universal), SharedData for cross-tab notification
+- syncToSavedAssortment() auto-updates loaded saved list on any change
+- Debounce search (300ms) with cursor restoration
+- Import from Excel: dual parsing (column-name + index-based fallback via SharedUtils.parseAssortment)
+- Import preview table (up to 20 rows) before confirming
+- Replace vs Merge import modes
+- Export to Excel with styled sheets (10 columns)
+- Export all saved lists as backup
+- Added assortment.html to index.html main navigation
+- Color scheme: teal/emerald (#0d9488)
+
+Stage Summary:
+- assortment.html v1.0 created at /home/z/my-project/upload/assortment.html
+- index.html updated with new "Ассортимент" card in navigation
+- Full bidirectional sync with matrix-calc.html and universal.html via shared localStorage
