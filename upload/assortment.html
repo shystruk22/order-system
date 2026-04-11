@@ -76,7 +76,7 @@
         let collapsedGroups = {};
         let _searchTimeout = null;
         let importPreviewData = null;  // For import tab preview
-        let importMode = 'replace';    // 'replace' or 'merge'
+        let importMode = 'new';        // 'new', 'replace', 'merge'
         let supplierList = JSON.parse(localStorage.getItem('shared_supplier_list_v1') || '[]');
         let supplierMatrix = JSON.parse(localStorage.getItem('shared_supplier_matrix_v1') || '{}');
 
@@ -473,15 +473,20 @@
             if (!importPreviewData || importPreviewData.length === 0) return;
             const items = importPreviewData;
 
-            if (importMode === 'replace') {
+            if (importMode === 'new') {
+                // Новый: создать полностью новый ассортимент с нуля
+                products = items;
+                currentLoadedAssortment = null;
+            } else if (importMode === 'replace') {
+                // Заменить: полностью заменить текущий ассортимент на загруженный
                 if (products.length > 0) {
                     if (!confirm(`Заменить текущий ассортимент (${products.length} товаров) на ${items.length} товаров из файла?`)) return;
                 }
                 products = items;
                 currentLoadedAssortment = null;
             } else {
-                // Merge: add new, update existing
-                let added = 0, updated = 0, skipped = 0;
+                // Слить: добавить новые, обновить существующие
+                let added = 0, updated = 0;
                 items.forEach(item => {
                     const existing = products.find(p => p.code === item.code);
                     if (existing) {
@@ -1156,13 +1161,17 @@
                         </span>
                     </div>
                     <div class="flex gap-2">
-                        <label class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50">
-                            <input type="radio" name="importMode" value="replace" ${importMode === 'replace' ? 'checked' : ''} onchange="importMode='replace'">
-                            Заменить текущий
+                        <label class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50 ${importMode === 'new' ? 'border-teal-500 bg-teal-50' : ''}">
+                            <input type="radio" name="importMode" value="new" ${importMode === 'new' ? 'checked' : ''} onchange="importMode='new'">
+                            Новый
                         </label>
-                        <label class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50">
+                        <label class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50 ${importMode === 'replace' ? 'border-orange-500 bg-orange-50' : ''}">
+                            <input type="radio" name="importMode" value="replace" ${importMode === 'replace' ? 'checked' : ''} onchange="importMode='replace'">
+                            Заменить
+                        </label>
+                        <label class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50 ${importMode === 'merge' ? 'border-blue-500 bg-blue-50' : ''}">
                             <input type="radio" name="importMode" value="merge" ${importMode === 'merge' ? 'checked' : ''} onchange="importMode='merge'">
-                            Слить с текущим
+                            Слить
                         </label>
                     </div>
                 </div>
