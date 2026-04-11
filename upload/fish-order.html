@@ -633,16 +633,89 @@
             if (!sched[store]) sched[store] = [false,false,false,false,false,false,false];
             sched[store][dayIndex] = !sched[store][dayIndex];
             saveSchedule();
+            const isWeekend = dayIndex >= 5;
             const cb = document.getElementById(`sched_${CSS.escape(supplier)}_${CSS.escape(store)}_${dayIndex}`);
             if (cb) {
                 const isChecked = sched[store][dayIndex];
                 cb.className = isChecked
-                    ? 'w-7 h-7 rounded bg-emerald-500 text-white border-0 cursor-pointer flex items-center justify-center transition-colors'
-                    : 'w-7 h-7 rounded bg-white border-2 border-gray-300 cursor-pointer flex items-center justify-center transition-colors';
+                    ? 'w-8 h-6 rounded bg-emerald-500 text-white border-0 cursor-pointer flex items-center justify-center transition-colors'
+                    : 'w-8 h-6 rounded bg-white border-2 border-gray-300 cursor-pointer flex items-center justify-center transition-colors' + (isWeekend ? ' hover:border-red-300' : '');
                 cb.innerHTML = isChecked
-                    ? '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>'
+                    ? '<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>'
                     : '';
             }
+            // Мгновенное обновление Итого
+            const totalCell = document.getElementById(`total_${CSS.escape(supplier)}_${CSS.escape(store)}`);
+            if (totalCell) {
+                const count = sched[store].filter(Boolean).length;
+                totalCell.textContent = count > 0 ? count + ' дн.' : '—';
+            }
+            resetSavedOrders();
+        }
+
+        function exportScheduleExcel() {
+            const supplierNames = Object.keys(deliverySchedule);
+            if (supplierNames.length === 0) { alert('Нет поставщиков'); return; }
+
+            const wb = XLSX.utils.book_new();
+            const headerStyle = { font: { bold: true, color: { rgb: "FFFFFF" }, sz: 11 }, fill: { fgColor: { rgb: "0C4A6E" } }, alignment: { horizontal: "center", vertical: "center", wrapText: true }, border: { bottom: { style: "thin", color: { rgb: "999999" } }, top: { style: "thin", color: { rgb: "999999" } }, left: { style: "thin", color: { rgb: "999999" } }, right: { style: "thin", color: { rgb: "999999" } } } };
+            const cellCenter = { alignment: { horizontal: "center", vertical: "center" }, border: { bottom: { style: "thin", color: { rgb: "CCCCCC" } }, top: { style: "thin", color: { rgb: "CCCCCC" } }, left: { style: "thin", color: { rgb: "CCCCCC" } }, right: { style: "thin", color: { rgb: "CCCCCC" } } } };
+            const cellLeft = { alignment: { horizontal: "left", vertical: "center" }, border: { bottom: { style: "thin", color: { rgb: "CCCCCC" } }, top: { style: "thin", color: { rgb: "CCCCCC" } }, left: { style: "thin", color: { rgb: "CCCCCC" } }, right: { style: "thin", color: { rgb: "CCCCCC" } } } };
+            const weekendHeaderStyle = { font: { bold: true, color: { rgb: "FFFFFF" }, sz: 11 }, fill: { fgColor: { rgb: "DC2626" } }, alignment: { horizontal: "center", vertical: "center" }, border: { bottom: { style: "thin", color: { rgb: "999999" } }, top: { style: "thin", color: { rgb: "999999" } }, left: { style: "thin", color: { rgb: "999999" } }, right: { style: "thin", color: { rgb: "999999" } } } };
+            const checkedStyle = { alignment: { horizontal: "center", vertical: "center" }, fill: { fgColor: { rgb: "D1FAE5" } }, font: { bold: true, color: { rgb: "065F46" }, sz: 12 }, border: { bottom: { style: "thin", color: { rgb: "CCCCCC" } }, top: { style: "thin", color: { rgb: "CCCCCC" } }, left: { style: "thin", color: { rgb: "CCCCCC" } }, right: { style: "thin", color: { rgb: "CCCCCC" } } } };
+            const weekendCellStyle = { alignment: { horizontal: "center", vertical: "center" }, fill: { fgColor: { rgb: "FEF2F2" } }, border: { bottom: { style: "thin", color: { rgb: "CCCCCC" } }, top: { style: "thin", color: { rgb: "CCCCCC" } }, left: { style: "thin", color: { rgb: "CCCCCC" } }, right: { style: "thin", color: { rgb: "CCCCCC" } } } };
+            const frozenHeaderStyle = { font: { bold: true, color: { rgb: "9CA3AF" }, sz: 11 }, fill: { fgColor: { rgb: "F3F4F6" } }, alignment: { horizontal: "center", vertical: "center", wrapText: true }, border: { bottom: { style: "thin", color: { rgb: "999999" } }, top: { style: "thin", color: { rgb: "999999" } }, left: { style: "thin", color: { rgb: "999999" } }, right: { style: "thin", color: { rgb: "999999" } } } };
+
+            supplierNames.forEach(supplier => {
+                const data = deliverySchedule[supplier];
+                if (!data) return;
+                const schedule = data.schedule || {};
+                const frozen = !!data.frozen;
+
+                const rows = [['Магазин', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс', 'Итого']];
+                stores.forEach(s => {
+                    const days = schedule[s.tt] || [false,false,false,false,false,false,false];
+                    const count = days.filter(Boolean).length;
+                    rows.push([s.tt, days[0] ? '✓' : '', days[1] ? '✓' : '', days[2] ? '✓' : '', days[3] ? '✓' : '', days[4] ? '✓' : '', days[5] ? '✓' : '', days[6] ? '✓' : '', count > 0 ? count + ' дн.' : '']);
+                });
+
+                const ws = XLSX.utils.aoa_to_sheet(rows);
+                ws['!cols'] = [{ wch: 30 }, { wch: 5 }, { wch: 5 }, { wch: 5 }, { wch: 5 }, { wch: 5 }, { wch: 5 }, { wch: 5 }, { wch: 10 }];
+
+                // Стили заголовков
+                const hdrStyle = frozen ? frozenHeaderStyle : headerStyle;
+                for (let c = 0; c < 9; c++) {
+                    const addr = XLSX.utils.encode_cell({ r: 0, c: c });
+                    if (ws[addr]) ws[addr].s = (c === 6 || c === 7) ? weekendHeaderStyle : hdrStyle;
+                }
+
+                // Стили ячеек
+                stores.forEach((s, ri) => {
+                    const row = ri + 1;
+                    const sched = schedule[s.tt] || [false,false,false,false,false,false,false];
+                    for (let c = 0; c < 9; c++) {
+                        const addr = XLSX.utils.encode_cell({ r: row, c: c });
+                        if (!ws[addr]) continue;
+                        if (c === 0) {
+                            ws[addr].s = cellLeft;
+                        } else if (c === 8) {
+                            // Итого
+                            ws[addr].s = { ...cellCenter, font: { bold: true, color: { rgb: "6B7280" }, sz: 10 } };
+                        } else if (c === 6 || c === 7) {
+                            // Выходные
+                            ws[addr].s = sched[c] ? { ...checkedStyle, fill: { fgColor: { rgb: "FECACA" } }, font: { bold: true, color: { rgb: "991B1B" }, sz: 12 } } : weekendCellStyle;
+                        } else {
+                            ws[addr].s = sched[c] ? checkedStyle : cellCenter;
+                        }
+                    }
+                });
+
+                // Обрезать имя для названия листа (макс 31 символ)
+                let sheetName = supplier.substring(0, 31);
+                XLSX.utils.book_append_sheet(wb, ws, sheetName);
+            });
+
+            XLSX.writeFile(wb, 'график_доставок.xlsx');
         }
 
         function renderSchedule() {
@@ -660,8 +733,8 @@
 
             let html = '<div class="space-y-3">';
 
-            // Шапка с кнопкой добавления
-            html += '<div class="flex items-center justify-between"><div class="flex items-center gap-2"><span class="text-sm font-medium text-gray-700">Поставщики</span><span class="text-xs text-gray-400">' + supplierNames.length + ' поставщик(ов)</span></div><div class="flex items-center gap-2"><span id="scheduleSaveIndicator" class="text-xs text-gray-300 transition-opacity" style="opacity:0"></span><button onclick="addSupplier()" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-sky-600 rounded-lg hover:bg-sky-700 transition-colors cursor-pointer">' + icons.plus + ' Добавить</button></div></div>';
+            // Шапка с кнопками
+            html += '<div class="flex items-center justify-between"><div class="flex items-center gap-2"><span class="text-sm font-medium text-gray-700">Поставщики</span><span class="text-xs text-gray-400">' + supplierNames.length + ' поставщик(ов)</span></div><div class="flex items-center gap-2"><span id="scheduleSaveIndicator" class="text-xs text-gray-300 transition-opacity" style="opacity:0"></span><button onclick="exportScheduleExcel()" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 rounded-lg hover:bg-emerald-100 transition-colors cursor-pointer">' + icons.download + ' Excel</button><button onclick="addSupplier()" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-sky-600 rounded-lg hover:bg-sky-700 transition-colors cursor-pointer">' + icons.plus + ' Добавить</button></div></div>';
 
             if (supplierNames.length === 0) {
                 html += '<div class="bg-white rounded-lg border border-gray-200 p-6 text-center"><p class="text-gray-400 text-sm">Нажмите "Добавить" чтобы создать поставщика</p></div>';
@@ -706,27 +779,31 @@
                 html += '<button onclick="deleteSupplier(\'' + esc(supplier).replace(/'/g, "\\'") + '\')" class="inline-flex items-center gap-1 px-2 py-1 text-xs text-red-600 bg-red-50 rounded-md hover:bg-red-100 transition-colors cursor-pointer">' + icons.trash + '</button>';
                 html += '</div></div>';
 
-                html += '<div class="p-3 ' + frozenClass + '">';
+                html += '<div class="p-2 ' + frozenClass + '">';
                 // Таблица графика доставки
-                html += '<div class="overflow-x-auto border border-gray-200 rounded-lg"><table class="w-full border-collapse text-center"><thead><tr class="bg-gray-50"><th class="text-left px-3 py-2 text-xs font-semibold text-gray-500 border-b border-gray-200 sticky left-0 bg-gray-50 z-10">Магазин</th>';
-                DAY_NAMES.forEach(d => { html += '<th class="px-1 py-2 text-xs font-semibold text-gray-500 border-b border-gray-200 w-10">' + d + '</th>'; });
-                html += '<th class="px-2 py-2 text-xs font-semibold text-gray-400 border-b border-gray-200">Итого</th></tr></thead><tbody>';
+                html += '<div class="overflow-x-auto border border-gray-200 rounded-lg" style="max-height:45vh"><table class="w-full border-collapse text-center"><thead><tr class="bg-gray-50"><th class="text-left px-2 py-1.5 text-xs font-semibold text-gray-500 border-b border-gray-200 sticky left-0 bg-gray-50 z-10">Магазин</th>';
+                DAY_NAMES.forEach((d, di) => {
+                    const isWeekend = di >= 5;
+                    html += '<th class="px-1 py-1.5 text-xs font-semibold border-b border-gray-200 w-11 ' + (isWeekend ? 'text-red-500 bg-red-50' : 'text-gray-500') + '">' + d + '</th>';
+                });
+                html += '<th class="px-2 py-1.5 text-xs font-semibold text-gray-400 border-b border-gray-200 w-12">Итого</th></tr></thead><tbody>';
                 stores.forEach(s => {
                     const days = schedule[s.tt] || [false,false,false,false,false,false,false];
                     const activeCount = days.filter(Boolean).length;
-                    html += '<tr class="hover:bg-gray-50"><td class="text-left px-3 py-2 font-medium text-gray-700 text-xs whitespace-nowrap max-w-[200px] truncate" title="' + esc(s.tt).replace(/"/g, '&quot;') + '">' + esc(s.tt) + '</td>';
+                    html += '<tr class="hover:bg-gray-50"><td class="text-left px-2 py-1 font-medium text-gray-700 text-xs whitespace-nowrap max-w-[200px] truncate" title="' + esc(s.tt).replace(/"/g, '&quot;') + '">' + esc(s.tt) + '</td>';
                     days.forEach((checked, di) => {
+                        const isWeekend = di >= 5;
                         const cbClass = checked
-                            ? 'w-7 h-7 rounded bg-emerald-500 text-white border-0 cursor-pointer flex items-center justify-center transition-colors'
-                            : 'w-7 h-7 rounded bg-white border-2 border-gray-300 cursor-pointer flex items-center justify-center transition-colors';
+                            ? 'w-8 h-6 rounded bg-emerald-500 text-white border-0 cursor-pointer flex items-center justify-center transition-colors'
+                            : 'w-8 h-6 rounded bg-white border-2 border-gray-300 cursor-pointer flex items-center justify-center transition-colors' + (isWeekend ? ' hover:border-red-300' : '');
                         const inner = checked
-                            ? '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>'
+                            ? '<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>'
                             : '';
                         const supEsc = esc(supplier).replace(/'/g, "\\'");
                         const storeEsc = esc(s.tt).replace(/'/g, "\\'");
-                        html += '<td class="px-1 py-1"><div class="flex justify-center"><button id="sched_' + CSS.escape(supplier) + '_' + CSS.escape(s.tt) + '_' + di + '" class="' + cbClass + '" onclick="toggleDeliveryDay(\'' + supEsc + '\',\'' + storeEsc + '\',' + di + ')">' + inner + '</button></div></td>';
+                        html += '<td class="px-0.5 py-0.5' + (isWeekend ? ' bg-red-50/30' : '') + '"><div class="flex justify-center"><button id="sched_' + CSS.escape(supplier) + '_' + CSS.escape(s.tt) + '_' + di + '" class="' + cbClass + '" onclick="toggleDeliveryDay(\'' + supEsc + '\',\'' + storeEsc + '\',' + di + ')">' + inner + '</button></div></td>';
                     });
-                    html += '<td class="px-2 py-1 text-xs text-gray-400 font-medium">' + (activeCount > 0 ? activeCount + ' дн.' : '—') + '</td></tr>';
+                    html += '<td class="px-2 py-0.5 text-xs text-gray-400 font-medium" id="total_' + CSS.escape(supplier) + '_' + CSS.escape(s.tt) + '">' + (activeCount > 0 ? activeCount + ' дн.' : '—') + '</td></tr>';
                 });
                 html += '</tbody></table></div></div></div>';
             }
