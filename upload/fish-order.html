@@ -83,7 +83,7 @@
         let orderEdits = {};          // Ручные правки заказа: {"tt_code": value}
 
         // Новые глобальные переменные для fish-order
-        let deliverySchedule = {}; // {"supplierName": {schedule: {"storeName": [mon,...,sun]}, assortmentName: "", frozen: false}}
+        let deliverySchedule = {}; // {"supplierName": {schedule: {"storeName": [mon,...,sun]}, frozen: false}}
         let supplierAssortment = {}; // {"code": ["supplier1", "supplier2"]} — какие поставщики возят товар
         let inTransitOrders = [];  // [{id, createdAt, supplier, store, expectedDate, items: [{code,name,qty,sum}], status}]
         let weekendSales = {};     // {"tt_code": totalWeekendQty}
@@ -502,7 +502,7 @@
             Object.entries(deliverySchedule).forEach(([name, data]) => {
                 if (data && typeof data === 'object' && !data.schedule) {
                     // Старый формат: {"storeName": [bool,...]}
-                    deliverySchedule[name] = { schedule: data, assortmentName: '', frozen: false };
+                    deliverySchedule[name] = { schedule: data, frozen: false };
                     migrated = true;
                 }
             });
@@ -516,10 +516,6 @@
         function getSupplierFrozen(supplier) {
             const s = deliverySchedule[supplier];
             return s ? !!s.frozen : false;
-        }
-        function getSupplierAssortmentName(supplier) {
-            const s = deliverySchedule[supplier];
-            return s ? (s.assortmentName || '') : '';
         }
 
         function saveSupplierData() {
@@ -543,11 +539,18 @@
             if (!name || !name.trim()) return;
             name.trim();
             if (deliverySchedule[name]) { alert('Поставщик уже существует'); return; }
-            deliverySchedule[name] = { schedule: {}, assortmentName: '', frozen: false };
+            deliverySchedule[name] = { schedule: {}, frozen: false };
             stores.forEach(s => {
                 deliverySchedule[name].schedule[s.tt] = [false, false, false, false, false, false, false];
             });
-            saveSchedule();
+            // Автоматически проставить все товары из текущего ассортимента
+            Object.keys(matrix).forEach(code => {
+                if (!supplierAssortment[code]) supplierAssortment[code] = [];
+                if (!supplierAssortment[code].includes(name)) {
+                    supplierAssortment[code].push(name);
+                }
+            });
+            saveSupplierData();
             render();
         }
 
@@ -584,27 +587,6 @@
             deliverySchedule[name].frozen = !deliverySchedule[name].frozen;
             saveSupplierData();
             resetSavedOrders();
-            render();
-        }
-
-        function setSupplierAssortment(supplier, assortmentName) {
-            if (!deliverySchedule[supplier]) return;
-            deliverySchedule[supplier].assortmentName = assortmentName;
-            // Если выбран ассортимент — загрузить товары в supplierAssortment
-            if (assortmentName) {
-                const saved = getSavedAssortments();
-                const record = saved.find(s => s.name === assortmentName);
-                if (record && record.data) {
-                    record.data.forEach(p => {
-                        if (!p.code) return;
-                        if (!supplierAssortment[p.code]) supplierAssortment[p.code] = [];
-                        if (!supplierAssortment[p.code].includes(supplier)) {
-                            supplierAssortment[p.code].push(supplier);
-                        }
-                    });
-                }
-            }
-            saveSupplierData();
             render();
         }
 
@@ -650,7 +632,6 @@
         function renderSchedule() {
             const supplierNames = Object.keys(deliverySchedule);
             const hasStores = stores && stores.length > 0;
-            const savedAssortments = getSavedAssortments();
 
             if (!hasStores) {
                 return '<div class="bg-white rounded-lg border border-gray-200 p-6"><div class="text-center"><div class="p-3 bg-amber-50 rounded-lg text-amber-500 inline-flex mb-3">' + icons.calendar + '</div><p class="text-gray-500 text-sm">Сначала добавьте магазины на главной странице</p></div></div>';
@@ -666,7 +647,6 @@
             // Карточки поставщиков
             supplierNames.forEach(supplier => {
                 const frozen = getSupplierFrozen(supplier);
-                const currentAssortment = getSupplierAssortmentName(supplier);
                 const schedule = getSupplierSchedule(supplier);
                 const frozenClass = frozen ? 'opacity-60 pointer-events-none' : '';
 
@@ -683,16 +663,6 @@
                 html += '</div></div>';
 
                 html += '<div class="p-3 ' + frozenClass + '">';
-                // Выбор ассортимента
-                html += '<div class="flex items-center gap-2 mb-3">';
-                html += '<label class="text-xs text-gray-500 font-medium shrink-0">Ассортимент:</label>';
-                html += '<select onchange="setSupplierAssortment(\'' + esc(supplier).replace(/'/g, "\\'") + '\', this.value)" class="input bg-white text-xs flex-1">';
-                html += '<option value="">-- Не выбран --</option>';
-                savedAssortments.forEach(a => {
-                    html += '<option value="' + esc(a.name).replace(/"/g, '&quot;') + '"' + (currentAssortment === a.name ? ' selected' : '') + '>' + esc(a.name) + ' (' + (a.count || 0) + ' тов.)</option>';
-                });
-                html += '</select></div>';
-
                 // График
                 html += '<div class="overflow-x-auto border border-gray-200 rounded-lg"><table class="w-full border-collapse text-center"><thead><tr class="bg-gray-50"><th class="text-left px-3 py-2 text-xs font-semibold text-gray-500 border-b border-gray-200 sticky left-0 bg-gray-50 z-10">Магазин</th>';
                 DAY_NAMES.forEach(d => { html += '<th class="px-1 py-2 text-xs font-semibold text-gray-500 border-b border-gray-200 w-10">' + d + '</th>'; });
