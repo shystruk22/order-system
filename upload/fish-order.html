@@ -85,6 +85,7 @@
         // Новые глобальные переменные для fish-order
         let deliverySchedule = {}; // {"supplierName": {schedule: {"storeName": [mon,...,sun]}, frozen: false}}
         let supplierAssortment = {}; // {"code": ["supplier1", "supplier2"]} — какие поставщики возят товар
+        let selectedSupplier = null; // Активный (выбранный) поставщик для табов
         let inTransitOrders = [];  // [{id, createdAt, supplier, store, expectedDate, items: [{code,name,qty,sum}], status}]
         let weekendSales = {};     // {"tt_code": totalWeekendQty}
         let weekdaySales = {};     // {"tt_code": totalWeekdayQty}
@@ -537,20 +538,29 @@
         function addSupplier() {
             const name = prompt('Введите название поставщика:');
             if (!name || !name.trim()) return;
-            name.trim();
-            if (deliverySchedule[name]) { alert('Поставщик уже существует'); return; }
-            deliverySchedule[name] = { schedule: {}, frozen: false };
+            const trimmed = name.trim();
+            if (deliverySchedule[trimmed]) { alert('Поставщик уже существует'); return; }
+            deliverySchedule[trimmed] = { schedule: {}, frozen: false };
             stores.forEach(s => {
-                deliverySchedule[name].schedule[s.tt] = [false, false, false, false, false, false, false];
+                deliverySchedule[trimmed].schedule[s.tt] = [false, false, false, false, false, false, false];
             });
             // Автоматически проставить все товары из текущего ассортимента
             Object.keys(matrix).forEach(code => {
                 if (!supplierAssortment[code]) supplierAssortment[code] = [];
-                if (!supplierAssortment[code].includes(name)) {
-                    supplierAssortment[code].push(name);
+                if (!supplierAssortment[code].includes(trimmed)) {
+                    supplierAssortment[code].push(trimmed);
                 }
             });
+            // Авто-выбрать только если это первый поставщик
+            if (Object.keys(deliverySchedule).length === 1) {
+                selectedSupplier = trimmed;
+            }
             saveSupplierData();
+            render();
+        }
+
+        function selectSupplier(name) {
+            selectedSupplier = name;
             render();
         }
 
@@ -562,6 +572,11 @@
                 supplierAssortment[code] = (supplierAssortment[code] || []).filter(s => s !== name);
                 if (supplierAssortment[code].length === 0) delete supplierAssortment[code];
             });
+            // Если удалили выбранного, переключиться на первого оставшегося
+            if (selectedSupplier === name) {
+                const remaining = Object.keys(deliverySchedule);
+                selectedSupplier = remaining.length > 0 ? remaining[0] : null;
+            }
             saveSupplierData();
             render();
         }
@@ -578,6 +593,7 @@
                 const idx = supplierAssortment[code].indexOf(oldName);
                 if (idx >= 0) supplierAssortment[code][idx] = newName;
             });
+            if (selectedSupplier === oldName) selectedSupplier = newName;
             saveSupplierData();
             render();
         }
@@ -637,20 +653,48 @@
                 return '<div class="bg-white rounded-lg border border-gray-200 p-6"><div class="text-center"><div class="p-3 bg-amber-50 rounded-lg text-amber-500 inline-flex mb-3">' + icons.calendar + '</div><p class="text-gray-500 text-sm">Сначала добавьте магазины на главной странице</p></div></div>';
             }
 
-            let html = '<div class="space-y-3">';
-            html += '<div class="flex items-center justify-between"><div class="flex items-center gap-2"><span class="text-sm font-medium text-gray-700">Поставщики</span><span class="text-xs text-gray-400">' + supplierNames.length + ' поставщик(ов)</span></div><div class="flex items-center gap-2"><span id="scheduleSaveIndicator" class="text-xs text-gray-300 transition-opacity" style="opacity:0"></span><button onclick="addSupplier()" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-sky-600 rounded-lg hover:bg-sky-700 transition-colors cursor-pointer">' + icons.plus + ' Добавить поставщика</button></div></div>';
-
-            if (supplierNames.length === 0) {
-                html += '<div class="bg-white rounded-lg border border-gray-200 p-6 text-center"><p class="text-gray-400 text-sm">Нажмите "Добавить поставщика" чтобы начать</p></div>';
+            // Авто-выбрать первого поставщика если не выбран
+            if (!selectedSupplier && supplierNames.length > 0) {
+                selectedSupplier = supplierNames[0];
             }
 
-            // Карточки поставщиков
+            let html = '<div class="space-y-3">';
+
+            // Шапка с кнопкой добавления
+            html += '<div class="flex items-center justify-between"><div class="flex items-center gap-2"><span class="text-sm font-medium text-gray-700">Поставщики</span><span class="text-xs text-gray-400">' + supplierNames.length + ' поставщик(ов)</span></div><div class="flex items-center gap-2"><span id="scheduleSaveIndicator" class="text-xs text-gray-300 transition-opacity" style="opacity:0"></span><button onclick="addSupplier()" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-sky-600 rounded-lg hover:bg-sky-700 transition-colors cursor-pointer">' + icons.plus + ' Добавить</button></div></div>';
+
+            if (supplierNames.length === 0) {
+                html += '<div class="bg-white rounded-lg border border-gray-200 p-6 text-center"><p class="text-gray-400 text-sm">Нажмите "Добавить" чтобы создать поставщика</p></div>';
+                html += '</div>';
+                return html;
+            }
+
+            // Табы поставщиков
+            html += '<div class="flex items-center gap-1 bg-gray-100 rounded-lg p-1 overflow-x-auto">';
             supplierNames.forEach(supplier => {
+                const frozen = getSupplierFrozen(supplier);
+                const isActive = selectedSupplier === supplier;
+                const supEsc = esc(supplier).replace(/'/g, "\\'");
+                html += '<button onclick="selectSupplier(\'' + supEsc + '\')" class="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap cursor-pointer ' +
+                    (isActive
+                        ? 'bg-white text-gray-900 shadow-sm ' + (frozen ? 'opacity-70' : '')
+                        : 'text-gray-500 hover:bg-white/60 hover:text-gray-700 ' + (frozen ? 'opacity-50' : '')) +
+                    '">';
+                if (frozen && isActive) html += '<span class="w-2 h-2 rounded-full bg-amber-400"></span>';
+                else if (frozen) html += '<span class="w-2 h-2 rounded-full bg-gray-300"></span>';
+                html += esc(supplier) + '</button>';
+            });
+            html += '</div>';
+
+            // Карточка выбранного поставщика
+            if (selectedSupplier && deliverySchedule[selectedSupplier]) {
+                const supplier = selectedSupplier;
                 const frozen = getSupplierFrozen(supplier);
                 const schedule = getSupplierSchedule(supplier);
                 const frozenClass = frozen ? 'opacity-60 pointer-events-none' : '';
 
                 html += '<div class="bg-white rounded-lg border ' + (frozen ? 'border-gray-300 bg-gray-50' : 'border-gray-200') + ' shadow-sm overflow-hidden">';
+                // Заголовок карточки
                 html += '<div class="flex items-center justify-between px-4 py-3 ' + (frozen ? 'bg-gray-100' : 'bg-gray-50') + ' border-b border-gray-200">';
                 html += '<div class="flex items-center gap-2">';
                 html += '<div class="p-1.5 ' + (frozen ? 'bg-gray-300 text-gray-500' : 'bg-sky-100 text-sky-600') + ' rounded-lg">' + icons.truck + '</div>';
@@ -663,7 +707,7 @@
                 html += '</div></div>';
 
                 html += '<div class="p-3 ' + frozenClass + '">';
-                // График
+                // Таблица графика доставки
                 html += '<div class="overflow-x-auto border border-gray-200 rounded-lg"><table class="w-full border-collapse text-center"><thead><tr class="bg-gray-50"><th class="text-left px-3 py-2 text-xs font-semibold text-gray-500 border-b border-gray-200 sticky left-0 bg-gray-50 z-10">Магазин</th>';
                 DAY_NAMES.forEach(d => { html += '<th class="px-1 py-2 text-xs font-semibold text-gray-500 border-b border-gray-200 w-10">' + d + '</th>'; });
                 html += '<th class="px-2 py-2 text-xs font-semibold text-gray-400 border-b border-gray-200">Итого</th></tr></thead><tbody>';
@@ -685,23 +729,24 @@
                     html += '<td class="px-2 py-1 text-xs text-gray-400 font-medium">' + (activeCount > 0 ? activeCount + ' дн.' : '—') + '</td></tr>';
                 });
                 html += '</tbody></table></div></div></div>';
-            });
+            }
 
-            // Таблица ассортимента по поставщикам
+            // Единая таблица ассортимента по ВСЕМ поставщикам
             if (supplierNames.length > 0 && Object.keys(matrix).length > 0) {
                 const allGroups = getAllGroups();
                 html += '<div class="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">';
                 html += '<div class="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-200">';
                 html += '<div class="flex items-center gap-2">';
                 html += '<div class="p-1.5 bg-teal-100 rounded-lg text-teal-600">' + icons.list + '</div>';
-                html += '<h3 class="text-sm font-semibold text-gray-800">Ассортимент поставщиков</h3>';
+                html += '<h3 class="text-sm font-semibold text-gray-800">Ассортимент</h3>';
                 html += '<span class="text-xs text-gray-400">отметьте галочками кто возит</span>';
                 html += '</div></div>';
                 html += '<div class="table-container" style="max-height:50vh"><table class="table-modern"><thead><tr>';
                 html += '<th class="text-left">Категория</th><th class="text-left">Наименование</th><th>Код</th>';
                 supplierNames.forEach(s => {
                     const frozen = getSupplierFrozen(s);
-                    html += '<th class="' + (frozen ? 'opacity-40' : '') + '">' + (frozen ? '&#10052; ' : '') + esc(s) + '</th>';
+                    const isActive = selectedSupplier === s;
+                    html += '<th class="' + (frozen ? 'opacity-40' : '') + (isActive ? ' !bg-sky-50' : '') + '">' + (frozen ? '&#10052; ' : '') + esc(s) + '</th>';
                 });
                 html += '</tr></thead><tbody>';
 
