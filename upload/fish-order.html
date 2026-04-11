@@ -2266,32 +2266,199 @@
                 return;
             }
 
-            const rows = [['№ Маг.', 'ТТ', 'Код', 'Наименование', 'Группа', 'Поставщик', 'Продажи', 'Продажи вых.', 'Остаток', 'Доставлено', 'В пути', 'Дн. до дост.', 'Заказ', 'Сумма', 'Статус']];
+            // Фильтруем по текущим фильтрам
+            let filtered = savedOrderResults;
+            if (filterSupplier) filtered = filtered.filter(r => r.supplier === filterSupplier);
+            if (filterTT) filtered = filtered.filter(r => r.tt === filterTT);
+            if (filterGroup) filtered = filtered.filter(r => r.group === filterGroup);
+            if (filterStatus === 'orders') filtered = filtered.filter(r => r.order > 0);
 
-            savedOrderResults.forEach(r => {
-                const editKey = `${r.tt}_${r.code}`;
-                const orderQty = orderEdits[editKey] !== undefined ? orderEdits[editKey] : r.order;
-                const status = orderQty > 0 ? 'заказ' : 'достаточно';
-                rows.push([
-                    r.tt || '', r.tt, r.code, r.nomenclature || '', r.group || '',
-                    r.supplier || '',
-                    (r.sales || 0).toFixed(0),
-                    r.weekendAvg > 0 ? r.weekendAvg.toFixed(1) : '—',
-                    (r.currentStock || 0).toFixed(2),
-                    r.deliveredQty || 0,
-                    r.inTransitQty || 0,
-                    r.daysUntil >= 99 ? '∞' : r.daysUntil,
-                    orderQty,
-                    (orderQty * (r.inPrice || 0)).toFixed(2),
-                    status
-                ]);
+            if (filtered.length === 0) { alert('Нет данных по выбранным фильтрам'); return; }
+
+            // Группировка: ТТ → Поставщик → товары
+            const grouped = {};
+            filtered.forEach(r => {
+                const tt = r.tt || 'Не указана';
+                const supplier = r.supplier || 'Не указан';
+                if (!grouped[tt]) grouped[tt] = {};
+                if (!grouped[tt][supplier]) grouped[tt][supplier] = [];
+                grouped[tt][supplier].push(r);
             });
 
-            const headers = rows.shift();
-            const ws = SharedUtils.createStyledSheet(rows, headers, [0, 1, 2, 3, 5]);
             const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, 'Заказ рыбы');
-            const d = new Date(); XLSX.writeFile(wb, `заказ_рыба_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}.xlsx`);
+
+            // === Лист 1: Полный заказ по ТТ ===
+            const allHeaders = ['ТТ', 'Поставщик', 'Группа', 'Наименование', 'Код', 'Остаток', 'В пути', 'Продажи', 'Дн. до дост.', 'Заказ', 'Квант', 'Цена вх.', 'Сумма', 'Статус'];
+            const allRows = [];
+
+            const sortedTTs = Object.keys(grouped).sort((a, b) => a.localeCompare(b, 'ru'));
+            sortedTTs.forEach(tt => {
+                const sortedSuppliers = Object.keys(grouped[tt]).sort((a, b) => a.localeCompare(b, 'ru'));
+                sortedSuppliers.forEach(supplier => {
+                    const items = grouped[tt][supplier];
+                    items.forEach(r => {
+                        const editKey = `${r.tt}_${r.code}`;
+                        const orderQty = orderEdits[editKey] !== undefined ? orderEdits[editKey] : r.order;
+                        allRows.push([
+                            tt, supplier, r.group || '', r.nomenclature || '', r.code,
+                            r.currentStock || 0, r.inTransitQty || 0,
+                            (r.sales || 0).toFixed(1),
+                            r.daysUntil >= 99 ? '—' : r.daysUntil,
+                            orderQty, r.quant || 1, r.inPrice || 0,
+                            (orderQty * (r.inPrice || 0)).toFixed(2),
+                            orderQty > 0 ? 'заказ' : 'достаточно'
+                        ]);
+                    });
+                });
+            });
+
+            // Итоговая строка
+            const totalSum = filtered.reduce((s, r) => {
+                const editKey = `${r.tt}_${r.code}`;
+                const qty = orderEdits[editKey] !== undefined ? orderEdits[editKey] : r.order;
+                return s + qty * (r.inPrice || 0);
+            }, 0);
+            const totalOrder = filtered.reduce((s, r) => {
+                const editKey = `${r.tt}_${r.code}`;
+                return s + (orderEdits[editKey] !== undefined ? orderEdits[editKey] : r.order);
+            }, 0);
+            allRows.push([]);
+            allRows.push(['', '', '', '', 'ИТОГО', '', '', '', '', totalOrder, '', '', totalSum.toFixed(2), '']);
+
+            const ws = createFishOrderSheet(allRows, allHeaders);
+            XLSX.utils.book_append_sheet(wb, ws, 'Заказ по ТТ');
+
+            // === Лист 2: Заказы по поставщикам ===
+            if (Object.keys(grouped).length > 0) {
+                const supHeaders = ['Поставщик', 'ТТ', 'Наименование', 'Код', 'Группа', 'Заказ', 'Квант', 'Цена вх.', 'Сумма'];
+                const supRows = [];
+
+                sortedTTs.forEach(tt => {
+                    const sortedSuppliers = Object.keys(grouped[tt]).sort((a, b) => a.localeCompare(b, 'ru'));
+                    sortedSuppliers.forEach(supplier => {
+                        const items = grouped[tt][supplier].filter(r => {
+                            const editKey = `${r.tt}_${r.code}`;
+                            return (orderEdits[editKey] !== undefined ? orderEdits[editKey] : r.order) > 0;
+                        });
+                        if (items.length === 0) return;
+                        items.forEach(r => {
+                            const editKey = `${r.tt}_${r.code}`;
+                            const orderQty = orderEdits[editKey] !== undefined ? orderEdits[editKey] : r.order;
+                            supRows.push([
+                                supplier, tt, r.nomenclature || '', r.code, r.group || '',
+                                orderQty, r.quant || 1, r.inPrice || 0,
+                                (orderQty * (r.inPrice || 0)).toFixed(2)
+                            ]);
+                        });
+                        // Итого по поставщик-ТТ
+                        const supSum = items.reduce((s, r) => {
+                            const editKey = `${r.tt}_${r.code}`;
+                            const qty = orderEdits[editKey] !== undefined ? orderEdits[editKey] : r.order;
+                            return s + qty * (r.inPrice || 0);
+                        }, 0);
+                        supRows.push([]);
+                        supRows.push(['', '', '', '', 'Итого по ' + supplier + ' / ' + tt, '', '', '', supSum.toFixed(2)]);
+                        supRows.push([]);
+                    });
+                });
+
+                const ws2 = createFishOrderSheet(supRows, supHeaders);
+                XLSX.utils.book_append_sheet(wb, ws2, 'По поставщикам');
+            }
+
+            const d = new Date();
+            XLSX.writeFile(wb, `заказ_рыбы_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}.xlsx`);
+        }
+
+        function createFishOrderSheet(data, headers) {
+            const leftAlignCols = [0, 1, 2, 3]; // ТТ, Поставщик, Группа, Наименование
+            const allData = [headers, ...data];
+            const ws = XLSX.utils.aoa_to_sheet(allData);
+            const range = XLSX.utils.decode_range(ws['!ref']);
+            const numRows = range.e.r + 1;
+            const numCols = range.e.c + 1;
+
+            // Ширина колонок с учётом кириллицы
+            const colWidths = new Array(numCols).fill(0);
+            for (let c = 0; c < numCols; c++) {
+                for (let r = 0; r < numRows; r++) {
+                    const cellAddress = XLSX.utils.encode_cell({ r: r, c: c });
+                    const cell = ws[cellAddress];
+                    if (cell && cell.v !== undefined) {
+                        const cellText = String(cell.v);
+                        const cyrillicCount = (cellText.match(/[а-яА-ЯёЁ]/g) || []).length;
+                        const otherCount = cellText.length - cyrillicCount;
+                        colWidths[c] = Math.max(colWidths[c], Math.ceil(cyrillicCount * 1.5 + otherCount * 1.0) + 2);
+                    }
+                }
+                colWidths[c] = Math.max(colWidths[c], 8);
+                colWidths[c] = Math.min(colWidths[c], 60);
+            }
+            ws['!cols'] = colWidths.map(w => ({ wch: w }));
+            ws['!rows'] = [];
+            for (let r = 0; r < numRows; r++) ws['!rows'][r] = { hpt: 16 };
+
+            // Стили
+            const BORDER_THIN = {
+                top: { style: "thin", color: { rgb: "B0B0B0" } },
+                bottom: { style: "thin", color: { rgb: "B0B0B0" } },
+                left: { style: "thin", color: { rgb: "B0B0B0" } },
+                right: { style: "thin", color: { rgb: "B0B0B0" } }
+            };
+
+            for (let r = 0; r < numRows; r++) {
+                for (let c = 0; c < numCols; c++) {
+                    const cellAddress = XLSX.utils.encode_cell({ r: r, c: c });
+                    const cell = ws[cellAddress];
+                    if (!cell) continue;
+
+                    if (r === 0) {
+                        // Шапка — светло-голубой
+                        cell.s = {
+                            fill: { fgColor: { rgb: "B8CCE4" } },
+                            font: { bold: true, sz: 10, color: { rgb: "000000" } },
+                            alignment: { horizontal: "center", vertical: "center", wrapText: false },
+                            border: BORDER_THIN
+                        };
+                    } else {
+                        const isLeft = leftAlignCols.includes(c);
+                        const cellVal = String(cell.v || '');
+                        const isOrder = cellVal === 'заказ';
+                        const isOK = cellVal === 'достаточно';
+                        const isTotal = cellVal.startsWith('ИТОГО') || cellVal.startsWith('Итого');
+                        const isEmpty = cellVal === '';
+                        const prevRow = r > 1 ? XLSX.utils.encode_cell({ r: r - 1, c: 0 }) : null;
+                        const prevIsEmpty = prevRow && ws[prevRow] && String(ws[prevRow].v || '') === '';
+
+                        // Фон: зебра, но с перерывом на пустые строки
+                        let bg = null;
+                        if (isTotal) {
+                            bg = { fgColor: { rgb: "D9E2F3" } };
+                        } else if (!isEmpty && !prevIsEmpty && r % 2 === 0) {
+                            bg = { fgColor: { rgb: "F2F2F2" } };
+                        }
+
+                        let fontColor = { rgb: "000000" };
+                        let fontBold = false;
+                        if (isOrder) fontColor = { rgb: "006100" };
+                        if (isOK) fontColor = { rgb: "9C0006" };
+                        if (isTotal) fontBold = true;
+
+                        cell.s = {
+                            fill: bg,
+                            font: { sz: 10, color: fontColor, bold: fontBold },
+                            alignment: {
+                                horizontal: isLeft || isTotal ? "left" : "center",
+                                vertical: "center",
+                                wrapText: false
+                            },
+                            border: isEmpty ? undefined : BORDER_THIN
+                        };
+                    }
+                }
+            }
+
+            return ws;
         }
 
         // === ПОПАП СУММ ЗАКАЗА ПО МАГАЗИНАМ ===
