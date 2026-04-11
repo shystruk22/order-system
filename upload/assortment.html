@@ -36,11 +36,10 @@
         .cell-input-num:focus { border-color: #0d9488; background: white; outline: none; }
         .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 50; }
         .modal-content { background: white; border-radius: 0.75rem; border: 1px solid #e5e7eb; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); width: 100%; max-height: 85vh; overflow: hidden; display: flex; flex-direction: column; }
-        .drop-zone { border: 2px dashed #d1d5db; border-radius: 0.75rem; padding: 2rem; text-align: center; transition: all 0.2s; cursor: pointer; }
-        .drop-zone:hover, .drop-zone.drag-over { border-color: #0d9488; background: #f0fdfa; }
+
     </style>
 </head>
-<body class="min-h-screen bg-gray-100">
+<body class="min-h-screen bg-[#f5f7fa]">
     <div class="bg-white border-b border-gray-200">
         <div class="px-3 py-2">
             <div class="flex items-center gap-2">
@@ -62,13 +61,13 @@
             </div>
         </div>
     </div>
-    <div class="px-3 py-3" id="content"></div>
+    <div class="px-2 py-2" id="content"></div>
 
     <script>
         // ============================================================================
         // STATE
         // ============================================================================
-        let tab = 'assortment';
+        let tab = 'upload';
         let products = [];             // Working array of products
         let currentLoadedAssortment = null; // Name of loaded saved list
         let defaultMarkup = 25;
@@ -501,7 +500,7 @@
 
         function cancelImport() {
             importPreviewData = null;
-            renderImportTab();
+            render();
         }
 
         // ============================================================================
@@ -548,9 +547,9 @@
         // ============================================================================
         function renderTabs() {
             const tabs = [
+                { id: 'upload', label: 'Загрузка', icon: icons.upload },
                 { id: 'assortment', label: 'Ассортимент', icon: icons.list },
                 { id: 'lists', label: 'Списки', icon: icons.save },
-                { id: 'import', label: 'Импорт', icon: icons.upload },
             ];
             document.getElementById('tabs').innerHTML = tabs.map(t => `
                 <button onclick="tab='${t.id}';render()" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${tab === t.id ? 'bg-teal-600 text-white shadow-sm' : 'text-gray-600 hover:bg-white hover:text-gray-900'}">
@@ -573,13 +572,102 @@
 
             renderTabs();
             switch(tab) {
+                case 'upload': content.innerHTML = renderUpload(); break;
                 case 'assortment': content.innerHTML = renderAssortment(); break;
                 case 'lists': content.innerHTML = renderListsTab(); break;
-                case 'import': content.innerHTML = renderImportTab(); break;
             }
             updateStats();
 
             content.scrollTop = scrollTop;
+        }
+
+        // ============================================================================
+        // RENDER — UPLOAD TAB
+        // ============================================================================
+        function renderUpload() {
+            const savedLists = getSavedAssortments();
+            const hasProducts = products.length > 0;
+
+            if (importPreviewData) {
+                return renderImportPreview();
+            }
+
+            return `
+                <div class="space-y-2">
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-2">
+                        <!-- Импорт из файла -->
+                        <div onclick="document.getElementById('uploadFileInput').click()" class="bg-white rounded-lg border ${hasProducts ? 'border-gray-200' : 'border-gray-200'} p-4 cursor-pointer hover:border-teal-400 transition-colors group">
+                            <div class="flex flex-col items-center text-center">
+                                <div class="p-3 bg-teal-50 rounded-lg text-teal-600 mb-2 group-hover:bg-teal-100 transition-colors">${icons.upload}</div>
+                                <h3 class="font-medium text-gray-800 mb-1">Импорт из файла</h3>
+                                <p class="text-xs text-gray-400">Загрузить из Excel</p>
+                                <input type="file" id="uploadFileInput" accept=".xlsx,.xls" onchange="importFromFile(this)" class="hidden">
+                                ${hasProducts ? `<p class="mt-2 text-sm text-teal-600 font-bold">${products.length} товаров</p>` : ''}
+                            </div>
+                        </div>
+                        <!-- Сохранить список -->
+                        <div onclick="saveToAssortmentList()" class="bg-white rounded-lg border border-gray-200 p-4 cursor-pointer hover:border-amber-400 transition-colors group">
+                            <div class="flex flex-col items-center text-center">
+                                <div class="p-3 bg-amber-50 rounded-lg text-amber-600 mb-2 group-hover:bg-amber-100 transition-colors">${icons.save}</div>
+                                <h3 class="font-medium text-gray-800 mb-1">Сохранить список</h3>
+                                <p class="text-xs text-gray-400">Текущий ассортимент</p>
+                                ${hasProducts ? `<p class="mt-2 text-sm text-amber-600 font-bold">${products.length} товаров</p>` : ''}
+                            </div>
+                        </div>
+                        <!-- Экспорт в Excel -->
+                        <div onclick="exportAssortment()" class="bg-white rounded-lg border border-gray-200 p-4 cursor-pointer hover:border-blue-400 transition-colors group">
+                            <div class="flex flex-col items-center text-center">
+                                <div class="p-3 bg-blue-50 rounded-lg text-blue-600 mb-2 group-hover:bg-blue-100 transition-colors">${icons.export}</div>
+                                <h3 class="font-medium text-gray-800 mb-1">Экспорт в Excel</h3>
+                                <p class="text-xs text-gray-400">Скачать текущий ассортимент</p>
+                            </div>
+                        </div>
+                        <!-- Сохранённые списки -->
+                        <div class="bg-white rounded-lg border ${savedLists.length > 0 ? 'border-emerald-300' : 'border-gray-200'} p-4 cursor-pointer hover:border-emerald-400 transition-colors group">
+                            <div class="flex flex-col items-center text-center">
+                                <div class="p-3 bg-emerald-50 rounded-lg text-emerald-600 mb-2 group-hover:bg-emerald-100 transition-colors">${icons.db}</div>
+                                <h3 class="font-medium text-gray-800 mb-1">Сохранённые списки</h3>
+                                <p class="text-xs text-gray-400">Загрузить сохранённый список</p>
+                                ${savedLists.length > 0 ? `
+                                <div class="space-y-0.5 mt-2 max-h-28 overflow-y-auto w-full">
+                                    ${savedLists.map(s => `
+                                        <div onclick="event.stopPropagation();loadAssortmentByName('${esc(s.name)}')" class="px-2 py-0.5 bg-emerald-50 hover:bg-emerald-100 rounded text-[11px] text-emerald-700 cursor-pointer transition-colors flex justify-between items-center">
+                                            <span class="truncate font-medium">${esc(s.name)}</span>
+                                            <span class="text-emerald-400 ml-1 shrink-0">${s.count || 0}</span>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                                ` : ''}
+                                ${savedLists.length > 0 ? `<p class="mt-2 text-sm text-emerald-600 font-bold">${savedLists.length} списков</p>` : ''}
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Settings/Status panel -->
+                    <div class="bg-white rounded-lg border ${hasProducts ? 'border-green-300' : 'border-gray-200'} p-3">
+                        <div class="flex flex-wrap items-center gap-3">
+                            <div class="flex items-center gap-1.5 bg-gray-50 px-2.5 py-1.5 rounded-md border border-gray-200">
+                                <label class="text-xs text-gray-500">Наценка:</label>
+                                <input type="number" value="${defaultMarkup}" onchange="defaultMarkup=parseFloat(this.value)||25" class="input w-12 text-center" step="0.1">
+                                <span class="text-xs text-gray-400">%</span>
+                            </div>
+
+                            <div class="h-6 w-px bg-gray-200"></div>
+
+                            <!-- Status indicators -->
+                            <div class="flex flex-wrap items-center gap-1.5">
+                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium ${hasProducts ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-500'}">
+                                    ${hasProducts ? '&#10003;' : '&#10007;'} Ассортимент: ${products.length}
+                                </span>
+                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium ${savedLists.length > 0 ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-500'}">
+                                    ${savedLists.length > 0 ? '&#10003;' : '&#10007;'} Списков: ${savedLists.length}
+                                </span>
+                            </div>
+
+                            <button onclick="tab='lists';render()" class="btn ml-auto px-3 py-1.5 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">${icons.list} Все списки</button>
+                        </div>
+                    </div>
+                </div>`;
         }
 
         // ============================================================================
@@ -628,7 +716,7 @@
                 html += `<div class="text-center py-12">${icons.db}<p class="text-gray-500 mt-3">Нет товаров</p>
                     <p class="text-gray-400 text-sm mt-1">Загрузите из файла или добавьте вручную</p>
                     <div class="flex justify-center gap-3 mt-4">
-                        <button onclick="tab='import';render()" class="btn px-4 py-2 text-sm font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700">${icons.import} Импорт</button>
+                        <button onclick="tab='upload';render()" class="btn px-4 py-2 text-sm font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700">${icons.import} Импорт</button>
                         <button onclick="showAddProductModal()" class="btn px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700">${icons.plus} Добавить</button>
                     </div>
                 </div>`;

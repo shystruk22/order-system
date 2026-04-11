@@ -1099,21 +1099,25 @@
 
             // TT-колонки: после Код, кроме известных не-TT — сопоставляем с stores
             const knownNonTT = new Set(['группа', 'упак', 'вес. код', 'вес.код', 'упаковка', 'наименование товара', 'наименование', 'наим', 'код товара', 'код']);
-            // Собираем ВСЕ строковые значения из каждого store для сопоставления
+            // Собираем ВСЕ строковые значения из каждого store для сопоставления (точное + нормализованное)
             const existingTTSet = new Set();
             const storeTTMap = {}; // name -> canonical tt
+            // Нормализация: нижний регистр, убираем лишние пробелы
+            const normalizeTT = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
             stores.forEach(s => {
               const canonical = String(s.tt || '').trim();
               if (canonical) {
                 existingTTSet.add(canonical);
                 storeTTMap[canonical] = canonical;
+                storeTTMap[normalizeTT(canonical)] = canonical;
               }
-              // Все остальные строковые поля тоже добавляем
               Object.values(s).forEach(v => {
                 if (typeof v === 'string' && v.trim()) {
                   const val = v.trim();
                   existingTTSet.add(val);
                   if (!storeTTMap[val]) storeTTMap[val] = canonical;
+                  const nVal = normalizeTT(val);
+                  if (!storeTTMap[nVal]) storeTTMap[nVal] = canonical;
                 }
               });
             });
@@ -1121,68 +1125,98 @@
             for (let c = codeCol + 1; c < headers.length; c++) {
               if (headers[c] && !knownNonTT.has(headers[c])) {
                 const ttName = String(headersRaw[c] || '').trim();
-                if (existingTTSet.has(ttName)) {
-                  ttColumns.push({ col: c, name: ttName });
+                // Сначала точное совпадение, потом нормализованное
+                const canonicalTT = storeTTMap[ttName] || storeTTMap[normalizeTT(ttName)];
+                if (canonicalTT) {
+                  ttColumns.push({ col: c, name: canonicalTT });
                 }
               }
             }
 
             if (ttColumns.length === 0) {
-              const storeTTs = [...existingTTSet].slice(0, 5).join(', ');
+              const storeTTs = stores.slice(0, 5).map(s => s.tt).join('\n');
               const fileTTs = [];
               for (let c = codeCol + 1; c < headers.length; c++) {
                 if (headers[c] && !knownNonTT.has(headers[c])) fileTTs.push(String(headersRaw[c] || '').trim());
               }
-              alert(`Ни одна ТТ из файла не найдена в списке магазинов.\n\nМагазины в системе (${existingTTSet.size}):\n${storeTTs}${existingTTSet.size > 5 ? '...' : ''}\n\nТТ из файла (${fileTTs.length}):\n${fileTTs.slice(0, 5).join(', ')}${fileTTs.length > 5 ? '...' : ''}`);
+              alert(`Ни одна ТТ из файла не найдена в списке магазинов.\n\nМагазины в системе (${stores.length}):\n${storeTTs}${stores.length > 5 ? '\n...' : ''}\n\nТТ из файла (${fileTTs.length}):\n${fileTTs.slice(0, 5).join('\n')}${fileTTs.length > 5 ? '\n...' : ''}`);
               return;
             }
+
+            // Диагностика: покажем что нашли
+            console.log('[Matrix Import] stores count:', stores.length);
+            console.log('[Matrix Import] storeTT keys sample:', Object.keys(storeTTMap).slice(0, 10));
+            console.log('[Matrix Import] ttColumns matched:', ttColumns.length, ttColumns.map(t => t.name).slice(0, 5));
 
             // Батч-обновление матрицы
             const newMatrix = { ...matrix };
             let updated = 0, added = 0;
+            const fileCodes = [];
+            let skipNoName = 0;
+
+            // Диагностика
+            let diagInfo = [];
+            let daCountInFile = 0;
 
             for (let i = 1; i < json.length; i++) {
               const row = json[i];
               if (!row || !row[codeCol]) continue;
               const code = normCode(String(row[codeCol]));
               if (!code) continue;
+              fileCodes.push(code);
 
               const nomenclature = nameCol >= 0 ? String(row[nameCol] || '').trim() : '';
               const group = groupCol >= 0 ? String(row[groupCol] || '').trim() : '';
-              if (!nomenclature) continue;
+              if (!nomenclature) { skipNoName++; continue; }
+
+              // Для новых товаров — создаём один раз, потом перезаписываем TT
+              if (!newMatrix[code]) {
+                const newEntry = {
+                  code, nomenclature, group,
+                  packaging: 'ШТ', weightCode: '', inPrice: 0, outPrice: 0,
+                  shelf: 0, quant: 1
+                };
+                stores.forEach(s => { newEntry[s.tt] = 'НЕТ'; });
+                newMatrix[code] = newEntry;
+                added++;
+              }
 
               ttColumns.forEach(({ name: tt, col }) => {
-                const val = String(row[col] || '').trim().toUpperCase();
+                const rawVal = row[col];
+                const val = String(rawVal || '').trim().toUpperCase();
                 const inMatrix = (val === 'ДА' || val === 'YES' || val === '1') ? 'ДА' : 'НЕТ';
+                const currentVal = newMatrix[code][tt];
 
-                if (!newMatrix[code]) {
-                  // Добавляем новый товар из файла
-                  const newEntry = {
-                    code, nomenclature, group,
-                    packaging: 'ШТ', weightCode: '', inPrice: 0, outPrice: 0,
-                    shelf: 0, quant: 1
-                  };
-                  stores.forEach(s => { newEntry[s.tt] = 'НЕТ'; });
-                  newEntry[tt] = inMatrix;
-                  newMatrix[code] = newEntry;
-                  added++;
-                } else {
-                  if (newMatrix[code][tt] !== inMatrix) updated++;
-                  newMatrix[code] = { ...newMatrix[code], [tt]: inMatrix };
+                if (inMatrix === 'ДА') daCountInFile++;
+                // Собираем диагностику для первых 5 строк с ДА
+                if (inMatrix === 'ДА' && diagInfo.length < 5) {
+                  diagInfo.push(`Код:${code} ТТ:${tt} | файл="${String(rawVal).substring(0,15)}" → inMatrix="${inMatrix}" | матрица="${currentVal}" | ${currentVal !== inMatrix ? 'ИЗМЕНЕНО' : 'БЕЗ ИЗМЕНЕНИЙ'}`);
+                }
+
+                if (currentVal !== inMatrix) {
+                  updated++;
+                  newMatrix[code][tt] = inMatrix;
                 }
               });
+
+              // (диагностика собирается без прерывания цикла)
             }
+
+            console.log('[Matrix Import] DIAGNOSTIC:');
+            diagInfo.forEach(d => console.log('  ', d));
+            console.log('[Matrix Import] skipNoName:', skipNoName);
 
             setMatrix(newMatrix);
             save(KEYS.MATRIX, newMatrix);
 
-            console.log('[Matrix Import] codes in file:', [...new Set(Object.keys(marks))].slice(0, 10));
-            console.log('[Matrix Import] codes in matrix:', Object.keys(newMatrix).slice(0, 10));
-            console.log('[Matrix Import] ttColumns:', ttColumns.map(t => t.name));
-            console.log('[Matrix Import] sample entry:', newMatrix[Object.keys(newMatrix)[0]]);
+            // Подробный отчёт
+            const matrixCodes = Object.keys(newMatrix);
+            const matchedCodes = fileCodes.filter(c => matrixCodes.includes(c));
 
             const addedMsg = added > 0 ? `\nДобавлено новых товаров: ${added}` : '';
-            alert(`Обновлено ${updated} значений матрицы${addedMsg}\nВсего товаров в матрице: ${Object.keys(newMatrix).length}`);
+            const daInfo = diagInfo.length > 0 ? `\n\n--- Строки с ДА ---\n${diagInfo.join('\n')}` : '\n\n(В файле нет значений ДА)';
+            const diagMsg = `\n\n--- Диагностика ---\nТоваров в файле: ${fileCodes.length}\nПропущено (нет имени): ${skipNoName}\nСовпадение по коду: ${matchedCodes.length}\nТТ сопоставлено: ${ttColumns.length}\nДА в файле: ${daCountInFile}\nЗначений изменено: ${updated}${daInfo}`;
+            alert(`Обновлено ${updated} значений матрицы${addedMsg}\nВсего товаров в матрице: ${matrixCodes.length}${diagMsg}`);
           } catch (err) { alert('Ошибка: ' + err.message); }
         };
         reader.readAsArrayBuffer(file);
