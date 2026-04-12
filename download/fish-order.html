@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Заказ рыбы</title>
-    <!-- Version: 3.4 -->
+    <!-- Version: 3.5 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -477,6 +477,7 @@
             const tabs = [
                 { id: 'upload', label: 'Загрузка', icon: icons.upload },
                 { id: 'assortment', label: 'Ассортимент', icon: icons.list },
+                { id: 'prices', label: 'Цена', icon: icons.dollar },
                 { id: 'matrix', label: 'Матрица', icon: icons.grid },
                 { id: 'suppliers', label: 'Поставщики', icon: icons.suppliers },
                 { id: 'order', label: 'Заказ', icon: icons.order },
@@ -494,6 +495,7 @@
             switch(tab) {
                 case 'upload': el.innerHTML = renderUpload(); break;
                 case 'assortment': el.innerHTML = renderAssortment(); break;
+                case 'prices': el.innerHTML = renderPrices(); break;
                 case 'matrix': el.innerHTML = renderMatrix(); break;
                 case 'suppliers': el.innerHTML = renderSuppliers(); break;
                 case 'order': el.innerHTML = renderOrder(); break;
@@ -1273,14 +1275,13 @@
                                 <th class="text-right">Цена на полке</th>
                                 <th class="text-right">Дом. полка</th>
                                 <th class="text-center">Квант</th>
-                                <th class="text-center">Объём</th>
                                 <th class="text-center w-10"></th>
                             </tr>
                         </thead>
                         <tbody>
                             ${Object.entries(grouped).sort((a,b) => a[0].localeCompare(b[0], 'ru')).map(([gr, items]) => `
                                 <tr class="bg-sky-50 cursor-pointer hover:bg-sky-100" onclick="collapsedG['${esc(gr)}']=!collapsedG['${esc(gr)}'];render()">
-                                    <td colspan="11" class="font-semibold text-sky-800">
+                                    <td colspan="10" class="font-semibold text-sky-800">
                                         <span class="flex items-center gap-2">${collapsedG[gr] ? icons.chevronRight : icons.chevronDown}${gr} (${items.length})</span>
                                     </td>
                                 </tr>
@@ -1295,7 +1296,6 @@
                                         <td class="text-right"><input type="number" step="0.01" value="${p.shelfPrice || 0}" onchange="updateProduct('${esc(p.code)}', 'shelfPrice', parseFloat(this.value)||0)" class="input w-16 text-right text-xs" placeholder="0"></td>
                                         <td class="text-right"><input type="number" step="0.01" value="${p.shelf || 0}" onchange="updateProduct('${esc(p.code)}', 'shelf', parseFloat(this.value)||0)" class="input w-16 text-right text-xs"></td>
                                         <td class="text-center"><input type="number" value="${p.quant || 1}" onchange="updateProduct('${esc(p.code)}', 'quant', parseFloat(this.value)||1)" class="input w-12 text-center text-xs" step="1"></td>
-                                        <td><input type="number" step="0.01" value="${p.volume || 0}" onchange="updateProduct('${esc(p.code)}', 'volume', parseFloat(this.value)||0)" class="input w-16 text-center text-sm"></td>
                                         <td class="text-center"><button onclick="event.stopPropagation();deleteProduct('${esc(p.code)}')" class="text-red-500 hover:text-red-700 p-1">${icons.trash}</button></td>
                                     </tr>
                                 `).join('')}
@@ -1328,6 +1328,248 @@
             </div>`;
 
             return html;
+        }
+
+        // === ЦЕНЫ (Price Tab) ===
+        function renderPrices() {
+            const totalItems = Object.keys(matrix).length;
+            const supplierNames = Object.keys(deliverySchedule);
+            const allGroups = getAllGroups();
+
+            if (totalItems === 0) {
+                return `<div class="bg-white rounded-lg border border-gray-200 p-6">
+                    <div class="text-center py-12">${icons.db}<p class="text-gray-500 mt-3">Загрузите данные для работы с ценами</p></div>
+                </div>`;
+            }
+
+            // Статистика по ценам
+            let itemsWithInPrice = 0;
+            let itemsWithShelfPrice = 0;
+            let totalIncome = 0;
+            let avgMarkup = 0;
+            let avgMargin = 0;
+            let markupCount = 0;
+            let marginCount = 0;
+
+            Object.values(matrix).forEach(p => {
+                const inP = p.inPrice || p.price || 0;
+                const shP = p.shelfPrice || 0;
+                if (inP > 0) itemsWithInPrice++;
+                if (shP > 0) itemsWithShelfPrice++;
+                if (inP > 0 && shP > 0) {
+                    totalIncome += (shP - inP);
+                    avgMarkup += (shP - inP) / inP * 100;
+                    avgMargin += (shP - inP) / shP * 100;
+                    markupCount++;
+                    marginCount++;
+                }
+            });
+            avgMarkup = markupCount > 0 ? avgMarkup / markupCount : 0;
+            avgMargin = marginCount > 0 ? avgMargin / marginCount : 0;
+
+            let html = `<div class="bg-white rounded-lg border border-gray-200 p-3 mb-3">
+                <div class="flex flex-wrap gap-2 items-center">
+                    <div class="bg-emerald-100 text-emerald-800 rounded-lg px-3 py-1.5">
+                        <span class="text-xs">С вход. ценой: </span><strong>${itemsWithInPrice}</strong>
+                    </div>
+                    <div class="bg-blue-100 text-blue-800 rounded-lg px-3 py-1.5">
+                        <span class="text-xs">С ценой полки: </span><strong>${itemsWithShelfPrice}</strong>
+                    </div>
+                    <div class="bg-violet-100 text-violet-800 rounded-lg px-3 py-1.5">
+                        <span class="text-xs">Общий доход: </span><strong>${totalIncome.toFixed(0)} ₽</strong>
+                    </div>
+                    <div class="bg-amber-100 text-amber-800 rounded-lg px-3 py-1.5">
+                        <span class="text-xs">Ср. наценка: </span><strong>${avgMarkup.toFixed(1)}%</strong>
+                    </div>
+                    <div class="bg-rose-100 text-rose-800 rounded-lg px-3 py-1.5">
+                        <span class="text-xs">Ср. маржа: </span><strong>${avgMargin.toFixed(1)}%</strong>
+                    </div>
+                    <div class="ml-auto flex gap-2">
+                        <button onclick="applyDefaultMarkup()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-violet-600 rounded-lg hover:bg-violet-700">${icons.refresh} Применить наценку ${defaultMarkup}%</button>
+                        <button onclick="exportPrices()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">${icons.export} Экспорт</button>
+                    </div>
+                </div>
+            </div>`;
+
+            // Группируем по группам
+            const grouped = {};
+            Object.entries(matrix).forEach(([code, p]) => {
+                if (searchAssort && !p.nomenclature?.toLowerCase().includes(searchAssort.toLowerCase()) && !code.includes(searchAssort)) return;
+                if (filterGroup && p.group !== filterGroup) return;
+                const gr = p.group || 'Без группы';
+                if (!grouped[gr]) grouped[gr] = [];
+                grouped[gr].push({ code, ...p });
+            });
+            Object.keys(grouped).forEach(gr => {
+                grouped[gr].sort((a, b) => (a.nomenclature || '').localeCompare(b.nomenclature || '', 'ru'));
+            });
+
+            // Фильтр по группе и поиск
+            html += `<div class="bg-white rounded-lg border border-gray-200 p-3 mb-3">
+                <div class="flex gap-2 items-center">
+                    <div class="relative">
+                        <input type="text" placeholder="Поиск по названию или коду..." value="${searchAssort}" oninput="searchAssort=this.value;render()" class="pl-8 pr-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-sky-400 w-56">
+                        <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400">${icons.search}</span>
+                    </div>
+                    <select onchange="filterGroup=this.value;render()" class="px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-sky-400">
+                        <option value="">Все группы</option>
+                        ${allGroups.map(g => `<option value="${g}" ${filterGroup === g ? 'selected' : ''}>${g}</option>`).join('')}
+                    </select>
+                    ${filterGroup || searchAssort ? `<button onclick="searchAssort='';filterGroup='';render()" class="text-xs text-gray-500 hover:text-gray-700">Сбросить</button>` : ''}
+                </div>
+            </div>`;
+
+            html += `<div class="table-container">
+                <table class="table-modern">
+                    <thead>
+                        <tr>
+                            <th class="text-left" style="min-width:80px">Группа</th>
+                            <th class="text-left" style="min-width:160px">Наименование</th>
+                            <th class="text-left" style="min-width:50px">Код</th>
+                            <th class="text-center" style="min-width:45px">Упак.</th>
+                            <th class="text-left" style="min-width:70px">Поставщик</th>
+                            <th class="text-right" style="min-width:80px">Цена входящая</th>
+                            <th class="text-right" style="min-width:80px">Цена на полке</th>
+                            <th class="text-right" style="min-width:70px">Доход</th>
+                            <th class="text-right" style="min-width:70px">Наценка %</th>
+                            <th class="text-right" style="min-width:70px">Маржа %</th>
+                        </tr>
+                    </thead>
+                    <tbody>`;
+
+            const sortedGroups = Object.keys(grouped).sort((a, b) => a.localeCompare(b, 'ru'));
+            sortedGroups.forEach(gr => {
+                const items = grouped[gr];
+                // Групповые итоги
+                let grIncome = 0;
+                let grMarkupSum = 0;
+                let grMarginSum = 0;
+                let grPricedCount = 0;
+                items.forEach(p => {
+                    const inP = p.inPrice || p.price || 0;
+                    const shP = p.shelfPrice || 0;
+                    if (inP > 0 && shP > 0) {
+                        grIncome += (shP - inP);
+                        grMarkupSum += (shP - inP) / inP * 100;
+                        grMarginSum += (shP - inP) / shP * 100;
+                        grPricedCount++;
+                    }
+                });
+                const grAvgMarkup = grPricedCount > 0 ? grMarkupSum / grPricedCount : 0;
+                const grAvgMargin = grPricedCount > 0 ? grMarginSum / grPricedCount : 0;
+
+                html += `<tr class="bg-sky-50 cursor-pointer hover:bg-sky-100" onclick="collapsedG['price_${esc(gr)}']=!collapsedG['price_${esc(gr)}'];render()">
+                    <td colspan="10" class="font-semibold text-sky-800 py-1 px-2">
+                        <span class="flex items-center gap-2">
+                            ${collapsedG['price_' + gr] ? icons.chevronRight : icons.chevronDown}
+                            ${gr} (${items.length})
+                            <span class="text-[10px] text-gray-500 ml-2">Ср. наценка: ${grAvgMarkup.toFixed(1)}% • Ср. маржа: ${grAvgMargin.toFixed(1)}% • Доход: ${grIncome.toFixed(0)} ₽</span>
+                        </span>
+                    </td>
+                </tr>`;
+
+                if (!collapsedG['price_' + gr]) {
+                    items.forEach(p => {
+                        const inP = p.inPrice || p.price || 0;
+                        const shP = p.shelfPrice || 0;
+                        const income = shP - inP;
+                        const markup = inP > 0 ? (shP - inP) / inP * 100 : 0;
+                        const margin = shP > 0 ? (shP - inP) / shP * 100 : 0;
+                        const suppliers = supplierAssortment[p.code] || [];
+
+                        // Цветовая индикация
+                        let markupClass = '';
+                        if (markup > 0 && markup < 15) markupClass = 'text-amber-600';
+                        else if (markup >= 15 && markup < 30) markupClass = 'text-emerald-600';
+                        else if (markup >= 30) markupClass = 'text-blue-600';
+                        else if (markup <= 0 && shP > 0) markupClass = 'text-red-600 font-semibold';
+
+                        let marginClass = '';
+                        if (margin > 0 && margin < 10) marginClass = 'text-amber-600';
+                        else if (margin >= 10 && margin < 20) marginClass = 'text-emerald-600';
+                        else if (margin >= 20) marginClass = 'text-blue-600';
+                        else if (margin <= 0 && shP > 0) marginClass = 'text-red-600 font-semibold';
+
+                        let incomeClass = '';
+                        if (income < 0) incomeClass = 'text-red-600 font-semibold';
+                        else if (income > 0) incomeClass = 'text-emerald-600';
+
+                        html += `<tr class="hover:bg-gray-50">
+                            <td class="text-xs text-gray-600">${esc(p.group || '')}</td>
+                            <td class="font-medium text-gray-700 text-left whitespace-nowrap max-w-[200px] truncate" title="${esc(p.nomenclature || '')}">${esc(p.nomenclature || '')}</td>
+                            <td class="font-mono text-xs text-gray-600">${p.code}</td>
+                            <td class="text-center text-gray-500">${p.packaging || 'ШТ'}</td>
+                            <td class="text-xs text-gray-500">${suppliers.length > 0 ? suppliers.map(s => esc(s)).join(', ') : '<span class=text-gray-300>—</span>'}</td>
+                            <td class="text-right"><input type="number" step="0.01" value="${inP}" onchange="updatePrice('${esc(p.code)}', 'inPrice', parseFloat(this.value)||0)" class="input w-20 text-right text-xs"></td>
+                            <td class="text-right"><input type="number" step="0.01" value="${shP}" onchange="updatePrice('${esc(p.code)}', 'shelfPrice', parseFloat(this.value)||0)" class="input w-20 text-right text-xs"></td>
+                            <td class="text-right text-xs font-medium ${incomeClass}">${income > 0 ? '+' : ''}${income.toFixed(2)}</td>
+                            <td class="text-right text-xs font-medium ${markupClass}">${markup.toFixed(1)}%</td>
+                            <td class="text-right text-xs font-medium ${marginClass}">${margin.toFixed(1)}%</td>
+                        </tr>`;
+                    });
+                }
+            });
+
+            html += `</tbody></table></div>`;
+            return html;
+        }
+
+        function updatePrice(code, field, value) {
+            const nc = normCode(code);
+            const product = matrix[nc] || matrix[code];
+            if (!product) return;
+            product[field] = value;
+            // Синхронизируем price при изменении inPrice
+            if (field === 'inPrice') product.price = value;
+            save(KEYS.ASSORTMENT, matrix);
+            render();
+        }
+
+        function applyDefaultMarkup() {
+            const mu = prompt(`Применить наценку ко всем товарам без цены на полке.\nТекущая наценка по умолчанию: ${defaultMarkup}%\n\nВведите наценку (%):`, defaultMarkup);
+            if (mu === null) return;
+            const markupVal = parseFloat(mu);
+            if (isNaN(markupVal)) { alert('Некорректное значение'); return; }
+            defaultMarkup = markupVal;
+
+            let updated = 0;
+            Object.values(matrix).forEach(p => {
+                const inP = p.inPrice || p.price || 0;
+                if (inP > 0) {
+                    const newShelfPrice = Math.round(inP * (1 + markupVal / 100) * 100) / 100;
+                    if (!p.shelfPrice || p.shelfPrice === 0) {
+                        p.shelfPrice = newShelfPrice;
+                        updated++;
+                    }
+                }
+            });
+
+            save(KEYS.ASSORTMENT, matrix);
+            render();
+            alert(`Наценка ${markupVal}% применена.\nОбновлено цен: ${updated}\n(только для товаров без указанной цены на полке)`);
+        }
+
+        function exportPrices() {
+            const items = Object.values(matrix);
+            if (items.length === 0) { alert('Нет данных для экспорта'); return; }
+
+            const headers = ['Группа', 'Наименование', 'Код', 'Упак.', 'Поставщик', 'Цена входящая', 'Цена на полке', 'Доход', 'Наценка %', 'Маржа %'];
+            const data = items.map(p => {
+                const inP = p.inPrice || p.price || 0;
+                const shP = p.shelfPrice || 0;
+                const income = shP - inP;
+                const markup = inP > 0 ? (shP - inP) / inP * 100 : 0;
+                const margin = shP > 0 ? (shP - inP) / shP * 100 : 0;
+                const suppliers = (supplierAssortment[p.code] || []).join(', ');
+                return [p.group || '', p.nomenclature || '', p.code, p.packaging || 'ШТ', suppliers, inP, shP, Math.round(income * 100) / 100, Math.round(markup * 100) / 100, Math.round(margin * 100) / 100];
+            });
+
+            const ws = SharedUtils.createStyledSheet(data, headers, [0, 1, 4]);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Цены');
+
+            const d = new Date();
+            XLSX.writeFile(wb, 'цены_' + d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') + '.xlsx');
         }
 
         function updateProduct(code, field, value) {
