@@ -587,41 +587,18 @@
 
         function exportAssortment() {
             if (products.length === 0) { alert('Нет данных'); return; }
-            
-            // Группируем товары
+            // Группируем и сортируем как раньше
             const grouped = {};
             products.forEach(p => {
-                const gr = p.group || 'Без группы';
-                if (!grouped[gr]) grouped[gr] = [];
-                grouped[gr].push(p);
+                const g = p.group || 'Без группы';
+                if (!grouped[g]) grouped[g] = [];
+                grouped[g].push(p);
             });
-            
-            const headers = ['Группа', 'Наименование', 'Код', 'Упаковка', 'Поставщик', 'Цена', 'Цена на полке', 'Дом. полка', 'Квант', 'Объём'];
-            const data = [];
-            
-            // Сортируем группы и добавляем с группировкой
-            Object.keys(grouped).sort((a, b) => a.localeCompare(b, 'ru')).forEach((gr, grIdx) => {
-                grouped[gr].forEach(p => {
-                    data.push([
-                        p.group || '',
-                        p.nomenclature || '',
-                        p.code || '',
-                        p.packaging || 'ШТ',
-                        p.supplier || '',
-                        p.price || 0,
-                        p.shelfPrice || 0,
-                        p.shelf || 0,
-                        p.quant || 1,
-                        p.volume || 0
-                    ]);
-                });
-            });
-            
-            const ws = SharedUtils.createStyledSheet(data, headers, [0, 1]); // Группа и Наименование - по левому краю
-            
-            const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, 'Ассортимент');
-            XLSX.writeFile(wb, `ассортимент_${new Date().toISOString().slice(0, 10)}.xlsx`);
+            const sorted = Object.keys(grouped).sort((a, b) => a.localeCompare(b, 'ru'));
+            const sortedProducts = [];
+            sorted.forEach(g => sortedProducts.push(...grouped[g]));
+
+            SharedUtils.exportAssortmentUnified(sortedProducts, { mandatorySet: mandatoryProducts });
         }
 
         // === СОХРАНЕНИЕ И ЗАГРУЗКА АССОРТИМЕНТА ===
@@ -642,7 +619,8 @@
                 date: new Date().toISOString(),
                 count: products.length,
                 data: JSON.parse(JSON.stringify(products)),
-                mandatory: mandatory
+                mandatory: mandatory,
+                totalSales: products.reduce(function(sum, p) { return sum + (p.totalSales || 0); }, 0)
             };
             SharedUtils.save(ASSORTMENTS_KEY, saved);
         }
@@ -1869,6 +1847,28 @@
 
         // === FILE PARSING ===
         function handleFile(input, type) {
+            if (type === 'assortment') {
+                const file = input.files[0];
+                if (!file) return;
+                currentLoadedAssortment = null;
+                SharedUtils.importAssortmentUnified(file).then(function(result) {
+                    products = result.items;
+                    products.forEach(function(p) {
+                        if (!p.markup && p.markup !== 0) p.markup = defaultMarkup;
+                        if (!p.inPrice) p.inPrice = p.price || 0;
+                    });
+                    save(KEYS.PRODUCTS, products);
+                    syncToSavedAssortment();
+                    render();
+                    alert('Загружено товаров: ' + products.length);
+                }).catch(function(err) {
+                    alert('Ошибка импорта: ' + err.message);
+                    console.error(err);
+                });
+                input.value = '';
+                return;
+            }
+
             const file = input.files[0];
             if (!file) return;
 
@@ -1891,11 +1891,6 @@
                         const { items } = SharedUtils.parseWriteoffs(json);
                         writeoffs = items;
                         save(KEYS.WRITEOFFS, writeoffs);
-                    } else if (type === 'assortment') {
-                        currentLoadedAssortment = null;
-                        const { items, newShelf } = SharedUtils.parseAssortment(json);
-                        products = items;
-                        save(KEYS.PRODUCTS, products);
                     }
 
                     render();

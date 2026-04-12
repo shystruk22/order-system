@@ -136,7 +136,8 @@
                     group: p.group || '', packaging: p.packaging || 'ШТ',
                     supplier: p.supplier || '', price: p.price || 0,
                     inPrice: p.inPrice || 0, shelfPrice: p.shelfPrice || 0,
-                    shelf: p.shelf || 0, quant: p.quant || 1, volume: p.volume || 0, markup: p.markup || 0
+                    shelf: p.shelf || 0, quant: p.quant || 1, volume: p.volume || 0, markup: p.markup || 0,
+                    mandatory: p.mandatory || false
                 }))
             };
             SharedUtils.save(ASSORTMENTS_KEY, saved);
@@ -1354,55 +1355,59 @@
         }
 
         function importAssortment(input) {
-            resetSavedOrders();
-            currentLoadedAssortment = null;
+            if (!input || !input.files || !input.files[0]) return;
             const file = input.files[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                try {
-                    const data = new Uint8Array(e.target.result);
-                    const wb = XLSX.read(data, { type: 'array' });
-                    const json = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
-                    json.forEach(row => {
-                        const code = normCode(String(row['Код'] || ''));
-                        if (!code) return;
-                        const price = parseFloat(row['Цена'] || 0) || 0;
-                        matrix[code] = {
-                            nomenclature: String(row['Наименование'] || row['Номенклатура'] || '').trim(),
-                            code, group: String(row['Группа'] || row['Категория'] || '').trim(),
-                            packaging: String(row['Упак'] || 'ШТ').trim(),
-                            price: price,
-                            inPrice: parseFloat(row['Вх. цена'] || row['Цена'] || 0) || 0,
-                            shelfPrice: parseFloat(row['Цена на полке'] || 0) || 0,
-                            shelf: parseFloat(row['Дом. полка'] || 0) || 0,
-                            quant: parseFloat(row['Квант']) || 1,
-                            volume: parseFloat(row['Объём'] || row['Объем'] || 0) || 0,
-                            markup: defaultMarkup
-                        };
-                    });
-                    save(KEYS.ASSORTMENT, matrix);
-                    // Синхронизация supplierAssortment: добавить новые товары
-                    Object.keys(matrix).forEach(code => {
-                        if (!supplierAssortment[code]) supplierAssortment[code] = [];
-                    });
-                    save(KEYS.SUPPLIER_ASSORTMENT, supplierAssortment);
-                    render();
-                    alert(`Импортировано ${Object.keys(matrix).length} товаров\nОтметки матрицы не затронуты (${Object.keys(matrixMarks).length} товаров)`);
-                } catch (err) { alert('Ошибка: ' + err.message); }
-            };
-            reader.readAsArrayBuffer(file);
+            
+            SharedUtils.importAssortmentUnified(file).then(function(result) {
+                const items = result.items;
+                if (items.length === 0) {
+                    alert('Не найдено товаров в файле');
+                    return;
+                }
+                
+                const existingCount = Object.keys(matrix).length;
+                if (existingCount > 0) {
+                    if (!confirm('Загружено ' + items.length + ' товаров. Заменить текущий ассортимент (' + existingCount + ' товаров)?')) {
+                        input.value = '';
+                        return;
+                    }
+                }
+                
+                matrix = {};
+                items.forEach(function(p) {
+                    const code = normCode(p.code);
+                    matrix[code] = {
+                        code: code,
+                        nomenclature: p.nomenclature || '',
+                        group: p.group || '',
+                        packaging: p.packaging || 'ШТ',
+                        supplier: p.supplier || '',
+                        price: p.price || p.inPrice || 0,
+                        inPrice: p.inPrice || p.price || 0,
+                        shelfPrice: p.shelfPrice || 0,
+                        shelf: p.shelf || 0,
+                        quant: p.quant || 1,
+                        volume: p.volume || 0,
+                        markup: p.markup || defaultMarkup,
+                        mandatory: p.mandatory || false
+                    };
+                });
+                
+                save(KEYS.ASSORTMENT, matrix);
+                syncToSavedAssortment();
+                ensureSupplierAssortment();
+                render();
+                alert('Импортировано товаров: ' + items.length);
+            }).catch(function(err) {
+                alert('Ошибка импорта: ' + err.message);
+                console.error(err);
+            });
+            
             input.value = '';
         }
 
         function exportAssortment() {
-            const headers = ['Группа', 'Наименование', 'Код', 'Упаковка', 'Поставщик', 'Цена', 'Цена на полке', 'Дом. полка', 'Квант', 'Объём'];
-            const data = [];
-            Object.values(matrix).forEach(p => data.push([p.group || '', p.nomenclature || '', p.code, p.packaging || 'ШТ', p.supplier || '', p.price || 0, p.shelfPrice || 0, p.shelf || 0, p.quant || 1, p.volume || 0]));
-            const ws = SharedUtils.createStyledSheet(data, headers, [0, 1, 4]);
-            const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, 'Ассортимент');
-            const d = new Date(); XLSX.writeFile(wb, `ассортимент_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}.xlsx`);
+            SharedUtils.exportAssortmentUnified(Object.values(matrix));
         }
 
         // === МАТРИЦА ===

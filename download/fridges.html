@@ -1557,6 +1557,24 @@
 
         // File handling
         function handleFile(input, type) {
+            if (type === 'assortment') {
+                const file = input.files[0];
+                if (!file) return;
+                SharedUtils.importAssortmentUnified(file).then(function(result) {
+                    products = result.items;
+                    products.forEach(function(p) {
+                        if (!p.markup && p.markup !== 0) p.markup = defaultMarkup;
+                        if (!p.inPrice) p.inPrice = p.price || 0;
+                    });
+                    save(KEYS.PRODUCTS, products);
+                    render();
+                    alert('Загружено товаров: ' + products.length);
+                }).catch(function(err) {
+                    alert('Ошибка импорта: ' + err.message);
+                });
+                input.value = '';
+                return;
+            }
             const file = input.files[0];
             if (!file) return;
             const reader = new FileReader();
@@ -1566,15 +1584,7 @@
                     const wb = XLSX.read(data, { type: 'array' });
                     const json = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
 
-                    if (type === 'assortment') {
-                        const { items } = SharedUtils.parseAssortment(json);
-                        products = items;
-                        SharedUtils.save(KEYS.PRODUCTS, products);
-                        if (window.SharedData) SharedData.saveProducts(products, 'fridges');
-                        buildMatrix();
-                        render();
-                        alert(`Загружено ${items.length} товаров в ассортимент`);
-                    } else if (type === 'matrix') {
+                    if (type === 'matrix') {
                         const CATALOG_FIELDS = ['code','nomenclature','name','group','packaging','supplier','quant','price','inPrice','shelfPrice','shelf','markup','inMatrix'];
                         const headers = json[0] || [];
                         const tts = [];
@@ -1919,16 +1929,12 @@
 
         // Exports
         function exportAssortment() {
-            const headers = ['Группа','Наименование','Код','Упак.','Поставщик','Продажи','Цена','Закупка','Цена на полке','Дом. полка','Маржа','Квант','Объём'];
-            const rows = products.map(p => {
-                const totalSales = getTotalSales(p.code);
-                const margin = calcMargin(p);
-                return [p.group || '', p.nomenclature || p.name || '', p.code || '', p.packaging || 'ШТ', p.supplier || '', totalSales, p.price || 0, p.inPrice || 0, p.shelfPrice || 0, p.shelf || 0, margin, p.quant || 0, p.volume || 0];
+            // Build sales map for the unified export
+            var salesMap = {};
+            products.forEach(function(p) {
+                salesMap[p.code] = getTotalSales(p.code);
             });
-            const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-            const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, 'Ассортимент');
-            XLSX.writeFile(wb, 'fridge_assortment.xlsx');
+            SharedUtils.exportAssortmentUnified(products, { salesMap: salesMap, filename: 'fridge_assortment.xlsx' });
         }
 
         function exportAnalytics() {

@@ -154,7 +154,9 @@
                     group: p.group || '', packaging: p.packaging || 'ШТ',
                     supplier: p.supplier || '', price: p.price || 0,
                     inPrice: p.inPrice || 0, shelfPrice: p.shelfPrice || 0,
-                    shelf: p.shelf || 0, quant: p.quant || 1, volume: p.volume || 0, markup: p.markup || defaultMarkup
+                    shelf: p.shelf || 0, quant: p.quant || 1, volume: p.volume || 0,
+                    markup: p.markup || defaultMarkup,
+                    mandatory: p.mandatory || false, totalSales: p.totalSales || 0
                 }))
             };
             save(ASSORTMENTS_KEY, saved);
@@ -196,7 +198,9 @@
                         shelf: p.shelf || 0,
                         quant: p.quant || 1,
                         volume: p.volume || 0,
-                        markup: p.markup || defaultMarkup
+                        markup: p.markup || defaultMarkup,
+                        mandatory: p.mandatory || false,
+                        totalSales: p.totalSales || 0,
                     });
                 }
             });
@@ -231,7 +235,9 @@
                     group: p.group || '', packaging: p.packaging || 'ШТ',
                     supplier: p.supplier || '', price: p.price || 0,
                     inPrice: p.inPrice || 0, shelfPrice: p.shelfPrice || 0,
-                    shelf: p.shelf || 0, quant: p.quant || 1, volume: p.volume || 0, markup: p.markup || defaultMarkup
+                    shelf: p.shelf || 0, quant: p.quant || 1, volume: p.volume || 0,
+                    markup: p.markup || defaultMarkup, mandatory: p.mandatory || false,
+                    totalSales: p.totalSales || 0
                 }))
             };
             if (existingIdx >= 0) {
@@ -409,63 +415,36 @@
         // IMPORT FROM EXCEL
         // ============================================================================
         function importFromFile(input) {
+            if (!input || !input.files || !input.files[0]) return;
             const file = input.files[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                try {
-                    const data = new Uint8Array(e.target.result);
-                    const wb = XLSX.read(data, { type: 'array' });
-                    const sheet = wb.Sheets[wb.SheetNames[0]];
-
-                    // Try column-name approach first (universal style)
-                    let items = [];
-                    try {
-                        const json = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-                        json.forEach(row => {
-                            const code = normCode(String(row['Код'] || row['Код товара'] || ''));
-                            if (!code) return;
-                            const price = parseFloat(row['Цена'] || 0) || 0;
-                            items.push({
-                                code,
-                                nomenclature: String(row['Наименование'] || row['Номенклатура'] || '').trim(),
-                                group: String(row['Группа'] || row['Категория'] || '').trim(),
-                                packaging: String(row['Упак'] || row['Упаковка'] || 'ШТ').trim(),
-                                supplier: String(row['Поставщик'] || '').trim(),
-                                price,
-                                inPrice: parseFloat(row['Вх. цена'] || row['Цена'] || 0) || 0,
-                                shelfPrice: parseFloat(row['Цена на полке'] || 0) || 0,
-                                shelf: parseFloat(row['Дом. полка'] || 0) || 0,
-                                quant: parseFloat(row['Квант']) || 1,
-                                volume: parseFloat(row['Объём'] || row['Объем'] || 0) || 0,
-                                markup: defaultMarkup
-                            });
-                        });
-                    } catch (e1) {
-                        console.warn('Column-name import failed, trying index-based:', e1);
-                    }
-
-                    // Fallback to SharedUtils.parseAssortment (index-based)
-                    if (items.length === 0) {
-                        const rawJson = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
-                        const result = SharedUtils.parseAssortment(rawJson);
-                        items = result.items.map(item => ({ ...item, markup: defaultMarkup }));
-                    }
-
-                    if (items.length === 0) {
-                        alert('Не найдено товаров в файле. Проверьте формат.');
-                        return;
-                    }
-
-                    // Store for preview
-                    importPreviewData = items;
-                    renderImportPreview();
-                } catch (err) {
-                    console.error('Import error:', err);
-                    alert('Ошибка импорта: ' + err.message);
+            
+            SharedUtils.importAssortmentUnified(file).then(function(result) {
+                const items = result.items;
+                if (items.length === 0) {
+                    alert('Не найдено товаров в файле');
+                    return;
                 }
-            };
-            reader.readAsArrayBuffer(file);
+                
+                if (products.length > 0) {
+                    if (!confirm(`Найдено ${items.length} товаров. Заменить текущий ассортимент (${products.length} товаров)?`)) return;
+                }
+                
+                products = items;
+                // Ensure all products have required fields
+                products.forEach(function(p) {
+                    if (!p.markup && p.markup !== 0) p.markup = defaultMarkup;
+                    if (!p.inPrice) p.inPrice = p.price || 0;
+                });
+                
+                currentLoadedAssortment = null;
+                syncAll();
+                render();
+                alert('Загружено товаров: ' + items.length);
+            }).catch(function(err) {
+                alert('Ошибка импорта: ' + err.message);
+                console.error(err);
+            });
+            
             input.value = '';
         }
 
@@ -512,35 +491,26 @@
         // EXPORT TO EXCEL
         // ============================================================================
         function exportAssortment() {
-            if (products.length === 0) { alert('Нет данных для экспорта'); return; }
-            const headers = ['Группа', 'Наименование', 'Код', 'Упаковка', 'Поставщик', 'Цена', 'Цена на полке', 'Дом. полка', 'Квант', 'Объём'];
-            const data = products.map(p => [
-                p.group || '', p.nomenclature || '', p.code, p.packaging || 'ШТ',
-                p.supplier || '', p.price || 0, p.shelfPrice || 0, p.shelf || 0, p.quant || 1, p.volume || 0
-            ]);
-            const ws = SharedUtils.createStyledSheet(data, headers, [0, 1, 4]);
-            const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, 'Ассортимент');
-            const d = new Date();
-            XLSX.writeFile(wb, `ассортимент_${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}.xlsx`);
+            SharedUtils.exportAssortmentUnified(products);
         }
 
         function exportAllSavedLists() {
             const saved = getSavedAssortments();
             if (saved.length === 0) { alert('Нет сохранённых списков'); return; }
-            const headers = ['Список', 'Дата', 'Товаров', 'Группа', 'Наименование', 'Код', 'Упак.', 'Поставщик', 'Цена', 'Цена на полке', 'Дом. полка', 'Квант', 'Объём'];
+            const headers = ['Список', 'Дата', 'Товаров'].concat(SharedUtils.ASSORTMENT_HEADERS);
             const data = [];
             saved.forEach(s => {
                 (s.data || []).forEach((p, i) => {
-                    data.push([
-                        i === 0 ? s.name : '', i === 0 ? new Date(s.date).toLocaleDateString('ru-RU') : '',
-                        i === 0 ? s.count : '',
-                        p.group || '', p.nomenclature || '', p.code, p.packaging || 'ШТ',
-                        p.supplier || '', p.price || 0, p.shelfPrice || 0, p.shelf || 0, p.quant || 1, p.volume || 0
-                    ]);
+                    var isMandatory = p.mandatory || false;
+                    var inPrice = p.inPrice || p.price || 0;
+                    var shelfPrice = p.shelfPrice || 0;
+                    var income = shelfPrice - inPrice;
+                    var markup = inPrice > 0 ? (shelfPrice - inPrice) / inPrice * 100 : (p.markup || 0);
+                    var margin = shelfPrice > 0 ? (shelfPrice - inPrice) / shelfPrice * 100 : 0;
+                    data.push([i === 0 ? s.name : '', i === 0 ? new Date(s.date).toLocaleDateString('ru-RU') : '', i === 0 ? s.count : '', isMandatory ? '\u2B50' : '', p.group || '', p.nomenclature || '', p.code, p.packaging || 'ШТ', p.volume || 0, p.quant || 1, p.shelf || 0, p.supplier || '', p.totalSales || 0, inPrice, shelfPrice, Math.round(income * 100) / 100, Math.round(markup * 100) / 100, Math.round(margin * 100) / 100]);
                 });
             });
-            const ws = SharedUtils.createStyledSheet(data, headers, [0, 3, 4, 7]);
+            const ws = SharedUtils.createStyledSheet(data, headers, [0, 3, 4, 8]);
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, 'Списки');
             const d = new Date();
