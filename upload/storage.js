@@ -1,5 +1,6 @@
 /**
  * Storage — Синхронизация данных через Яндекс.Диск REST API
+ * v3.1 — +fish-order ключи (Заказ рыбы — облако)
  * 
  * Заменяет File System Access API на Yandex.Disk для работы с разных компьютеров.
  * При загрузке страницы: скачивает данные с Диска → записывает в localStorage
@@ -144,6 +145,17 @@
                 set('db_markups_v1', stores.db_markups);
                 set('db_sales_v1', stores.db_sales);
                 set('db_stocks_v1', stores.db_stocks);
+
+                // Специфичные для fish-order (Заказ рыбы — облако)
+                set('fish_assortment_v1', stores.fish_assortment);
+                set('fish_matrix_v1', stores.fish_matrix);
+                set('fish_sales_v1', stores.fish_sales);
+                set('fish_stocks_v1', stores.fish_stocks);
+                set('fish_schedule_v1', stores.fish_schedule);
+                set('fish_intransit_v1', stores.fish_intransit);
+                set('fish_supplier_assortment_v1', stores.fish_supplier_assortment);
+                set('fish_group_markups_v1', stores.fish_group_markups);
+                set('fish_new_group_markups_v1', stores.fish_new_group_markups);
             }
 
             // Сбрасываем флаг изменений
@@ -218,7 +230,18 @@
                 db_stores: get('db_stores_v1'),
                 db_markups: get('db_markups_v1'),
                 db_sales: get('db_sales_v1'),
-                db_stocks: get('db_stocks_v1')
+                db_stocks: get('db_stocks_v1'),
+
+                // fish-order (Заказ рыбы — облако)
+                fish_assortment: get('fish_assortment_v1'),
+                fish_matrix: get('fish_matrix_v1'),
+                fish_sales: get('fish_sales_v1'),
+                fish_stocks: get('fish_stocks_v1'),
+                fish_schedule: get('fish_schedule_v1'),
+                fish_intransit: get('fish_intransit_v1'),
+                fish_supplier_assortment: get('fish_supplier_assortment_v1'),
+                fish_group_markups: get('fish_group_markups_v1'),
+                fish_new_group_markups: get('fish_new_group_markups_v1')
             }
         };
     }

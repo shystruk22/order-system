@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -124,6 +125,9 @@
         let planogramProducts = {};
         // Планограмма — состояние
         let planogramSearch = '';
+        let groupMarkups = {};
+        let newGroupMarkups = {};
+        let defaultMarkup = 25;
         let planogramCategory = '';
         let planogramSelectedProduct = null; // { code, nomenclature, group }
         let planogramPlacedCodes = new Set(); // коды уже размещённых товаров
@@ -147,7 +151,9 @@
             WRITEOFFS: SharedUtils.STORAGE_KEYS.FRIDGE_WRITEOFFS,
             SALES: SharedUtils.STORAGE_KEYS.FRIDGE_SALES,
             STORES: SharedUtils.STORAGE_KEYS.STORES,
-            PLANOGRAMS: SharedUtils.STORAGE_KEYS.FRIDGE_PLANOGRAMS
+            PLANOGRAMS: SharedUtils.STORAGE_KEYS.FRIDGE_PLANOGRAMS,
+            GROUP_MARKUPS: 'fridge_group_markups_v1',
+            NEW_GROUP_MARKUPS: 'fridge_new_group_markups_v1'
         };
 
         const CATEGORIES_FRIDGE = ['Молочные продукты', 'Мясные изделия', 'Напитки', 'Кондитерские изделия', 'Замороженные продукты', 'Овощи и фрукты', 'Хлебобулочные изделия', 'Соусы и приправы'];
@@ -308,6 +314,8 @@
             stores = load(KEYS.STORES, []);
             planograms = load(KEYS.PLANOGRAMS, {});
             planogramTemplates = JSON.parse(localStorage.getItem('fridge_planogram_templates') || '{}');
+            groupMarkups = load(KEYS.GROUP_MARKUPS, {});
+            newGroupMarkups = load(KEYS.NEW_GROUP_MARKUPS, {});
 
             buildMatrix();
 
@@ -352,6 +360,7 @@
                 { id: 'assortment', label: 'Ассортимент', icon: icons.package },
                 { id: 'matrix', label: 'Матрица', icon: icons.grid },
                 { id: 'planogram', label: 'Планограмма', icon: icons.layers },
+                { id: 'prices', label: 'Цены', icon: icons.dollar },
                 { id: 'analytics', label: 'Аналитика', icon: icons.chart }
             ];
 
@@ -371,6 +380,7 @@
                 case 'assortment': el.innerHTML = renderAssortment(); break;
                 case 'matrix': el.innerHTML = renderMatrix(); break;
                 case 'planogram': el.innerHTML = renderPlanogram(); requestAnimationFrame(() => equalizeShelfHeights()); break;
+                case 'prices': el.innerHTML = renderFridgePrices(); break;
                 case 'analytics': el.innerHTML = renderAnalytics(); break;
             }
         }
@@ -1487,6 +1497,122 @@
             render();
         }
 
+        // === ЦЕНЫ ===
+        function renderFridgePrices() {
+            if (products.length === 0) {
+                return `<div class="bg-white rounded-lg border border-gray-200 p-6 text-center text-gray-400">
+                    <p class="mb-2">Нет товаров. Загрузите ассортимент через вкладку "Загрузка".</p>
+                </div>`;
+            }
+
+            const grouped = {};
+            products.forEach(p => {
+                const gr = p.group || p.category || 'Без группы';
+                if (!grouped[gr]) grouped[gr] = [];
+                grouped[gr].push(p);
+            });
+
+            let html = `<div class="bg-white rounded-lg border border-gray-200 p-4">
+                <div class="flex justify-between items-center mb-3">
+                    <h2 class="text-base font-semibold text-gray-900 flex items-center gap-2">${icons.dollar}Цены по товарам</h2>
+                    <div class="flex gap-2 items-center">
+                        <div class="flex items-center gap-1.5 bg-gray-50 px-3 py-1.5 rounded-lg border">
+                            <label class="text-xs text-gray-600">Наценка по умолч.:</label>
+                            <input type="number" value="${defaultMarkup}" onchange="defaultMarkup=parseFloat(this.value)||25;save(KEYS.GROUP_MARKUPS,groupMarkups)" class="border border-gray-300 rounded px-2 py-1 text-xs text-center w-14 font-bold text-blue-700" step="0.1">
+                            <span class="text-xs text-gray-400">%</span>
+                        </div>
+                        <button onclick="exportFridgePrices()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg">${icons.download} Экспорт</button>
+                    </div>
+                </div>
+                <div class="overflow-auto" style="max-height:75vh">
+                    <table class="w-full text-sm">
+                        <thead class="bg-gray-50 text-gray-600 sticky top-0 z-10">
+                            <tr>
+                                <th class="px-2 py-2 font-medium text-[10px] text-left">Группа</th>
+                                <th class="px-2 py-2 font-medium text-[10px] text-left">Наименование</th>
+                                <th class="px-2 py-2 font-medium text-[10px] text-center">Код</th>
+                                <th class="px-2 py-2 font-medium text-[10px] text-center">Вх. цена</th>
+                                <th class="px-2 py-2 font-medium text-[10px] text-center bg-green-100">Цена на полке</th>
+                                <th class="px-2 py-2 font-medium text-[10px] text-center">Доход</th>
+                                <th class="px-2 py-2 font-medium text-[10px] text-center">Маржа %</th>
+                                <th class="px-2 py-2 font-medium text-[10px] text-center bg-orange-100">Наценка %</th>
+                                <th class="px-2 py-2 font-medium text-[10px] text-center bg-blue-100">Новая нац. %</th>
+                                <th class="px-2 py-2 font-medium text-[10px] text-center bg-cyan-100">Новая цена</th>
+                                <th class="px-2 py-2 font-medium text-[10px] text-center bg-cyan-100">Нов. доход</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-100">`;
+
+            Object.entries(grouped).sort((a, b) => a[0].localeCompare(b[0], 'ru')).forEach(([gr, items]) => {
+                html += `<tr class="bg-emerald-100"><td colspan="11" class="px-2 py-1 font-medium text-emerald-800 text-xs">
+                    <div class="flex items-center gap-2">
+                        <span>${gr}</span><span class="text-[10px] opacity-70">(${items.length})</span>
+                        <span class="ml-2 text-[10px] text-gray-400">Новая наценка:</span>
+                        <input type="number" value="${newGroupMarkups[gr] ?? ''}" oninput="updateFridgeNewGroupMarkup('${gr.replace(/'/g, "\\'")}', this.value)" placeholder="${defaultMarkup}" class="border border-blue-200 rounded px-1 py-0.5 text-[11px] text-center w-14 font-bold bg-blue-50" step="0.1">
+                        <span class="text-[10px] text-gray-400">%</span>
+                    </div>
+                </td></tr>`;
+                items.forEach(p => {
+                    const nc = normCode(p.code);
+                    const inPrice = parseFloat(p.inPrice) || 0;
+                    const markup = groupMarkups[p.group || p.category || ''] ?? defaultMarkup;
+                    const shelfPrice = parseFloat(p.shelfPrice) > 0 ? parseFloat(p.shelfPrice) : Math.round(inPrice * (1 + markup / 100));
+                    const income = shelfPrice - inPrice;
+                    const marginPct = shelfPrice > 0 ? ((income / shelfPrice) * 100).toFixed(1) : '0.0';
+                    const markupPct = inPrice > 0 ? ((income / inPrice) * 100).toFixed(1) : '0.0';
+                    const nm = newGroupMarkups[gr] ?? null;
+                    const newPrice = nm !== null && inPrice > 0 ? Math.round(inPrice * (1 + nm / 100)) : null;
+                    const newIncome = newPrice !== null ? newPrice - inPrice : null;
+                    html += `<tr class="hover:bg-gray-50" style="height:28px">
+                        <td class="px-2 py-1 text-[10px] text-gray-700">${gr}</td>
+                        <td class="px-2 py-1 text-xs font-medium text-gray-900">${p.nomenclature || p.name || '—'}</td>
+                        <td class="px-2 py-1 font-mono text-[10px] text-gray-500 text-center">${nc}</td>
+                        <td class="px-2 py-1 text-center"><input type="number" value="${inPrice}" onchange="editProductField('${nc.replace(/'/g, "\\'")}', 'inPrice', this.value, false)" class="border border-gray-300 rounded px-1 py-0.5 text-[10px] text-center w-16"></td>
+                        <td class="px-2 py-1 text-center font-semibold bg-green-50">${shelfPrice.toLocaleString('ru-RU')} ₽</td>
+                        <td class="px-2 py-1 text-center font-medium ${income > 0 ? 'text-emerald-600' : 'text-gray-400'}">${income.toLocaleString('ru-RU')} ₽</td>
+                        <td class="px-2 py-1 text-center ${parseFloat(marginPct) > 0 ? 'text-emerald-600' : 'text-gray-400'}">${marginPct}%</td>
+                        <td class="px-2 py-1 text-center bg-orange-50 font-medium">${markupPct}%</td>
+                        <td class="px-2 py-1 text-center bg-blue-50 font-medium ${nm !== null ? 'text-blue-700' : 'text-gray-400'}">${nm !== null ? nm + '%' : '—'}</td>
+                        <td class="px-2 py-1 text-center bg-cyan-50 font-semibold ${newPrice !== null ? 'text-cyan-700' : 'text-gray-400'}">${newPrice !== null ? newPrice.toLocaleString('ru-RU') + ' ₽' : '—'}</td>
+                        <td class="px-2 py-1 text-center bg-cyan-50 font-medium ${newIncome !== null && newIncome > 0 ? 'text-emerald-600' : 'text-gray-400'}">${newIncome !== null ? newIncome.toLocaleString('ru-RU') + ' ₽' : '—'}</td>
+                    </tr>`;
+                });
+            });
+
+            html += '</tbody></table></div></div>';
+            return html;
+        }
+
+        function updateFridgeNewGroupMarkup(group, value) {
+            if (value === '' || value === null) delete newGroupMarkups[group];
+            else newGroupMarkups[group] = parseFloat(value) || 0;
+            save(KEYS.NEW_GROUP_MARKUPS, newGroupMarkups);
+            render();
+        }
+
+        function exportFridgePrices() {
+            if (products.length === 0) return;
+            const headers = ['Группа', 'Наименование', 'Код', 'Вх. цена', 'Цена на полке', 'Доход', 'Маржа %', 'Наценка %', 'Новая наценка %', 'Новая цена', 'Новый доход'];
+            const data = [];
+            products.forEach(p => {
+                const inPrice = parseFloat(p.inPrice) || 0;
+                const markup = groupMarkups[p.group || p.category || ''] ?? defaultMarkup;
+                const shelfPrice = parseFloat(p.shelfPrice) > 0 ? parseFloat(p.shelfPrice) : Math.round(inPrice * (1 + markup / 100));
+                const income = shelfPrice - inPrice;
+                const marginPct = shelfPrice > 0 ? ((income / shelfPrice) * 100).toFixed(1) : '0.0';
+                const markupPct = inPrice > 0 ? ((income / inPrice) * 100).toFixed(1) : '0.0';
+                const nm = newGroupMarkups[p.group || p.category || ''] ?? null;
+                const newPrice = nm !== null && inPrice > 0 ? Math.round(inPrice * (1 + nm / 100)) : null;
+                const newIncome = newPrice !== null ? newPrice - inPrice : null;
+                data.push([p.group || '', p.nomenclature || p.name || '', p.code || '', inPrice, shelfPrice, income, marginPct + '%', markupPct + '%', nm !== null ? nm + '%' : '', newPrice || '', newIncome || '']);
+            });
+            const ws = XLSX.utils.aoa_to_sheet(data);
+            ws['!cols'] = [{wch:15},{wch:40},{wch:14},{wch:10},{wch:12},{wch:10},{wch:10},{wch:10},{wch:12},{wch:12},{wch:12}];
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Цены');
+            const d = new Date(); XLSX.writeFile(wb, `цены_холодильники_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}.xlsx`);
+        }
+
         function renderAnalytics() {
             if (analysis.length === 0) {
                 return `<div class="bg-white rounded-lg border border-gray-200 p-4">
@@ -1974,7 +2100,7 @@
         // Инициализируем сразу с локальными данными
         init();
 
-        // После загрузки из облака — перечитываем данные и перерисовываем
+        // После загрузки из облака — перечитываем ВСЕ данные и перерисовываем
         window.addEventListener('cloudStorageReady', () => {
             products = load(KEYS.PRODUCTS, []);
             if (!Array.isArray(products)) products = [];
@@ -1984,6 +2110,8 @@
             stores = load(KEYS.STORES, []);
             planograms = load(KEYS.PLANOGRAMS, {});
             planogramTemplates = JSON.parse(localStorage.getItem('fridge_planogram_templates') || '{}');
+            groupMarkups = load(KEYS.GROUP_MARKUPS, {});
+            newGroupMarkups = load(KEYS.NEW_GROUP_MARKUPS, {});
             buildMatrix();
             render();
         });

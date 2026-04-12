@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -83,6 +84,7 @@
         let collapsedG = {};
         let collapsedTT = {};
         let groupMarkups = {};
+        let newGroupMarkups = {};
         let searchAnalytics = '';
         let filterAnalyticsGroup = '';
         let savedOrderResults = null; // Сохранённые результаты расчёта заказа
@@ -100,7 +102,8 @@
             SUPPLIERS: SharedUtils.STORAGE_KEYS.UNIV_SUPPLIERS,
             CURRENT_SUPPLIER: SharedUtils.STORAGE_KEYS.UNIV_CURRENT_SUPPLIER,
             DEFAULT_MARKUP: SharedUtils.STORAGE_KEYS.UNIV_DEFAULT_MARKUP,
-            GROUP_MARKUPS: SharedUtils.STORAGE_KEYS.UNIV_GROUP_MARKUPS
+            GROUP_MARKUPS: SharedUtils.STORAGE_KEYS.UNIV_GROUP_MARKUPS,
+            NEW_GROUP_MARKUPS: 'univ_new_group_markups_v1'
         };
 
         // Поля каталога товаров (не ДА/НЕТ)
@@ -395,6 +398,7 @@
             currentSupplier = load(KEYS.CURRENT_SUPPLIER, '');
             defaultMarkup = load(KEYS.DEFAULT_MARKUP, 25);
             groupMarkups = load(KEYS.GROUP_MARKUPS, {});
+            newGroupMarkups = load(KEYS.NEW_GROUP_MARKUPS, {});
 
             // Загрузка с миграцией: старый формат (всё в matrix) → новый (matrix + matrixMarks)
             const savedAssort = load(KEYS.ASSORTMENT, null);
@@ -748,6 +752,7 @@
                 sales: JSON.parse(JSON.stringify(sales)),
                 stocks: JSON.parse(JSON.stringify(stocks)),
                 groupMarkups: JSON.parse(JSON.stringify(groupMarkups)),
+                newGroupMarkups: JSON.parse(JSON.stringify(newGroupMarkups)),
                 date: new Date().toLocaleDateString('ru-RU')
             };
             
@@ -776,6 +781,7 @@
             sales = JSON.parse(JSON.stringify(s.sales || []));
             stocks = JSON.parse(JSON.stringify(s.stocks || []));
             groupMarkups = JSON.parse(JSON.stringify(s.groupMarkups || {}));
+            newGroupMarkups = JSON.parse(JSON.stringify(s.newGroupMarkups || {}));
             currentSupplier = s.name;
             
             save(KEYS.ASSORTMENT, matrix);
@@ -1176,7 +1182,6 @@
             let totalRevenue = 0, totalProfit = 0, totalPurchase = 0;
             
             sales.forEach(s => {
-                // Ищем товар по коду (основной формат) или по названию (fallback)
                 const nc = s.code ? normCode(s.code) : null;
                 const product = nc ? matrix[nc] : 
                     (s.name ? Object.values(matrix).find(p => p.nomenclature === s.name) : null);
@@ -1253,11 +1258,14 @@
                                     <th class="text-left">Группа</th>
                                     <th class="text-left">Наименование</th>
                                     <th class="text-center">Код</th>
-                                    <th class="text-center">Вход. цена</th>
+                                    <th class="text-center">Вх. цена</th>
                                     <th class="text-center bg-green-100">Цена на полке</th>
-                                    <th class="text-center bg-orange-100">Наценка %</th>
                                     <th class="text-center">Доход ₽</th>
-                                    <th class="text-center">Доход %</th>
+                                    <th class="text-center">Маржа %</th>
+                                    <th class="text-center bg-orange-100">Наценка %</th>
+                                    <th class="text-center bg-blue-100">Новая наценка %</th>
+                                    <th class="text-center bg-cyan-100">Новая цена</th>
+                                    <th class="text-center bg-cyan-100">Новый доход ₽</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -1274,22 +1282,27 @@
                                     });
                                     return Object.entries(grouped).sort((a,b) => a[0].localeCompare(b[0], 'ru')).map(([gr, items]) => `
                                         <tr class="group-header cursor-pointer" onclick="collapsedG['prices_${esc(gr)}']=!collapsedG['prices_${esc(gr)}'];renderPricesDebounced()">
-                                            <td colspan="8" class="text-left py-1 px-2">
+                                            <td colspan="11" class="text-left py-1 px-2">
                                                 <div class="flex items-center gap-2">
                                                     ${collapsedG['prices_' + gr] ? icons.chevronRight : icons.chevronDown}
                                                     <span class="font-semibold">${gr}</span>
                                                     <span class="text-[10px] bg-indigo-200 text-indigo-800 px-1 rounded">${items.length}</span>
+                                                    <span class="ml-2 text-[10px] text-gray-400">Новая наценка:</span>
+                                                    <input type="number" value="${newGroupMarkups[gr] ?? ''}" onclick="event.stopPropagation()" oninput="updateNewGroupMarkup('${esc(gr)}', this.value)" placeholder="${defaultMarkup}" class="input w-14 text-center text-xs font-bold py-0.5 bg-blue-50 border-blue-200" step="0.1">
+                                                    <span class="text-[10px] text-gray-400">%</span>
                                                 </div>
                                             </td>
                                         </tr>
                                         ${collapsedG['prices_' + gr] ? '' : items.map(p => {
                                             const inPrice = p.inPrice || 0;
                                             const markup = p.markup ?? groupMarkups[p.group || ''] ?? defaultMarkup;
-                                            // Если задана цена на полке вручную — используем её, иначе считаем из наценки
                                             const shelfPrice = p.shelfPrice > 0 ? p.shelfPrice : Math.round(inPrice * (1 + markup / 100));
-                                            const effectiveMarkup = inPrice > 0 ? Math.round(((shelfPrice - inPrice) / inPrice) * 100) : markup;
-                                            const profit = shelfPrice - inPrice;
-                                            const profitPercent = inPrice > 0 ? ((profit / inPrice) * 100).toFixed(1) : 0;
+                                            const income = shelfPrice - inPrice;
+                                            const marginPct = shelfPrice > 0 ? ((income / shelfPrice) * 100).toFixed(1) : '0.0';
+                                            const markupPct = inPrice > 0 ? ((income / inPrice) * 100).toFixed(1) : '0.0';
+                                            const newMarkup = newGroupMarkups[gr] ?? null;
+                                            const newPrice = newMarkup !== null && inPrice > 0 ? Math.round(inPrice * (1 + newMarkup / 100)) : null;
+                                            const newIncome = newPrice !== null ? newPrice - inPrice : null;
                                             const hasIndividual = p.markup !== undefined && p.markup !== null;
                                             return `
                                                 <tr class="hover:bg-gray-50">
@@ -1298,9 +1311,12 @@
                                                     <td class="text-center font-mono text-[10px] text-gray-500">${p.code}</td>
                                                     <td class="text-center"><input type="number" value="${inPrice}" oninput="handlePriceInput(this)" class="input w-20 text-center text-xs"></td>
                                                     <td class="text-center font-semibold bg-green-50" id="shelf_${p.code}">${shelfPrice.toLocaleString('ru-RU')} ₽</td>
-                                                    <td class="text-center bg-orange-50"><input type="number" value="${hasIndividual ? p.markup : ''}" oninput="handleMarkupInput(this)" placeholder="${groupMarkups[p.group || ''] ?? defaultMarkup}" class="input w-14 text-center text-xs font-bold ${hasIndividual ? 'text-blue-700' : ''}"></td>
-                                                    <td class="text-center font-medium ${profit > 0 ? 'text-emerald-600' : 'text-gray-500'}">${profit.toLocaleString('ru-RU')} ₽</td>
-                                                    <td class="text-center font-medium ${profit > 0 ? 'text-emerald-600' : 'text-gray-500'}">${profitPercent}%</td>
+                                                    <td class="text-center font-medium ${income > 0 ? 'text-emerald-600' : 'text-gray-500'}">${income.toLocaleString('ru-RU')} ₽</td>
+                                                    <td class="text-center ${parseFloat(marginPct) > 0 ? 'text-emerald-600' : 'text-gray-500'}">${marginPct}%</td>
+                                                    <td class="text-center bg-orange-50 font-medium">${markupPct}%</td>
+                                                    <td class="text-center bg-blue-50 font-medium ${newMarkup !== null ? 'text-blue-700' : 'text-gray-400'}">${newMarkup !== null ? newMarkup + '%' : '—'}</td>
+                                                    <td class="text-center bg-cyan-50 font-semibold ${newPrice !== null ? 'text-cyan-700' : 'text-gray-400'}">${newPrice !== null ? newPrice.toLocaleString('ru-RU') + ' ₽' : '—'}</td>
+                                                    <td class="text-center bg-cyan-50 font-medium ${newIncome !== null && newIncome > 0 ? 'text-emerald-600' : 'text-gray-400'}">${newIncome !== null ? newIncome.toLocaleString('ru-RU') + ' ₽' : '—'}</td>
                                                 </tr>`;
                                         }).join('')}
                                     `).join('');
@@ -1317,6 +1333,38 @@
             else groupMarkups[group] = parseFloat(value) || 0;
             save(KEYS.GROUP_MARKUPS, groupMarkups);
             render();
+        }
+
+        function updateNewGroupMarkup(group, value) {
+            if (value === '' || value === null) delete newGroupMarkups[group];
+            else newGroupMarkups[group] = parseFloat(value) || 0;
+            save(KEYS.NEW_GROUP_MARKUPS, newGroupMarkups);
+            // Быстрое обновление таблицы без полного рендера
+            const tbody = document.querySelector('.table-container tbody');
+            if (!tbody) return;
+            const rows = tbody.querySelectorAll('tr');
+            let inGroup = false;
+            rows.forEach(row => {
+                if (row.classList.contains('group-header')) {
+                    inGroup = false;
+                    const text = row.textContent || '';
+                    if (text.includes(group)) inGroup = true;
+                    return;
+                }
+                if (!inGroup) return;
+                const cells = row.querySelectorAll('td');
+                if (cells.length < 11) return;
+                const inPrice = parseFloat(cells[3].querySelector('input')?.value) || 0;
+                const nm = newGroupMarkups[group] ?? null;
+                const newPrice = nm !== null && inPrice > 0 ? Math.round(inPrice * (1 + nm / 100)) : null;
+                const newIncome = newPrice !== null ? newPrice - inPrice : null;
+                cells[8].innerHTML = nm !== null ? nm + '%' : '—';
+                cells[8].className = 'text-center bg-blue-50 font-medium ' + (nm !== null ? 'text-blue-700' : 'text-gray-400');
+                cells[9].innerHTML = newPrice !== null ? newPrice.toLocaleString('ru-RU') + ' ₽' : '—';
+                cells[9].className = 'text-center bg-cyan-50 font-semibold ' + (newPrice !== null ? 'text-cyan-700' : 'text-gray-400');
+                cells[10].innerHTML = newIncome !== null ? newIncome.toLocaleString('ru-RU') + ' ₽' : '—';
+                cells[10].className = 'text-center bg-cyan-50 font-medium ' + (newIncome !== null && newIncome > 0 ? 'text-emerald-600' : 'text-gray-400');
+            });
         }
 
         function updateProductMarkup(code, value) {
@@ -1344,55 +1392,45 @@
 
             const markup = product.markup ?? groupMarkups[product.group || ''] ?? defaultMarkup;
             const shelfPrice = Math.round(val * (1 + markup / 100));
-            const profit = shelfPrice - val;
-            const profitPercent = val > 0 ? ((profit / val) * 100).toFixed(1) : 0;
+            const income = shelfPrice - val;
+            const marginPct = shelfPrice > 0 ? ((income / shelfPrice) * 100).toFixed(1) : '0.0';
+            const markupPct = val > 0 ? ((income / val) * 100).toFixed(1) : '0.0';
 
             const cells = row.querySelectorAll('td');
             cells[4].innerHTML = shelfPrice.toLocaleString('ru-RU') + ' ₽';
-            cells[6].innerHTML = profit.toLocaleString('ru-RU') + ' ₽';
-            cells[7].innerHTML = profitPercent + '%';
-            cells[6].className = 'text-center font-medium ' + (profit > 0 ? 'text-emerald-600' : 'text-gray-500');
-            cells[7].className = 'text-center font-medium ' + (profit > 0 ? 'text-emerald-600' : 'text-gray-500');
-        }
+            cells[5].innerHTML = income.toLocaleString('ru-RU') + ' ₽';
+            cells[5].className = 'text-center font-medium ' + (income > 0 ? 'text-emerald-600' : 'text-gray-500');
+            cells[6].innerHTML = marginPct + '%';
+            cells[6].className = 'text-center ' + (parseFloat(marginPct) > 0 ? 'text-emerald-600' : 'text-gray-500');
+            cells[7].innerHTML = markupPct + '%';
 
-        function handleMarkupInput(inputEl) {
-            const row = inputEl.closest('tr');
-            if (!row) return;
-            const codeCell = row.querySelectorAll('td')[2];
-            const code = normCode(codeCell.textContent.trim());
-            const product = matrix[code];
-            if (!product) return;
-
-            const val = inputEl.value === '' ? null : (parseFloat(inputEl.value) || 0);
-            if (val === null) delete product.markup;
-            else product.markup = val;
-            save(KEYS.ASSORTMENT, matrix);
-
-            const effectiveMarkup = val ?? groupMarkups[product.group || ''] ?? defaultMarkup;
-            const inPrice = product.inPrice || 0;
-            const shelfPrice = Math.round(inPrice * (1 + effectiveMarkup / 100));
-            const profit = shelfPrice - inPrice;
-            const profitPercent = inPrice > 0 ? ((profit / inPrice) * 100).toFixed(1) : 0;
-
-            const cells = row.querySelectorAll('td');
-            cells[4].innerHTML = shelfPrice.toLocaleString('ru-RU') + ' ₽';
-            cells[6].innerHTML = profit.toLocaleString('ru-RU') + ' ₽';
-            cells[7].innerHTML = profitPercent + '%';
-            cells[6].className = 'text-center font-medium ' + (profit > 0 ? 'text-emerald-600' : 'text-gray-500');
-            cells[7].className = 'text-center font-medium ' + (profit > 0 ? 'text-emerald-600' : 'text-gray-500');
-            inputEl.className = 'input w-14 text-center text-xs font-bold ' + (val !== null ? 'text-blue-700' : '');
+            // Обновить колонки Новая цена / Новый доход
+            const gr = product.group || 'Без группы';
+            const nm = newGroupMarkups[gr] ?? null;
+            const newPrice = nm !== null && val > 0 ? Math.round(val * (1 + nm / 100)) : null;
+            const newIncome = newPrice !== null ? newPrice - val : null;
+            cells[8].innerHTML = nm !== null ? nm + '%' : '—';
+            cells[8].className = 'text-center bg-blue-50 font-medium ' + (nm !== null ? 'text-blue-700' : 'text-gray-400');
+            cells[9].innerHTML = newPrice !== null ? newPrice.toLocaleString('ru-RU') + ' ₽' : '—';
+            cells[9].className = 'text-center bg-cyan-50 font-semibold ' + (newPrice !== null ? 'text-cyan-700' : 'text-gray-400');
+            cells[10].innerHTML = newIncome !== null ? newIncome.toLocaleString('ru-RU') + ' ₽' : '—';
+            cells[10].className = 'text-center bg-cyan-50 font-medium ' + (newIncome !== null && newIncome > 0 ? 'text-emerald-600' : 'text-gray-400');
         }
 
         function exportPrices() {
-            const headers = ['Группа', 'Наименование', 'Код', 'Вход. цена', 'Наценка %', 'Цена на полке', 'Доход ₽', 'Доход %'];
+            const headers = ['Группа', 'Наименование', 'Код', 'Вх. цена', 'Цена на полке', 'Доход ₽', 'Маржа %', 'Наценка %', 'Новая наценка %', 'Новая цена', 'Новый доход ₽'];
             const data = [];
             Object.entries(matrix).forEach(([code, p]) => {
                 const inPrice = p.inPrice || 0;
                 const markup = p.markup ?? groupMarkups[p.group || ''] ?? defaultMarkup;
                 const shelfPrice = p.shelfPrice > 0 ? p.shelfPrice : Math.round(inPrice * (1 + markup / 100));
-                const effectiveMarkup = p.shelfPrice > 0 ? Math.round(((p.shelfPrice - inPrice) / inPrice) * 100) : markup;
-                const profit = shelfPrice - inPrice;
-                data.push([p.group || '', p.nomenclature || '', code, inPrice, effectiveMarkup, shelfPrice, profit, inPrice > 0 ? ((profit / inPrice) * 100).toFixed(1) + '%' : '0%']);
+                const income = shelfPrice - inPrice;
+                const marginPct = shelfPrice > 0 ? ((income / shelfPrice) * 100).toFixed(1) : '0.0';
+                const markupPct = inPrice > 0 ? ((income / inPrice) * 100).toFixed(1) : '0.0';
+                const nm = newGroupMarkups[p.group || ''] ?? null;
+                const newPrice = nm !== null && inPrice > 0 ? Math.round(inPrice * (1 + nm / 100)) : null;
+                const newIncome = newPrice !== null ? newPrice - inPrice : null;
+                data.push([p.group || '', p.nomenclature || '', code, inPrice, shelfPrice, income, marginPct + '%', markupPct + '%', nm !== null ? nm + '%' : '', newPrice || '', newIncome || '']);
             });
             const ws = SharedUtils.createStyledSheet(data, headers, [0, 1]);
             const wb = XLSX.utils.book_new();
@@ -2423,11 +2461,20 @@
             try { init(); } catch(e) { console.error('Init error:', e); document.getElementById('content').innerHTML = '<div class="p-4 text-red-600">Ошибка инициализации: ' + e.message + '</div>'; }
         }
 
-        // После загрузки из облака — перечитываем данные и перерисовываем
+        // После загрузки из облака — перечитываем ВСЕ данные и перерисовываем
         window.addEventListener('cloudStorageReady', () => {
             loadStoresFromHTML();
+            // Перечитываем ассортимент и матрицу
+            const freshAssort = load(KEYS.ASSORTMENT, null);
+            const freshMarks = load(KEYS.MATRIX_MARKS, null);
+            if (freshAssort !== null) matrix = freshAssort;
+            if (freshMarks !== null) matrixMarks = freshMarks;
             sales = load(KEYS.SALES, []);
             stocks = load(KEYS.STOCKS, []);
+            suppliers = load(KEYS.SUPPLIERS, []);
+            defaultMarkup = load(KEYS.DEFAULT_MARKUP, 25);
+            groupMarkups = load(KEYS.GROUP_MARKUPS, {});
+            newGroupMarkups = load(KEYS.NEW_GROUP_MARKUPS, {});
             render();
         });
     </script>
