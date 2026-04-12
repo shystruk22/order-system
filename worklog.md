@@ -1,19 +1,21 @@
 ---
 Task ID: 1
-Agent: Main
-Task: Унифицировать структуру файла ассортимента — единый формат экспорта/импорта для всех 5 файлов
+Agent: main
+Task: Fix 4 issues in fish-order.html v3.8
 
 Work Log:
-- Изучил текущие функции экспорта/импорта во всех 5 файлах (assortment.html, matrix-calc.html, fridges.html, fish-order.html, universal.html)
-- Определил единую структуру 15 колонок: ⭐, Группа, Наименование, Код, Упак., Объём, Квант, Дом. полка, Поставщик, Продажи, Цена входящая, Цена на полке, Доход, Наценка %, Маржа %
-- Обновил shared-utils.js до v3.2: добавил exportAssortmentUnified() и importAssortmentUnified()
-- Обновил все 5 файлов: экспорт → SharedUtils.exportAssortmentUnified(), импорт → SharedUtils.importAssortmentUnified()
-- Обновил syncToSavedAssortment() во всех файлах для сохранения mandatory и totalSales
-- Обновил saveToAssortmentList() и loadAssortmentByName() в assortment.html
+- Read uploaded screenshot and analyzed fish-order.html (2881 lines)
+- Identified 4 issues: (1) days of presence not parsed, (2) suppliers not pulled from assortment, (3) incorrect calculation, (4) inconsistent button styles
+- Fixed ensureSupplierAssortment() to auto-extract suppliers from matrix[code].supplier, auto-create deliverySchedule entries, and populate supplierPrices from inPrice
+- Replaced parseStocksLocal with SharedUtils.parseStocks for consistent parsing, added productName→name mapping and diagnostic logging
+- Fixed calculation: when daysUntil=99 (no delivery schedule), fallback to period instead of using 99; added effectiveDays fallback when daysPresent=0
+- Added daysPresent and effectiveDays to result objects for proper tooltip display
+- Unified all button styles to consistent pattern: inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg
+- Added Итого row to delivery schedule table showing aggregated day counts per supplier
+- Added weekend column highlighting (Сб, Вс columns get bg-red-50/100)
+- Updated showCalcDetail tooltip to show proper daysPresent/effectiveDays info
+- Updated version to 3.8
 
 Stage Summary:
-- shared-utils.js v3.2: единый экспорт/импорт ассортимента (15 колонок)
-- Все 5 файлов используют SharedUtils.exportAssortmentUnified() / importAssortmentUnified()
-- Обратная совместимость: importAssortmentUnified() автоматически определяет старый (10-кол) и новый (15-кол) формат
-- Вычисляемые поля: Доход (полка-вход), Наценка %, Маржа %
-- Каждый файл отображает только свои колонки в UI, но файл всегда единый
+- File: /home/z/my-project/download/fish-order.html (v3.8, 2960 lines)
+- Key fixes: supplier auto-sync, stock parsing via SharedUtils, calculation fallback, button unification, schedule Итого row + weekend highlighting

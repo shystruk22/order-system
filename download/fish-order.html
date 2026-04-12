@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Заказ рыбы</title>
-    <!-- Version: 3.7 -->
+    <!-- Version: 3.8 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -214,11 +214,11 @@
 
             save(KEYS.ASSORTMENT, matrix);
             currentLoadedAssortment = name;
-            // Синхронизация supplierAssortment: добавить новые товары
-            Object.keys(matrix).forEach(code => {
-                if (!supplierAssortment[code]) supplierAssortment[code] = [];
-            });
+            // Синхронизация: подтянуть поставщиков из ассортимента
+            ensureSupplierAssortment();
             save(KEYS.SUPPLIER_ASSORTMENT, supplierAssortment);
+            save(KEYS.SUPPLIER_PRICES, supplierPrices);
+            save(KEYS.SCHEDULE, deliverySchedule);
             render();
             alert(`Загружено: ${Object.keys(matrix).length} товаров из "${name}"\nОтметки матрицы: ${Object.keys(matrixMarks).length} товаров`);
         }
@@ -611,10 +611,19 @@
                 return `<button onclick="selectedScheduleSupplier='${esc(name)}';render()" class="w-full text-left px-3 py-1.5 text-xs font-medium rounded-lg transition-colors cursor-pointer ${isActive ? 'bg-sky-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-100 border border-gray-200'}" title="${esc(name)}">${esc(name)}</button>`;
             }).join('');
 
+            // Подсчитаем Итого по дням (сколько магазинов имеют доставку в каждый день)
+            const totalsByDay = [0, 0, 0, 0, 0, 0, 0];
+            let totalActiveCells = 0;
+
             // Таблица доставки для выбранного поставщика
             const storeRows = stores.map(s => {
                 const days = supplierData[s.tt] || [false,false,false,false,false,false,false];
                 const cells = days.map((checked, di) => {
+                    if (checked) {
+                        totalsByDay[di]++;
+                        totalActiveCells++;
+                    }
+                    const isWeekend = di >= 5;
                     const cbId = `sched_${CSS.escape(current)}_${CSS.escape(s.tt)}_${di}`;
                     const cbClass = checked
                         ? 'w-5 h-5 rounded bg-emerald-500 text-white border-0 cursor-pointer flex items-center justify-center transition-colors'
@@ -622,7 +631,7 @@
                     const inner = checked
                         ? '<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>'
                         : '';
-                    return `<td class="px-0.5 py-0.5"><div class="flex justify-center"><button id="${cbId}" class="${cbClass}" onclick="toggleDeliveryDay('${esc(current)}','${esc(s.tt)}',${di})">${inner}</button></div></td>`;
+                    return `<td class="px-0.5 py-0.5 ${isWeekend ? 'bg-red-50' : ''}"><div class="flex justify-center"><button id="${cbId}" class="${cbClass}" onclick="toggleDeliveryDay('${esc(current)}','${esc(s.tt)}',${di})">${inner}</button></div></td>`;
                 }).join('');
                 const activeCount = days.filter(Boolean).length;
                 return `<tr class="hover:bg-gray-50">
@@ -631,6 +640,18 @@
                     <td class="px-1.5 py-1 text-xs font-medium" id="total_${CSS.escape(current)}_${CSS.escape(s.tt)}" style="color:${activeCount > 0 ? '#374151' : '#9ca3af'}">${activeCount > 0 ? activeCount + ' дн.' : '—'}</td>
                 </tr>`;
             }).join('');
+
+            // Строка Итого
+            const totalCells = DAY_NAMES.map((d, i) => {
+                const isWeekend = i >= 5;
+                const cnt = totalsByDay[i];
+                return `<td class="px-0.5 py-1 text-xs font-bold ${isWeekend ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-700'}">${cnt > 0 ? cnt : ''}</td>`;
+            }).join('');
+            const totalRow = `<tr class="bg-gray-50 font-bold">
+                <td class="text-left px-2 py-1 text-xs font-bold text-gray-800 sticky left-0 bg-gray-50 z-10">Итого</td>
+                ${totalCells}
+                <td class="px-1.5 py-1 text-xs font-bold text-gray-800 bg-gray-100">${totalActiveCells > 0 ? totalActiveCells + ' дн.' : '—'}</td>
+            </tr>`;
 
             return `
                 <div class="flex gap-3">
@@ -643,7 +664,7 @@
                             <div class="flex items-center gap-2">
                                 <h3 class="text-sm font-semibold text-gray-800 cursor-pointer hover:text-sky-600 transition-colors" onclick="renameSupplier('${esc(current)}')" title="Нажмите для переименования">${icons.truck} ${esc(current)}</h3>
                             </div>
-                            <button onclick="deleteSupplier('${esc(current)}')" class="inline-flex items-center gap-1 px-2.5 py-1 text-xs text-red-600 bg-red-50 rounded-md hover:bg-red-100 transition-colors cursor-pointer">
+                            <button onclick="deleteSupplier('${esc(current)}')" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 bg-red-50 rounded-lg hover:bg-red-100 transition-colors cursor-pointer">
                                 ${icons.trash} Удалить
                             </button>
                         </div>
@@ -653,12 +674,13 @@
                                     <thead>
                                         <tr class="bg-gray-50">
                                             <th class="text-left px-2 py-1 text-[10px] font-semibold text-gray-500 border-b border-gray-200 sticky left-0 bg-gray-50 z-10">Магазин</th>
-                                            ${DAY_NAMES.map((d, i) => `<th class="px-0.5 py-1 text-[10px] font-semibold border-b border-gray-200 w-8 ${i >= 5 ? 'text-red-500' : 'text-gray-500'}">${d}</th>`).join('')}
+                                            ${DAY_NAMES.map((d, i) => `<th class="px-0.5 py-1 text-[10px] font-semibold border-b border-gray-200 w-8 ${i >= 5 ? 'text-red-500 bg-red-50' : 'text-gray-500'}">${d}</th>`).join('')}
                                             <th class="px-1.5 py-1 text-[10px] font-semibold text-gray-400 border-b border-gray-200">Итого</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         ${storeRows}
+                                        ${totalRow}
                                     </tbody>
                                 </table>
                             </div>
@@ -717,13 +739,54 @@
 
         // === ПОСТАВЩИКИ (Suppliers Tab) ===
         function ensureSupplierAssortment() {
-            // Добавить новые товары из matrix в supplierAssortment с пустым массивом
+            // Добавить новые товары из matrix в supplierAssortment
+            // И автоматически подтягивать поставщиков из ассортимента
             const matrixCodes = Object.keys(matrix);
+            const emptyWeek = [false, false, false, false, false, false, false];
+            let newSuppliersAdded = false;
+
             matrixCodes.forEach(code => {
                 if (!supplierAssortment[code]) {
                     supplierAssortment[code] = [];
                 }
+                // Подтягиваем поставщика из ассортимента
+                const supplier = (matrix[code] && matrix[code].supplier) || '';
+                if (supplier) {
+                    if (!supplierAssortment[code].includes(supplier)) {
+                        supplierAssortment[code].push(supplier);
+                    }
+                    // Автоматически добавляем поставщика в deliverySchedule если его нет
+                    if (!deliverySchedule[supplier]) {
+                        deliverySchedule[supplier] = {};
+                        newSuppliersAdded = true;
+                    }
+                    // Добавляем все магазины в график для нового поставщика
+                    if (stores && stores.length > 0) {
+                        stores.forEach(s => {
+                            if (!deliverySchedule[supplier][s.tt]) {
+                                deliverySchedule[supplier][s.tt] = [...emptyWeek];
+                            }
+                        });
+                    }
+                    // Заполняем supplierPrices из inPrice
+                    const inPrice = matrix[code].inPrice || 0;
+                    if (inPrice > 0) {
+                        if (!supplierPrices[code]) supplierPrices[code] = {};
+                        if (!supplierPrices[code][supplier] || supplierPrices[code][supplier] === 0) {
+                            supplierPrices[code][supplier] = inPrice;
+                        }
+                    }
+                }
             });
+
+            if (newSuppliersAdded) {
+                save(KEYS.SCHEDULE, deliverySchedule);
+                // Обновляем selectedScheduleSupplier если текущий не найден
+                const existing = Object.keys(deliverySchedule);
+                if (!selectedScheduleSupplier || !deliverySchedule[selectedScheduleSupplier]) {
+                    selectedScheduleSupplier = existing.length > 0 ? existing[0] : '';
+                }
+            }
         }
 
         function toggleSupplierProduct(code, supplierName) {
@@ -959,8 +1022,8 @@
                             </div>
                             <div class="flex items-center gap-2">
                                 <span class="text-xs text-gray-500">${itemsTotal} шт • ${itemsSum.toFixed(0)} ₽</span>
-                                <button onclick="markDelivered(${o.id})" class="btn px-2.5 py-1 text-xs font-medium text-emerald-700 bg-emerald-50 rounded-md hover:bg-emerald-100 transition-colors cursor-pointer">${icons.check} Доставлено</button>
-                                <button onclick="deleteInTransitOrder(${o.id})" class="btn px-2.5 py-1 text-xs text-red-600 bg-red-50 rounded-md hover:bg-red-100 transition-colors cursor-pointer">${icons.trash} Удалить</button>
+                                <button onclick="markDelivered(${o.id})" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 rounded-lg hover:bg-emerald-100 transition-colors cursor-pointer">${icons.check} Доставлено</button>
+                                <button onclick="deleteInTransitOrder(${o.id})" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 bg-red-50 rounded-lg hover:bg-red-100 transition-colors cursor-pointer">${icons.trash} Удалить</button>
                             </div>
                         </div>
                         <div class="overflow-x-auto">
@@ -1002,7 +1065,7 @@
                                 <div class="flex items-center gap-2">
                                     <span class="text-[10px] text-gray-400">${o.expectedDate || ''}</span>
                                     <span class="text-gray-400 text-xs">${collapsed ? '▶' : '▼'}</span>
-                                    <button onclick="event.stopPropagation();deleteInTransitOrder(${o.id})" class="btn px-2 py-0.5 text-xs text-red-500 hover:text-red-700 cursor-pointer" title="Удалить">${icons.trash}</button>
+                                    <button onclick="event.stopPropagation();deleteInTransitOrder(${o.id})" class="btn inline-flex items-center justify-center w-7 h-7 text-xs text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors cursor-pointer" title="Удалить">${icons.trash}</button>
                                 </div>
                             </div>
                             ${collapsed ? '' : `
@@ -1045,7 +1108,7 @@
                                 <div class="bg-amber-100 text-amber-800 rounded-md px-3 py-1.5"><div class="text-[10px] opacity-70">БЛИЖ. ДОСТАВКА</div><div class="text-sm font-bold">${nextDeliveryStr}</div></div>
                             </div>
                             <div class="flex gap-2">
-                                ${delivered.length > 0 ? `<button onclick="clearDeliveredOrders()" class="btn px-3 py-2 text-sm font-medium text-white bg-orange-500 rounded-md hover:bg-orange-600 cursor-pointer">${icons.trash} Очистить доставленные (${delivered.length})</button>` : ''}
+                                ${delivered.length > 0 ? `<button onclick="clearDeliveredOrders()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-orange-500 rounded-lg hover:bg-orange-600 cursor-pointer">${icons.trash} Очистить доставленные (${delivered.length})</button>` : ''}
                             </div>
                         </div>
                     </div>
@@ -1403,7 +1466,7 @@
                         <span class="text-xs">Ср. маржа: </span><strong>${avgMargin.toFixed(1)}%</strong>
                     </div>
                     <div class="ml-auto flex gap-2">
-                        <button onclick="applyDefaultMarkup()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-violet-600 rounded-lg hover:bg-violet-700">${icons.refresh} Наценка</button>
+                        <button onclick="applyDefaultMarkup()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-violet-600 rounded-lg hover:bg-violet-700">${icons.refresh} Наценка</button>
                         <button onclick="exportPrices()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">${icons.export} Экспорт</button>
                     </div>
                 </div>
@@ -1730,6 +1793,8 @@
                 save(KEYS.ASSORTMENT, matrix);
                 syncToSavedAssortment();
                 ensureSupplierAssortment();
+                save(KEYS.SUPPLIER_PRICES, supplierPrices);
+                save(KEYS.SUPPLIER_ASSORTMENT, supplierAssortment);
                 render();
                 alert('Импортировано товаров: ' + items.length);
             }).catch(function(err) {
@@ -2224,19 +2289,23 @@
                     if (!matrixDA) return; // Only show matrix items for fish order
 
                     const supplier = p.supplier || '';
-                    const daysUntil = getDaysUntilDelivery(supplier, store.tt);
+                    let daysUntil = getDaysUntilDelivery(supplier, store.tt);
+                    // Если доставка не назначена (99) — используем период вместо 99
+                    if (daysUntil >= 99) daysUntil = period;
                     const inTransitQty = getInTransitQty(store.tt, code);
                     const deliveredQty = getDeliveredQty(store.tt, code);
                     const currentStock = stockData ? (stockData.currentStock || 0) : 0;
                     const effectiveStock = currentStock + deliveredQty;
                     const totalSales = salesByTTCode[key] || 0;
+                    const daysPresent = stockData ? (stockData.daysPresent || 0) : 0;
+                    // Используем totalDays как количество дней если daysPresent = 0
+                    const effectiveDays = daysPresent > 0 ? daysPresent : (stockData ? (stockData.totalDays || 0) : 0);
+                    const avgSalesPerDay = effectiveDays > 0 ? totalSales / effectiveDays : 0;
 
                     // Calculate estimated sales based on weekend/weekday
                     const { weekendCount, weekdayCount } = countDaysTypes(daysUntil);
                     const weekendAvg = getWeekendAvg(store.tt, code);
                     const weekdayAvg = getWeekdayAvg(store.tt, code);
-                    const daysPresent = stockData ? (stockData.daysPresent || 0) : 0;
-                    const avgSalesPerDay = daysPresent > 0 ? totalSales / daysPresent : 0;
 
                     let estimatedSales;
                     if (weekendAvg > 0 || weekdayAvg > 0) {
@@ -2265,7 +2334,7 @@
                     results.push({
                         tt: store.tt, code, nomenclature: p.nomenclature || stockData?.name || '',
                         group: p.group || '', supplier, currentStock, deliveredQty, effectiveStock,
-                        sales: totalSales,
+                        sales: totalSales, daysPresent, effectiveDays,
                         weekendAvg: weekendAvgDisplay, weekdayAvg, avgSalesPerDay,
                         weekendCount, weekdayCount, daysUntil,
                         estimatedSales, inTransitQty,
@@ -2335,8 +2404,8 @@
                             ${minD < Infinity ? `<div class="bg-amber-100 text-amber-800 rounded-md px-3 py-1.5"><div class="text-[10px] opacity-70">БЛИЖ. ДОСТАВКА</div><div class="text-sm font-bold">${nextDelivStr}</div></div>` : ''}
                         </div>
                         <div class="flex gap-2">
-                            <button onclick="placeOrders()" class="btn px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-md hover:bg-emerald-700">${icons.order} Сформировать заказ</button>
-                            <button onclick="exportOrder()" class="btn px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700">${icons.export} Экспорт</button>
+                            <button onclick="placeOrders()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700">${icons.order} Сформировать заказ</button>
+                            <button onclick="exportOrder()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">${icons.export} Экспорт</button>
                         </div>
                     </div>
                 </div>
@@ -2443,11 +2512,12 @@
                     <span style="color:#9ca3af;font-size:10px">= ${r.weekdayCount || 0}×${(r.weekdayAvg || 0).toFixed(2)} + ${r.weekendCount || 0}×${(r.weekendAvg || 0).toFixed(2)}</span><span></span>`;
             } else {
                 formulaRows = `
-                    <span style="color:#9ca3af">Дней присутствия:</span><span style="font-weight:600">${r.daysPresent || '?'}</span>
+                    <span style="color:#9ca3af">Дней присутствия:</span><span style="font-weight:600">${r.daysPresent || 0}</span>
+                    ${r.effectiveDays && r.effectiveDays !== r.daysPresent ? `<span style="color:#9ca3af">Всего дней:</span><span style="font-weight:600">${r.effectiveDays}</span>` : ''}
                     <span style="color:#9ca3af">Ср. продажа/день:</span><span style="font-weight:600">${(r.avgSalesPerDay || 0).toFixed(3)} шт</span>
-                    <span style="color:#9ca3af;font-size:10px">= ${r.sales || 0} продаж / ${r.daysPresent || '?'} дней</span><span></span>
+                    <span style="color:#9ca3af;font-size:10px">= ${r.sales || 0} продаж / ${r.daysPresent > 0 ? r.daysPresent : (r.effectiveDays || '?')} дней</span><span></span>
                     <span style="color:#9ca3af">Прогноз продаж:</span><span style="font-weight:600;color:#fbbf24">${(r.estimatedSales || 0).toFixed(1)} шт</span>
-                    <span style="color:#9ca3af;font-size:10px">= ${(r.avgSalesPerDay || 0).toFixed(2)} × ${r.daysUntil >= 99 ? '∞' : r.daysUntil} дн.</span><span></span>`;
+                    <span style="color:#9ca3af;font-size:10px">= ${(r.avgSalesPerDay || 0).toFixed(2)} × ${r.daysUntil} дн.</span><span></span>`;
             }
 
             const effectiveStock = r.currentStock + (r.deliveredQty || 0);
@@ -2524,11 +2594,20 @@
                         alert(`Загружено ${sales.length} продаж, найдено ${result.foundTTs.length} ТТ`);
                     }
                     else if (type === 'stocks') {
-                        const localItems = parseStocksLocal(json);
-                        console.log(`Парсинг остатков: локальный=${localItems.length}`);
+                        const localItems = SharedUtils.parseStocks(json);
+                        // Маппим productName → name для совместимости
+                        localItems.forEach(item => { item.name = item.productName || item.name || ''; });
+                        console.log(`Парсинг остатков: ${localItems.length} записей`);
+                        // Лог для диагностики дней присутствия
+                        const withDays = localItems.filter(i => i.daysPresent > 0).length;
+                        const noDays = localItems.filter(i => i.daysPresent === 0).length;
+                        console.log(`  С днями присутствия: ${withDays}, Без: ${noDays}`);
+                        if (localItems.length > 0 && noDays > 0) {
+                            console.log('  Пример записи:', JSON.stringify(localItems[0]));
+                        }
                         stocks = localItems;
                         save(KEYS.STOCKS, stocks);
-                        alert(`Загружено ${stocks.length} остатков`);
+                        alert(`Загружено ${stocks.length} остатков\n(с днями присутствия: ${withDays})`);
                     }
                     render();
                 } catch (err) { console.error('Parse error:', err); alert('Ошибка: ' + err.message); }
