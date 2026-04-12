@@ -83,6 +83,7 @@
 
         // Новые глобальные переменные для fish-order
         let deliverySchedule = {}; // {"supplierName": {"storeName": [mon,tue,wed,thu,fri,sat,sun]}}
+        let selectedScheduleSupplier = ''; // текущий выбранный поставщик в графике
         let inTransitOrders = [];  // [{id, createdAt, supplier, store, expectedDate, items: [{code,name,qty,sum}], status}]
         let supplierAssortment = {}; // {"code": ["supplier1", "supplier2"]}
         let weekendSales = {};     // {"tt_code": totalWeekendQty}
@@ -389,6 +390,8 @@
             sales = load(KEYS.SALES, []);
             stocks = load(KEYS.STOCKS, []);
             deliverySchedule = load(KEYS.SCHEDULE, {});
+            const supplierKeys = Object.keys(deliverySchedule);
+            selectedScheduleSupplier = supplierKeys.length > 0 ? supplierKeys[0] : '';
             inTransitOrders = load(KEYS.INTRANSIT, []);
             supplierAssortment = load(KEYS.SUPPLIER_ASSORTMENT, {});
             autoCloseDeliveredOrders();
@@ -535,6 +538,7 @@
             stores.forEach(s => {
                 deliverySchedule[name][s.tt] = [false, false, false, false, false, false, false];
             });
+            selectedScheduleSupplier = name;
             saveSchedule();
             render();
         }
@@ -542,6 +546,8 @@
         function deleteSupplier(name) {
             if (!confirm(`Удалить поставщика "${name}"?`)) return;
             delete deliverySchedule[name];
+            const remaining = Object.keys(deliverySchedule);
+            selectedScheduleSupplier = remaining.length > 0 ? remaining[0] : '';
             saveSchedule();
             render();
         }
@@ -552,6 +558,7 @@
             if (deliverySchedule[newName]) { alert('Поставщик с таким названием уже существует'); return; }
             deliverySchedule[newName] = deliverySchedule[oldName];
             delete deliverySchedule[oldName];
+            selectedScheduleSupplier = newName;
             saveSchedule();
             render();
         }
@@ -576,56 +583,76 @@
 
         function renderScheduleCards() {
             const supplierNames = Object.keys(deliverySchedule);
+            if (supplierNames.length === 0) return '';
 
-            return supplierNames.map(supplier => {
-                const supplierData = deliverySchedule[supplier] || {};
-                const storeRows = stores.map(s => {
-                    const days = supplierData[s.tt] || [false,false,false,false,false,false,false];
-                    const cells = days.map((checked, di) => {
-                        const cbId = `sched_${CSS.escape(supplier)}_${CSS.escape(s.tt)}_${di}`;
-                        const cbClass = checked
-                            ? 'w-7 h-7 rounded bg-emerald-500 text-white border-0 cursor-pointer flex items-center justify-center transition-colors'
-                            : 'w-7 h-7 rounded bg-white border-2 border-gray-300 cursor-pointer flex items-center justify-center transition-colors';
-                        const inner = checked
-                            ? '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>'
-                            : '';
-                        return `<td class="px-1 py-1"><div class="flex justify-center"><button id="${cbId}" class="${cbClass}" onclick="toggleDeliveryDay('${esc(supplier)}','${esc(s.tt)}',${di})">${inner}</button></div></td>`;
-                    }).join('');
-                    const activeCount = days.filter(Boolean).length;
-                    return `<tr class="hover:bg-gray-50">
-                        <td class="text-left px-3 py-2 font-medium text-gray-700 text-xs whitespace-nowrap max-w-[200px] truncate" title="${esc(s.tt)}">${esc(s.tt)}</td>
-                        ${cells}
-                        <td class="px-2 py-1 text-xs text-gray-400 font-medium">${activeCount > 0 ? activeCount + ' дн.' : '—'}</td>
-                    </tr>`;
+            // Если выбранный поставщик не найден — берём первого
+            if (!selectedScheduleSupplier || !deliverySchedule[selectedScheduleSupplier]) {
+                selectedScheduleSupplier = supplierNames[0];
+            }
+
+            const current = selectedScheduleSupplier;
+            const supplierData = deliverySchedule[current] || {};
+
+            // Боковая панель с переключением поставщиков
+            const sidebar = supplierNames.map(name => {
+                const isActive = name === current;
+                return `<button onclick="selectedScheduleSupplier='${esc(name)}';render()" class="w-full text-left px-3 py-2 text-xs font-medium rounded-lg transition-colors cursor-pointer ${isActive ? 'bg-sky-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-100'}" title="${esc(name)}">${esc(name)}</button>`;
+            }).join('');
+
+            // Таблица доставки для выбранного поставщика
+            const storeRows = stores.map(s => {
+                const days = supplierData[s.tt] || [false,false,false,false,false,false,false];
+                const cells = days.map((checked, di) => {
+                    const cbId = `sched_${CSS.escape(current)}_${CSS.escape(s.tt)}_${di}`;
+                    const cbClass = checked
+                        ? 'w-7 h-7 rounded bg-emerald-500 text-white border-0 cursor-pointer flex items-center justify-center transition-colors'
+                        : 'w-7 h-7 rounded bg-white border-2 border-gray-300 cursor-pointer flex items-center justify-center transition-colors';
+                    const inner = checked
+                        ? '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>'
+                        : '';
+                    return `<td class="px-1 py-1"><div class="flex justify-center"><button id="${cbId}" class="${cbClass}" onclick="toggleDeliveryDay('${esc(current)}','${esc(s.tt)}',${di})">${inner}</button></div></td>`;
                 }).join('');
+                const activeCount = days.filter(Boolean).length;
+                return `<tr class="hover:bg-gray-50">
+                    <td class="text-left px-3 py-2 font-medium text-gray-700 text-xs whitespace-nowrap max-w-[200px] truncate" title="${esc(s.tt)}">${esc(s.tt)}</td>
+                    ${cells}
+                    <td class="px-2 py-1 text-xs text-gray-400 font-medium">${activeCount > 0 ? activeCount + ' дн.' : '—'}</td>
+                </tr>`;
+            }).join('');
 
-                return `
-                    <div class="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
-                        <div class="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-200">
+            return `
+                <div class="flex gap-3">
+                    <div class="w-40 flex-shrink-0 space-y-1">
+                        <div class="text-[10px] font-semibold text-gray-400 uppercase px-1 mb-1.5">Поставщики</div>
+                        ${sidebar}
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center justify-between mb-2">
                             <div class="flex items-center gap-2">
-                                <div class="p-1.5 bg-sky-100 rounded-lg text-sky-600">${icons.truck}</div>
-                                <h3 class="text-sm font-semibold text-gray-800 cursor-pointer hover:text-sky-600 transition-colors" onclick="renameSupplier('${esc(supplier)}')" title="Нажмите для переименования">${esc(supplier)}</h3>
+                                <h3 class="text-sm font-semibold text-gray-800 cursor-pointer hover:text-sky-600 transition-colors" onclick="renameSupplier('${esc(current)}')" title="Нажмите для переименования">${icons.truck} ${esc(current)}</h3>
                             </div>
-                            <button onclick="deleteSupplier('${esc(supplier)}')" class="inline-flex items-center gap-1 px-2.5 py-1 text-xs text-red-600 bg-red-50 rounded-md hover:bg-red-100 transition-colors cursor-pointer">
+                            <button onclick="deleteSupplier('${esc(current)}')" class="inline-flex items-center gap-1 px-2.5 py-1 text-xs text-red-600 bg-red-50 rounded-md hover:bg-red-100 transition-colors cursor-pointer">
                                 ${icons.trash} Удалить
                             </button>
                         </div>
-                        <div class="overflow-x-auto">
-                            <table class="w-full border-collapse text-center">
-                                <thead>
-                                    <tr class="bg-gray-50">
-                                        <th class="text-left px-3 py-2 text-xs font-semibold text-gray-500 border-b border-gray-200 sticky left-0 bg-gray-50 z-10">Магазин</th>
-                                        ${DAY_NAMES.map(d => `<th class="px-1 py-2 text-xs font-semibold text-gray-500 border-b border-gray-200 w-10">${d}</th>`).join('')}
-                                        <th class="px-2 py-2 text-xs font-semibold text-gray-400 border-b border-gray-200">Итого</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    ${storeRows}
-                                </tbody>
-                            </table>
+                        <div class="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                            <div class="overflow-x-auto">
+                                <table class="w-full border-collapse text-center">
+                                    <thead>
+                                        <tr class="bg-gray-50">
+                                            <th class="text-left px-3 py-2 text-xs font-semibold text-gray-500 border-b border-gray-200 sticky left-0 bg-gray-50 z-10">Магазин</th>
+                                            ${DAY_NAMES.map(d => `<th class="px-1 py-2 text-xs font-semibold text-gray-500 border-b border-gray-200 w-10">${d}</th>`).join('')}
+                                            <th class="px-2 py-2 text-xs font-semibold text-gray-400 border-b border-gray-200">Итого</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${storeRows}
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
-                    </div>`;
-            }).join('');
+                    </div>
+                </div>`;
         }
 
         function renderSchedule() {
@@ -2485,6 +2512,8 @@
             sales = load(KEYS.SALES, []);
             stocks = load(KEYS.STOCKS, []);
             deliverySchedule = load(KEYS.SCHEDULE, {});
+            const sk = Object.keys(deliverySchedule);
+            if (sk.length > 0 && !sk.includes(selectedScheduleSupplier)) selectedScheduleSupplier = sk[0];
             inTransitOrders = load(KEYS.INTRANSIT, []);
             supplierAssortment = load(KEYS.SUPPLIER_ASSORTMENT, {});
             render();
