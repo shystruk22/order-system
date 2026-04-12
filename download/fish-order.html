@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Заказ рыбы</title>
-    <!-- Version: 3.6 -->
+    <!-- Version: 3.7 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -2259,8 +2259,11 @@
                         tt: store.tt, code, nomenclature: p.nomenclature || stockData?.name || '',
                         group: p.group || '', supplier, currentStock, deliveredQty, effectiveStock,
                         sales: totalSales,
-                        weekendAvg: weekendAvgDisplay, daysUntil, inTransitQty,
-                        order, quant, inPrice, sum,
+                        weekendAvg: weekendAvgDisplay, weekdayAvg, avgSalesPerDay,
+                        weekendCount, weekdayCount, daysUntil,
+                        estimatedSales, inTransitQty,
+                        rawOrder: rawOrder > 0 ? rawOrder : 0,
+                        order, quant, inPrice, sum, shelf: p.shelf || 0,
                         status: order > 0 ? `заказ ${order}` : 'достаточно',
                         statusType: order > 0 ? 'order' : 'ok'
                     });
@@ -2383,7 +2386,7 @@
                                                 <td class="text-center font-mono text-xs text-gray-600">${r.code}</td>
                                                 <td class="text-center text-xs text-gray-600">${r.group}</td>
                                                 <td class="text-center text-xs text-gray-600">${r.supplier || '—'}</td>
-                                                <td class="text-center">${r.sales.toFixed(0)}</td>
+                                                <td class="text-center"><span class="cursor-pointer underline decoration-dotted decoration-gray-400 hover:text-sky-600 hover:decoration-sky-400 transition-colors" onclick="event.stopPropagation();showCalcDetail(this, ${JSON.stringify(r).replace(/"/g, '&quot;')})">${r.sales.toFixed(0)}</span></td>
                                                 <td class="text-center ${r.weekendAvg > 0 ? 'text-orange-600 font-semibold' : 'text-gray-400'}">${r.weekendAvg > 0 ? r.weekendAvg.toFixed(1) : '—'}</td>
                                                 <td class="text-center">${r.deliveredQty > 0 ? r.currentStock.toFixed(2) + ' <span class="text-emerald-600 font-medium">(+' + r.deliveredQty + ')</span>' : r.currentStock.toFixed(2)}</td>
                                                 <td class="text-center ${r.inTransitQty > 0 ? 'text-blue-600 font-semibold' : 'text-gray-400'}">${r.inTransitQty > 0 ? r.inTransitQty : '0'}</td>
@@ -2420,36 +2423,73 @@
         function showCalcDetail(el, r) {
             document.querySelectorAll('.calc-tooltip').forEach(e => e.remove());
 
-            const projectedSales = (r.avgSalesPerDay * period).toFixed(1);
-            const need = Math.max(0, projectedSales - r.currentStock).toFixed(1);
-            const totalDays = r.daysPresent || '?';
+            const hasWeekendData = (r.weekendAvg || 0) > 0 || (r.weekdayAvg || 0) > 0;
+
+            let formulaRows = '';
+            if (hasWeekendData) {
+                formulaRows = `
+                    <span style="color:#9ca3af">Будние дни:</span><span style="font-weight:600">${r.weekdayCount || 0} дн.</span>
+                    <span style="color:#9ca3af">Ср. продажа будни:</span><span style="font-weight:600">${(r.weekdayAvg || 0).toFixed(3)} шт/день</span>
+                    <span style="color:#9ca3af">Выходные дни:</span><span style="font-weight:600;color:#fb923c">${r.weekendCount || 0} дн.</span>
+                    <span style="color:#9ca3af">Ср. продажа выходные:</span><span style="font-weight:600;color:#fb923c">${(r.weekendAvg || 0).toFixed(3)} шт/день</span>
+                    <span style="color:#9ca3af">Прогноз продаж:</span><span style="font-weight:600;color:#fbbf24">${(r.weekdayCount || 0) * (r.weekdayAvg || 0) + (r.weekendCount || 0) * (r.weekendAvg || 0)} шт</span>
+                    <span style="color:#9ca3af;font-size:10px">= ${r.weekdayCount || 0}×${(r.weekdayAvg || 0).toFixed(2)} + ${r.weekendCount || 0}×${(r.weekendAvg || 0).toFixed(2)}</span><span></span>`;
+            } else {
+                formulaRows = `
+                    <span style="color:#9ca3af">Дней присутствия:</span><span style="font-weight:600">${r.daysPresent || '?'}</span>
+                    <span style="color:#9ca3af">Ср. продажа/день:</span><span style="font-weight:600">${(r.avgSalesPerDay || 0).toFixed(3)} шт</span>
+                    <span style="color:#9ca3af;font-size:10px">= ${r.sales || 0} продаж / ${r.daysPresent || '?'} дней</span><span></span>
+                    <span style="color:#9ca3af">Прогноз продаж:</span><span style="font-weight:600;color:#fbbf24">${(r.estimatedSales || 0).toFixed(1)} шт</span>
+                    <span style="color:#9ca3af;font-size:10px">= ${(r.avgSalesPerDay || 0).toFixed(2)} × ${r.daysUntil >= 99 ? '∞' : r.daysUntil} дн.</span><span></span>`;
+            }
+
+            const effectiveStock = r.currentStock + (r.deliveredQty || 0);
+            const rawNeed = (r.estimatedSales || 0) - effectiveStock - (r.inTransitQty || 0);
 
             const tooltip = document.createElement('div');
             tooltip.className = 'calc-tooltip';
-            tooltip.style.cssText = 'position:fixed;z-index:100;background:#1f2937;color:#f9fafb;border-radius:8px;padding:10px 14px;font-size:11px;line-height:1.6;box-shadow:0 8px 24px rgba(0,0,0,0.3);min-width:220px;pointer-events:auto;';
+            tooltip.style.cssText = 'position:fixed;z-index:100;background:#1f2937;color:#f9fafb;border-radius:10px;padding:14px 16px;font-size:12px;line-height:1.7;box-shadow:0 8px 30px rgba(0,0,0,0.35);min-width:280px;max-width:340px;pointer-events:auto;';
             tooltip.innerHTML = `
-                <div style="font-weight:700;margin-bottom:4px;color:#93c5fd">${r.nomenclature || r.code}</div>
-                <div style="display:grid;grid-template-columns:auto 1fr;gap:1px 10px">
+                <div style="font-weight:700;margin-bottom:8px;color:#93c5fd;font-size:13px">${r.nomenclature || r.code}</div>
+                <div style="display:grid;grid-template-columns:auto 1fr;gap:2px 12px;align-items:center">
                     <span style="color:#9ca3af">ТТ:</span><span>${r.tt}</span>
-                    <span style="color:#9ca3af">Продажи:</span><span style="font-weight:600">${r.sales.toFixed(0)} шт</span>
-                    <span style="color:#9ca3af">Дней с остатком:</span><span>${totalDays}</span>
-                    <span style="color:#9ca3af">Ср. продажи/день:</span><span style="font-weight:600">${r.avgSalesPerDay.toFixed(3)} шт</span>
-                    <span style="color:#9ca3af">Период:</span><span>${period} дней</span>
-                    <span style="color:#9ca3af">Прогноз продаж:</span><span style="font-weight:600;color:#fbbf24">${projectedSales} шт</span>
-                    <span style="color:#9ca3af">Текущий остаток:</span><span style="font-weight:600">${r.currentStock.toFixed(2)} шт</span>
-                    <span style="color:#9ca3af">Потребность:</span><span style="font-weight:600;color:#f87171">${need} шт</span>
+                    <span style="color:#9ca3af">Поставщик:</span><span>${r.supplier || '—'}</span>
+                    <span style="color:#9ca3af">Код:</span><span style="font-family:monospace">${r.code}</span>
+                    <span style="color:#9ca3af">Дней до доставки:</span><span style="font-weight:600;color:${r.daysUntil >= 99 ? '#f87171' : r.daysUntil <= 1 ? '#fbbf24' : '#6ee7b7'}">${r.daysUntil >= 99 ? 'не назначена' : r.daysUntil + ' дн.'}</span>
                     <span style="color:#9ca3af">Квант:</span><span>${r.quant}</span>
-                    <span style="color:#9ca3af">Дом. полка:</span><span>${r.shelf}</span>
+                    <span style="color:#9ca3af">Дом. полка:</span><span>${r.shelf || 0}</span>
+                </div>
+                <div style="border-top:1px solid #374151;margin:8px 0;padding-top:8px;font-weight:600;color:#d1d5db;font-size:11px;letter-spacing:0.5px">ПРОДАЖИ</div>
+                <div style="display:grid;grid-template-columns:auto 1fr;gap:2px 12px;align-items:center">
+                    <span style="color:#9ca3af">Всего продаж:</span><span style="font-weight:600">${(r.sales || 0).toFixed(0)} шт</span>
+                    ${formulaRows}
+                </div>
+                <div style="border-top:1px solid #374151;margin:8px 0;padding-top:8px;font-weight:600;color:#d1d5db;font-size:11px;letter-spacing:0.5px">РАСЧЁТ ЗАКАЗА</div>
+                <div style="display:grid;grid-template-columns:auto 1fr;gap:2px 12px;align-items:center">
+                    <span style="color:#9ca3af">Текущий остаток:</span><span style="font-weight:600">${r.currentStock.toFixed(2)} шт</span>
+                    ${r.deliveredQty > 0 ? `<span style="color:#9ca3af">+ Доставлено:</span><span style="font-weight:600;color:#6ee7b7">+${r.deliveredQty} шт</span>` : ''}
+                    <span style="color:#9ca3af">Эффект. остаток:</span><span style="font-weight:600">${effectiveStock.toFixed(2)} шт</span>
+                    ${r.inTransitQty > 0 ? `<span style="color:#9ca3af">− В пути:</span><span style="font-weight:600;color:#60a5fa">−${r.inTransitQty} шт</span>` : ''}
+                    <span style="color:#9ca3af">Потребность:</span><span style="font-weight:600;color:#f87171">${rawNeed > 0 ? rawNeed.toFixed(2) + ' шт' : '0 (хватает)'}</span>
+                </div>
+                <div style="border-top:1px solid #374151;margin:8px 0;padding-top:8px;font-weight:600;color:#d1d5db;font-size:11px;letter-spacing:0.5px">ИТОГО</div>
+                <div style="display:grid;grid-template-columns:auto 1fr;gap:2px 12px;align-items:center">
+                    <span style="color:#9ca3af">Заказ (сырой):</span><span>${(r.rawOrder || 0).toFixed(2)} шт</span>
+                    <span style="color:#9ca3af">Заказ (с квантом):</span><span style="font-weight:700;color:#6ee7b7;font-size:14px">${r.order} шт</span>
+                    ${r.inPrice > 0 ? `<span style="color:#9ca3af">Сумма заказа:</span><span style="font-weight:700;color:#fbbf24">${(r.order * r.inPrice).toFixed(0)} ₽ (${r.inPrice} ₽/шт)</span>` : ''}
                 </div>`;
             document.body.appendChild(tooltip);
+
             const rect = el.getBoundingClientRect();
-            let left = rect.left + rect.width / 2 - 110;
-            let top = rect.bottom + 6;
+            let left = rect.left + rect.width / 2 - 140;
+            let top = rect.bottom + 8;
             if (left < 8) left = 8;
-            if (left + 240 > window.innerWidth) left = window.innerWidth - 248;
-            if (top + 200 > window.innerHeight) top = rect.top - 200;
+            if (left + 350 > window.innerWidth) left = window.innerWidth - 358;
+            if (top + 380 > window.innerHeight) top = rect.top - 380;
+            if (top < 8) top = 8;
             tooltip.style.left = left + 'px';
             tooltip.style.top = top + 'px';
+
             setTimeout(() => {
                 function close() { tooltip.remove(); document.removeEventListener('mousedown', close); document.removeEventListener('touchstart', close); }
                 setTimeout(() => document.addEventListener('mousedown', close), 10);
