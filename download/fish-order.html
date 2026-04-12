@@ -584,6 +584,13 @@
                     ? '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>'
                     : '';
             }
+            // Update Итого cell
+            const totalEl = document.getElementById(`total_${CSS.escape(supplier)}_${CSS.escape(store)}`);
+            if (totalEl) {
+                const activeCount = deliverySchedule[supplier][store].filter(Boolean).length;
+                totalEl.textContent = activeCount > 0 ? activeCount + ' дн.' : '—';
+                totalEl.style.color = activeCount > 0 ? '#374151' : '#9ca3af';
+            }
         }
 
         function renderScheduleCards() {
@@ -621,7 +628,7 @@
                 return `<tr class="hover:bg-gray-50">
                     <td class="text-left px-2 py-1 font-medium text-gray-700 text-xs whitespace-nowrap max-w-[200px] truncate" title="${esc(s.tt)}">${esc(s.tt)}</td>
                     ${cells}
-                    <td class="px-1.5 py-1 text-xs text-gray-400 font-medium">${activeCount > 0 ? activeCount + ' дн.' : '—'}</td>
+                    <td class="px-1.5 py-1 text-xs font-medium" id="total_${CSS.escape(current)}_${CSS.escape(s.tt)}" style="color:${activeCount > 0 ? '#374151' : '#9ca3af'}">${activeCount > 0 ? activeCount + ' дн.' : '—'}</td>
                 </tr>`;
             }).join('');
 
@@ -646,7 +653,7 @@
                                     <thead>
                                         <tr class="bg-gray-50">
                                             <th class="text-left px-2 py-1 text-[10px] font-semibold text-gray-500 border-b border-gray-200 sticky left-0 bg-gray-50 z-10">Магазин</th>
-                                            ${DAY_NAMES.map(d => `<th class="px-0.5 py-1 text-[10px] font-semibold text-gray-500 border-b border-gray-200 w-8">${d}</th>`).join('')}
+                                            ${DAY_NAMES.map((d, i) => `<th class="px-0.5 py-1 text-[10px] font-semibold border-b border-gray-200 w-8 ${i >= 5 ? 'text-red-500' : 'text-gray-500'}">${d}</th>`).join('')}
                                             <th class="px-1.5 py-1 text-[10px] font-semibold text-gray-400 border-b border-gray-200">Итого</th>
                                         </tr>
                                     </thead>
