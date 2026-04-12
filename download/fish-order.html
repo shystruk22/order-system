@@ -105,7 +105,7 @@
         };
 
         // Поля каталога товаров (не ДА/НЕТ)
-        const CATALOG_FIELDS = ['code','nomenclature','name','group','packaging','supplier','quant','volume','price','inPrice','shelfPrice','shelf','markup'];
+        const CATALOG_FIELDS = ['code','nomenclature','name','group','packaging','supplier','weightCode','quant','volume','price','inPrice','shelfPrice','shelf','markup'];
 
         const normCode = (code) => String(code || '').trim().replace(/^0+/, '') || '0';
 
@@ -834,6 +834,7 @@
                                     <th class="text-left sticky left-0 bg-gray-50 z-20" style="min-width:90px">Группа</th>
                                     <th class="text-left" style="min-width:55px">Код</th>
                                     <th class="text-left" style="min-width:180px">Наименование</th>
+                                    <th class="text-left" style="min-width:65px">Вес. код</th>
                                     ${supplierNames.map(s => `
                                         <th class="text-center" style="min-width:80px">
                                             <div class="flex flex-col items-center gap-0.5">
@@ -850,7 +851,7 @@
                             <tbody>
                                 ${sortedGroups.map(gr => `
                                     <tr class="group-header cursor-pointer" onclick="collapsedG['sa_${esc(gr)}']=!collapsedG['sa_${esc(gr)}'];render()">
-                                        <td colspan="${3 + supplierNames.length}" class="text-left py-1 px-2">
+                                        <td colspan="${4 + supplierNames.length}" class="text-left py-1 px-2">
                                             <div class="flex items-center gap-2">
                                                 ${collapsedG['sa_' + gr] ? icons.chevronRight : icons.chevronDown}
                                                 <span class="font-semibold">${gr}</span>
@@ -864,6 +865,7 @@
                                             <td class="text-left text-xs text-gray-600 sticky left-0 bg-white z-10 whitespace-nowrap">${esc(p.group || '')}</td>
                                             <td class="font-mono text-xs text-gray-600 text-left">${p.code}</td>
                                             <td class="font-medium text-gray-700 text-left whitespace-nowrap max-w-[200px] truncate" title="${esc(p.nomenclature || '')}">${esc(p.nomenclature || '')}</td>
+                                            <td class="font-mono text-xs text-gray-500 text-left">${p.weightCode || ''}</td>
                                             ${supplierNames.map(s => {
                                                 const checked = suppliers.includes(s);
                                                 return `<td class="px-1 py-0.5">
@@ -1266,7 +1268,7 @@
                                 <th class="text-left">Наименование</th>
                                 <th class="text-left">Код</th>
                                 <th class="text-center">Упак.</th>
-                                <th class="text-left">Поставщик</th>
+                                <th class="text-left">Весовой код</th>
                                 <th class="text-right">Цена</th>
                                 <th class="text-right">Цена на полке</th>
                                 <th class="text-right">Дом. полка</th>
@@ -1288,7 +1290,7 @@
                                         <td class="font-medium text-gray-700 text-left">${p.nomenclature || ''}</td>
                                         <td class="font-mono text-xs text-gray-600">${p.code}</td>
                                         <td class="text-center text-gray-500">${p.packaging || 'ШТ'}</td>
-                                        <td class="text-xs"><input type="text" value="${p.supplier || ''}" onchange="updateProduct('${esc(p.code)}', 'supplier', this.value)" class="input w-24 text-xs" placeholder="Поставщик"></td>
+                                        <td class="text-xs"><input type="text" value="${p.weightCode || ''}" onchange="updateProduct('${esc(p.code)}', 'weightCode', this.value)" class="input w-20 text-xs" placeholder="Вес. код"></td>
                                         <td class="text-right"><input type="number" step="0.01" value="${p.price || 0}" onchange="updateProduct('${esc(p.code)}', 'price', parseFloat(this.value)||0)" class="input w-16 text-right text-xs"></td>
                                         <td class="text-right"><input type="number" step="0.01" value="${p.shelfPrice || 0}" onchange="updateProduct('${esc(p.code)}', 'shelfPrice', parseFloat(this.value)||0)" class="input w-16 text-right text-xs" placeholder="0"></td>
                                         <td class="text-right"><input type="number" step="0.01" value="${p.shelf || 0}" onchange="updateProduct('${esc(p.code)}', 'shelf', parseFloat(this.value)||0)" class="input w-16 text-right text-xs"></td>
