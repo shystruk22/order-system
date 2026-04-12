@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Заказ рыбы</title>
-    <!-- Version: 3.4 — fix: new assortment products auto-assigned to all suppliers -->
+    <!-- Version: 3.5 — fix: products without group now visible in Supplier tab -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -1340,8 +1340,14 @@
 
         function getAllGroups() {
             const groups = new Set();
-            Object.values(matrix).forEach(p => { if (p.group) groups.add(p.group); });
-            return Array.from(groups).sort((a, b) => a.localeCompare(b, 'ru'));
+            let hasUngrouped = false;
+            Object.values(matrix).forEach(p => {
+                if (p.group) groups.add(p.group);
+                else hasUngrouped = true;
+            });
+            const result = Array.from(groups).sort((a, b) => a.localeCompare(b, 'ru'));
+            if (hasUngrouped) result.unshift('Без группы');
+            return result;
         }
 
         // === АССОРТИМЕНТ ===
@@ -1381,7 +1387,7 @@
                 const grouped = {};
                 Object.entries(matrix).forEach(([code, p]) => {
                     if (searchAssort && !p.nomenclature?.toLowerCase().includes(searchAssort.toLowerCase()) && !code.includes(searchAssort)) return;
-                    if (filterGroup && p.group !== filterGroup) return;
+                    if (filterGroup && (p.group || 'Без группы') !== filterGroup) return;
                     const gr = p.group || 'Без группы';
                     if (!grouped[gr]) grouped[gr] = [];
                     grouped[gr].push({ code, ...p });
