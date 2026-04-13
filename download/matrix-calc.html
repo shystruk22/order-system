@@ -598,7 +598,9 @@
             const sortedProducts = [];
             sorted.forEach(g => sortedProducts.push(...grouped[g]));
 
-            SharedUtils.exportAssortmentUnified(sortedProducts, { mandatorySet: mandatoryProducts });
+            // Конвертируем mandatoryProducts (plain object) в Set
+            const mandatorySet = new Set(Object.keys(mandatoryProducts).filter(code => mandatoryProducts[code]));
+            SharedUtils.exportAssortmentUnified(sortedProducts, { mandatorySet: mandatorySet });
         }
 
         // === СОХРАНЕНИЕ И ЗАГРУЗКА АССОРТИМЕНТА ===

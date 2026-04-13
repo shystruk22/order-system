@@ -650,7 +650,7 @@
             var markup = inPrice > 0 ? (shelfPrice - inPrice) / inPrice * 100 : (p.markup || 0);
             var margin = shelfPrice > 0 ? (shelfPrice - inPrice) / shelfPrice * 100 : 0;
             var totalSales = salesMap[code] || p.totalSales || 0;
-            var isMandatory = (mandatorySet && mandatorySet.has(code)) || p.mandatory || false;
+            var isMandatory = (mandatorySet && (mandatorySet.has ? mandatorySet.has(code) : mandatorySet[code])) || p.mandatory || false;
 
             return [
                 isMandatory ? '\u2B50' : '',
