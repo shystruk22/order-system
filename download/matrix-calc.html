@@ -203,6 +203,34 @@
             // Слушаем изменения в localStorage (если обновили магазины в другом окне)
             window.addEventListener('storage', (e) => {
                 if (e.key === KEYS.STORES) loadStoresFromHTML();
+                if (e.key === SharedUtils.STORAGE_KEYS.PRODUCTS || e.key === 'db_products_v1') {
+                    try {
+                        const arr = SharedUtils.load(SharedUtils.STORAGE_KEYS.PRODUCTS, null);
+                        if (Array.isArray(arr) && arr.length > 0) {
+                            products = arr;
+                            save(KEYS.PRODUCTS, products);
+                            render();
+                        }
+                    } catch(e) {}
+                }
+                if (e.key === SharedUtils.STORAGE_KEYS.MATRIX || e.key === 'db_matrix_marks_v1') {
+                    try {
+                        const newMarks = SharedUtils.load(SharedUtils.STORAGE_KEYS.MATRIX, null);
+                        if (newMarks && Object.keys(newMarks).length > 0 && results.length > 0) {
+                            results.forEach(r => {
+                                const nc = normCode(r.code);
+                                if (newMarks[nc]) {
+                                    stores.forEach(s => {
+                                        if (newMarks[nc][s.tt] !== undefined) {
+                                            r.inMatrix = newMarks[nc][s.tt];
+                                        }
+                                    });
+                                }
+                            });
+                            render();
+                        }
+                    } catch(e) {}
+                }
             });
 
             // Синхронизация assortment/stores/matrix с другими файлами через SharedData
@@ -905,6 +933,7 @@
             } catch(e) { console.error('Merge marks error:', e); }
 
             save(KEYS.RESULTS, results);
+            syncMarksToShared();
 
             const modal = document.getElementById('loadMatrixModal');
             if (modal) modal.remove();
@@ -1488,6 +1517,21 @@
             render();
         }
 
+        // Синхронизация marks из results в shared_matrix_v1 + SharedData
+        function syncMarksToShared() {
+            try {
+                const marks = {};
+                results.forEach(r => {
+                    if (r.inMatrix === 'ДА' || r.inMatrix === 'НЕТ') {
+                        if (!marks[r.code]) marks[r.code] = {};
+                        marks[r.code][r.tt] = r.inMatrix;
+                    }
+                });
+                SharedUtils.save(SharedUtils.STORAGE_KEYS.MATRIX, marks);
+                if (window.SharedData) SharedData.saveMatrixMarks(marks, 'matrix-calc');
+            } catch(e) {}
+        }
+
         // Переключение статуса товара в матрице из таблицы анализа — быстрое, без полного рендера
         function toggleAnalysisMatrix(tt, code) {
             const container = document.getElementById('analysisTableContainer');
@@ -1501,6 +1545,7 @@
                 }
             });
             save(KEYS.RESULTS, results);
+            syncMarksToShared();
 
             // Быстрое обновление только изменённой ячейки и счётчиков — без полного render()
             const btn = event.target.closest('button');
@@ -1691,6 +1736,7 @@
             }
             
             save(KEYS.RESULTS, results);
+            syncMarksToShared();
             render();
         }
 
@@ -1935,6 +1981,7 @@
                     });
                     results = parsed;
                     save(KEYS.RESULTS, results);
+                    syncMarksToShared();
                     render();
                     alert(`Загружено ${parsed.length} записей матрицы из файла`);
                     return;
@@ -1985,10 +2032,10 @@
                 });
 
                 save(KEYS.RESULTS, results);
+                syncMarksToShared();
                 render();
 
                 const msg = `Матрица обновлена из файла:\n• Установлено ДА: ${updatedDA}\n• Установлено НЕТ: ${updatedNET}\n• Убрано (нет в файле): ${setToNET}`;
-                alert(msg);
             }).catch(err => {
                 console.error('Matrix parse error:', err);
                 alert('Ошибка чтения матрицы: ' + err.message);
@@ -2277,6 +2324,7 @@
             });
 
             save(KEYS.RESULTS, results);
+            syncMarksToShared();
             setTab('analysis');
 
             const stats = {
@@ -2457,6 +2505,7 @@
                 }
             });
             save(KEYS.RESULTS, results);
+            syncMarksToShared();
             render();
         }
 

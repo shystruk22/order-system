@@ -470,6 +470,18 @@
                         }
                     } catch(e) {}
                 }
+                if (e.key === SharedUtils.STORAGE_KEYS.MATRIX || e.key === 'db_matrix_marks_v1') {
+                    // Другая вкладка изменила матрицу — перезагрузить
+                    try {
+                        const newMarks = SharedUtils.load(SharedUtils.STORAGE_KEYS.MATRIX, null);
+                        if (newMarks && Object.keys(newMarks).length > 0) {
+                            matrixMarks = newMarks;
+                            save(KEYS.MATRIX_MARKS, matrixMarks);
+                            resetSavedOrders();
+                            render();
+                        }
+                    } catch(e) {}
+                }
             });
 
             // Синхронизация через polling SharedData

@@ -311,6 +311,36 @@
 
             buildMatrix();
 
+            // Storage event listener для кросс-таб синхронизации
+            window.addEventListener('storage', (e) => {
+                if (e.key === KEYS.STORES) {
+                    stores = load(KEYS.STORES, []);
+                    buildMatrix();
+                    render();
+                }
+                if (e.key === SharedUtils.STORAGE_KEYS.PRODUCTS || e.key === 'db_products_v1') {
+                    try {
+                        const arr = SharedUtils.load(SharedUtils.STORAGE_KEYS.PRODUCTS, null);
+                        if (Array.isArray(arr) && arr.length > 0) {
+                            products = arr;
+                            SharedUtils.save(KEYS.PRODUCTS, products);
+                            buildMatrix();
+                            render();
+                        }
+                    } catch(e) {}
+                }
+                if (e.key === SharedUtils.STORAGE_KEYS.MATRIX || e.key === 'db_matrix_marks_v1') {
+                    try {
+                        const newMarks = SharedUtils.load(SharedUtils.STORAGE_KEYS.MATRIX, null);
+                        if (newMarks && Object.keys(newMarks).length > 0) {
+                            Object.assign(matrixMarks, newMarks);
+                            buildMatrix();
+                            render();
+                        }
+                    } catch(e) {}
+                }
+            });
+
             // SharedData cross-tab sync listener
             if (window.SharedData) {
                 SharedData.onChange(({ source }) => {
@@ -1787,12 +1817,9 @@
                 }
             });
 
-            // Сохраняем обновлённую матрицу
+            // Сохраняем обновлённую матрицу (save() уже синхронизирует через SharedData)
             save(KEYS.MATRIX, matrixMarks);
             buildMatrix();
-
-            // Синхронизируем через SharedData
-            if (window.SharedData) SharedData.saveMatrixMarks(matrixMarks, 'fridges');
 
             rebuildPlacedCodes();
             render();
