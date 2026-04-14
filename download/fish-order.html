@@ -1274,7 +1274,7 @@
                                 ${icons.order} Сформировать заказ
                             </div>
                             `}
-                            <button onclick="if(confirm('Очистить все данные?'))clearAll()" class="flex-1 max-w-xs py-2.5 text-sm font-medium text-red-600 bg-white border border-red-200 rounded-lg hover:bg-red-50 transition-colors inline-flex items-center justify-center gap-2">
+                            <button onclick="if(confirm('Очистить продажи и остатки?\nАссортимент, матрица, график и поставщики останутся.'))clearSalesAndStocks()" class="flex-1 max-w-xs py-2.5 text-sm font-medium text-red-600 bg-white border border-red-200 rounded-lg hover:bg-red-50 transition-colors inline-flex items-center justify-center gap-2">
                                 ${icons.trash} Очистить
                             </button>
                         </div>
@@ -2924,6 +2924,16 @@
                 document.addEventListener('mousedown', close);
                 document.addEventListener('touchstart', close);
             }, 50);
+        }
+
+        function clearSalesAndStocks() {
+            localStorage.removeItem(KEYS.SALES);
+            localStorage.removeItem(KEYS.STOCKS);
+            sales = [];
+            stocks = [];
+            resetSavedOrders();
+            render();
+            alert('Продажи и остатки очищены');
         }
 
         function clearAll() {
