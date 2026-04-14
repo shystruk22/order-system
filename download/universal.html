@@ -1575,10 +1575,13 @@
 
                     if (!stockData) {
                         if (matrixDA) {
-                            // Товар в матрице (ДА) но нет данных остатков — минимальный заказ 2 шт
+                            // Товар в матрице (ДА) но нет данных остатков — минимальный заказ
+                            const packaging = p.packaging || 'ШТ';
+                            const minQty = (packaging === 'КГ') ? 0.5 : 4;
                             const editKey = `${store.tt}_${code}`;
-                            const editedOrder = orderEdits[editKey] !== undefined ? orderEdits[editKey] : 2;
-                            results.push({ tt: store.tt, code, nomenclature: p.nomenclature || '', group: p.group || '', currentStock: 0, sales: salesByTTCode[key] || 0, daysPresent: 0, avgSalesPerDay: 0, order: editedOrder, quant: p.quant || 1, shelf: p.shelf || 0, packaging: p.packaging || 'ШТ', inPrice: p.inPrice || 0, sum: editedOrder * (p.inPrice || 0), status: editedOrder > 0 ? `заказ ${editedOrder} (мин.)` : 'достаточно', statusType: 'order', isAssortment: false });
+                            const editedOrder = orderEdits[editKey] !== undefined ? orderEdits[editKey] : minQty;
+                            const unitLabel = packaging === 'КГ' ? 'кг' : 'шт';
+                            results.push({ tt: store.tt, code, nomenclature: p.nomenclature || '', group: p.group || '', currentStock: 0, sales: salesByTTCode[key] || 0, daysPresent: 0, avgSalesPerDay: 0, order: editedOrder, quant: p.quant || 1, shelf: p.shelf || 0, packaging, inPrice: p.inPrice || 0, sum: editedOrder * (p.inPrice || 0), status: editedOrder > 0 ? `мин. заказ ${editedOrder} ${unitLabel}` : 'достаточно', statusType: 'order', isAssortment: false });
                         }
                         return;
                     }
@@ -1596,11 +1599,22 @@
                     const sum = order * (p.inPrice || 0);
 
                     if (matrixDA) {
-                        results.push({ tt: store.tt, code, nomenclature: p.nomenclature || stockData.name || '', group: p.group || '', currentStock, sales: totalSales, daysPresent, avgSalesPerDay: parseFloat(avgSalesPerDay.toFixed(3)), order, quant, shelf, packaging, inPrice: p.inPrice || 0, sum, status: order > 0 ? `заказ ${order}` : 'достаточно', statusType: order > 0 ? 'order' : 'ok', isAssortment: false });
+                        // Товар в матрице — если остаток=0 и продажи=0 → минимальный заказ
+                        let finalOrder = order;
+                        if (currentStock === 0 && totalSales === 0) {
+                            const packaging2 = p.packaging || 'ШТ';
+                            finalOrder = orderEdits[editKey] !== undefined ? orderEdits[editKey] : (packaging2 === 'КГ' ? 0.5 : 4);
+                        }
+                        const sum2 = finalOrder * (p.inPrice || 0);
+                        const unitLabel2 = packaging === 'КГ' ? 'кг' : 'шт';
+                        const statusText = finalOrder > 0
+                            ? (currentStock === 0 && totalSales === 0 ? `мин. заказ ${finalOrder} ${unitLabel2}` : `заказ ${finalOrder}`)
+                            : 'достаточно';
+                        results.push({ tt: store.tt, code, nomenclature: p.nomenclature || stockData.name || '', group: p.group || '', currentStock, sales: totalSales, daysPresent, avgSalesPerDay: parseFloat(avgSalesPerDay.toFixed(3)), order: finalOrder, quant, shelf, packaging, inPrice: p.inPrice || 0, sum: sum2, status: statusText, statusType: finalOrder > 0 ? 'order' : 'ok', isAssortment: false });
                     } else if (codeInMatrix && markForTT === 'НЕТ') {
-                        results.push({ tt: store.tt, code, nomenclature: p.nomenclature || stockData.name || '', group: p.group || '', currentStock, sales: totalSales, daysPresent, avgSalesPerDay: parseFloat(avgSalesPerDay.toFixed(3)), order, quant, shelf, packaging, inPrice: p.inPrice || 0, sum, status: order > 0 ? `Не в матрице → заказ ${order}` : 'Не в матрице', statusType: 'noMatrix', isAssortment: true });
+                        results.push({ tt: store.tt, code, nomenclature: p.nomenclature || stockData.name || '', group: p.group || '', currentStock, sales: totalSales, daysPresent, avgSalesPerDay: parseFloat(avgSalesPerDay.toFixed(3)), order: 0, quant, shelf, packaging, inPrice: p.inPrice || 0, sum: 0, status: 'Не в матрице', statusType: 'noMatrix', isAssortment: true });
                     } else {
-                        results.push({ tt: store.tt, code, nomenclature: p.nomenclature || stockData.name || '', group: p.group || '', currentStock, sales: totalSales, daysPresent, avgSalesPerDay: parseFloat(avgSalesPerDay.toFixed(3)), order, quant, shelf, packaging, inPrice: p.inPrice || 0, sum, status: order > 0 ? `Вне матрицы → заказ ${order}` : 'Вне матрицы', statusType: 'outMatrix', isAssortment: true });
+                        results.push({ tt: store.tt, code, nomenclature: p.nomenclature || stockData.name || '', group: p.group || '', currentStock, sales: totalSales, daysPresent, avgSalesPerDay: parseFloat(avgSalesPerDay.toFixed(3)), order: 0, quant, shelf, packaging, inPrice: p.inPrice || 0, sum: 0, status: 'Вне матрицы', statusType: 'outMatrix', isAssortment: true });
                     }
                 });
             });
@@ -2298,9 +2312,11 @@
 
                     if (!matrixDA && !stockData) return;
                     if (!stockData) {
-                        // Товар в матрице (ДА) но нет данных остатков — минимальный заказ 2 шт
+                        // Товар в матрице (ДА) но нет данных остатков — минимальный заказ
+                        const packaging = p.packaging || 'ШТ';
+                        const minQty = (packaging === 'КГ') ? 0.5 : 4;
                         const editKey = `${store.tt}_${code}`;
-                        const expOrder = orderEdits[editKey] !== undefined ? orderEdits[editKey] : 2;
+                        const expOrder = orderEdits[editKey] !== undefined ? orderEdits[editKey] : minQty;
                         rows.push([store.storeNumber || store.tt2 || '', store.tt, code, p.nomenclature || '', p.group || '', salesByTTCode[key] || 0, 0, 0, 0, expOrder, (expOrder * (p.inPrice || 0)).toFixed(2), 'мин. заказ']);
                         return;
                     }
@@ -2317,15 +2333,24 @@
                     if (orderEdits[editKey] !== undefined) order = orderEdits[editKey];
 
                     let status;
+                    let finalOrder = order;
                     if (matrixDA) {
-                        status = order > 0 ? 'заказ' : 'достаточно';
+                        if (currentStock === 0 && totalSales === 0) {
+                            const packaging3 = p.packaging || 'ШТ';
+                            finalOrder = orderEdits[editKey] !== undefined ? orderEdits[editKey] : (packaging3 === 'КГ' ? 0.5 : 4);
+                            status = 'мин. заказ';
+                        } else {
+                            status = order > 0 ? 'заказ' : 'достаточно';
+                        }
                     } else if (codeInMatrix && markForTT === 'НЕТ') {
                         status = 'Не в матрице';
+                        finalOrder = 0;
                     } else {
                         status = 'Вне матрицы';
+                        finalOrder = 0;
                     }
 
-                    rows.push([store.storeNumber || store.tt2 || '', store.tt, code, p.nomenclature || '', p.group || '', totalSales.toFixed(0), daysPresent, avgSalesPerDay.toFixed(3), currentStock.toFixed(2), order, (order * (p.inPrice || 0)).toFixed(2), status]);
+                    rows.push([store.storeNumber || store.tt2 || '', store.tt, code, p.nomenclature || '', p.group || '', totalSales.toFixed(0), daysPresent, avgSalesPerDay.toFixed(3), currentStock.toFixed(2), finalOrder, (finalOrder * (p.inPrice || 0)).toFixed(2), status]);
                 });
             });
             
