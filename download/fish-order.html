@@ -2657,7 +2657,8 @@
                         alert(`Загружено ${sales.length} продаж, найдено ${result.foundTTs.length} ТТ`);
                     }
                     else if (type === 'stocks') {
-                        const localItems = SharedUtils.parseStocks(json);
+                        const parseResult = SharedUtils.parseStocks(json);
+                        const localItems = parseResult.items || parseResult;
                         // Маппим productName → name для совместимости
                         localItems.forEach(item => { item.name = item.productName || item.name || ''; });
                         console.log(`Парсинг остатков: ${localItems.length} записей`);
