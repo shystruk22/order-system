@@ -205,10 +205,10 @@
                 if (e.key === KEYS.STORES) loadStoresFromHTML();
             });
 
-            // Синхронизация с universal через SharedData
+            // Синхронизация assortment/stores/matrix с другими файлами через SharedData
             if (window.SharedData) {
                 SharedData.onChange(({ source }) => {
-                    if (source === 'universal') {
+                    if (source !== 'matrix-calc') {
                         const newProducts = SharedData.getProducts();
                         if (newProducts.length > 0) {
                             products = newProducts;

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Универсальный расчёт</title>
-    <!-- Version: 1.8 -->
+    <!-- Version: 1.9 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -120,6 +120,22 @@
                         SharedUtils.save(SharedUtils.STORAGE_KEYS.MATRIX, data);
                         if (window.SharedData) SharedData.saveMatrixMarks(data, 'universal');
                     } catch(e) {}
+                }
+                // Синхронизация ассортимента с другими файлами
+                if (key === KEYS.ASSORTMENT) {
+                    try {
+                        // Конвертируем object→array для shared_products_v1
+                        const arr = Object.values(data).map(p => ({
+                            code: p.code, nomenclature: p.nomenclature || p.name || '',
+                            group: p.group || '', packaging: p.packaging || 'ШТ',
+                            supplier: p.supplier || '', price: p.price || 0,
+                            inPrice: p.inPrice || p.price || 0, shelfPrice: p.shelfPrice || 0,
+                            shelf: p.shelf || 0, quant: p.quant || 1, volume: p.volume || 0,
+                            markup: p.markup || defaultMarkup
+                        }));
+                        SharedUtils.save(SharedUtils.STORAGE_KEYS.PRODUCTS, arr);
+                        if (window.SharedData) SharedData.saveProducts(arr, 'universal');
+                    } catch(e) { console.error('Assortment sync error:', e); }
                 }
             } catch (e) { console.error('Save error:', e); }
         };
@@ -435,13 +451,61 @@
             
             window.addEventListener('storage', (e) => {
                 if (e.key === KEYS.STORES) loadStoresFromHTML();
+                if (e.key === SharedUtils.STORAGE_KEYS.PRODUCTS) {
+                    // Другая вкладка изменила ассортимент — перезагрузить
+                    try {
+                        const arr = SharedUtils.load(SharedUtils.STORAGE_KEYS.PRODUCTS, null);
+                        if (Array.isArray(arr) && arr.length > 0) {
+                            const obj = {};
+                            arr.forEach(p => {
+                                if (p.code) obj[normCode(p.code)] = {
+                                    ...p, inPrice: p.inPrice || p.price || 0,
+                                    markup: p.markup || defaultMarkup
+                                };
+                            });
+                            matrix = obj;
+                            save(KEYS.ASSORTMENT, matrix);
+                            resetSavedOrders();
+                            render();
+                        }
+                    } catch(e) {}
+                }
             });
 
-            // Синхронизация отметок матрицы через polling (только ДА/НЕТ, без изменения ассортимента)
+            // Синхронизация через polling SharedData
             if (window.SharedData) {
                 SharedData.onChange(({source}) => {
                     if (source !== 'universal') {
                         try {
+                            // Синхронизация ассортимента
+                            const newProducts = SharedData.getProducts();
+                            if (newProducts && Array.isArray(newProducts) && newProducts.length > 0) {
+                                const obj = {};
+                                newProducts.forEach(p => {
+                                    if (p.code) {
+                                        const code = normCode(p.code);
+                                        obj[code] = {
+                                            ...p, inPrice: p.inPrice || p.price || 0,
+                                            markup: p.markup || defaultMarkup
+                                        };
+                                    }
+                                });
+                                let changed = false;
+                                Object.entries(obj).forEach(([code, item]) => {
+                                    if (!matrix[code] || matrix[code].nomenclature !== item.nomenclature ||
+                                        matrix[code].price !== item.price || matrix[code].group !== item.group) {
+                                        changed = true;
+                                    }
+                                });
+                                if (changed || Object.keys(matrix).length !== Object.keys(obj).length) {
+                                    matrix = obj;
+                                    save(KEYS.ASSORTMENT, matrix);
+                                    resetSavedOrders();
+                                    render();
+                                }
+                            }
+
+                            // Синхронизация отметок матрицы (ДА/НЕТ)
                             const newMarks = SharedData.getMatrixMarks();
                             if (newMarks && Object.keys(newMarks).length > 0) {
                                 let changed = false;

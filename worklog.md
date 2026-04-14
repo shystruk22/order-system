@@ -22,22 +22,22 @@ Stage Summary:
 ---
 Task ID: 3
 Agent: main
-Task: Remove suppliers column from assortment.html, verify sync with universal.html
+Task: Remove suppliers SECTION from assortment.html (keep column), add full assortment sync across all files
 
 Work Log:
-- Confirmed upload/universal.html and download/universal.html are identical (v1.8, 2526 lines)
-- Found assortment.html already had supplierList/supplierMatrix variable declarations removed by previous session
-- Removed "Поставщик" from 3 table locations in assortment.html:
-  1. Expected format header (import tab)
-  2. Import preview table header
-  3. Import preview table data cell
-- Removed entire renderSuppliersTab() block and all supplier helper functions (206 lines → 1 comment)
-- Verified assortment.html ↔ universal.html sync mechanism: both use PRODUCTS_KEY + UNIV_PRODUCTS_KEY via syncAll() and SharedData.onChange
+- assortment.html: removed renderSuppliersTab() section + all supplier functions (206 lines → 1 comment)
+- assortment.html: KEPT "Поставщик" column in import/export tables (expected format + preview)
+- universal.html v1.9: Fix 1 — save() now syncs assortment to shared_products_v1 + SharedData.saveProducts
+- universal.html v1.9: Fix 2 — SharedData.onChange now reads SharedData.getProducts() (not just matrix marks)
+- universal.html v1.9: Fix 3 — storage event listener now reacts to shared_products_v1 changes
+- matrix-calc.html: Fix 4 — SharedData.onChange changed from source==='universal' to source!=='matrix-calc'
+- Verified fridges.html already syncs correctly (saveProducts + saveMatrixMarks)
+- Verified assortment.html already syncs correctly (syncAll → both keys + SharedData)
 
 Stage Summary:
-- File: /home/z/my-project/download/assortment.html — all supplier references removed
-- File: /home/z/my-project/download/universal.html — preserved as user's v1.8 (unchanged)
-- Sync verified: assortment.html saves to both storage keys, listens for changes via SharedData
+- Files modified: universal.html (v1.9), assortment.html, matrix-calc.html
+- Sync flow: assortment.html ↔ matrix-calc.html ↔ fridges.html ↔ universal.html (all bidirectional)
+- All 4 files now read/write assortment via shared_products_v1 + SharedData polling
 ---
 Task ID: 2
 Agent: main
