@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Заказ рыбы</title>
-    <!-- Version: 3.10 -->
+    <!-- Version: 3.11 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -2395,11 +2395,41 @@
                     const quant = p.quant || 1;
                     const inPrice = p.inPrice || 0;
                     let rawOrder = estimatedSales - effectiveStock - inTransitQty;
-                    let order = rawOrder > 0 ? Math.ceil(rawOrder / quant) * quant : 0;
 
-                    // Минимальный заказ для товаров в матрице: 0.5 кг
-                    const minOrder = 0.5;
-                    if (order <= 0 && rawOrder > -minOrder) order = minOrder;
+                    // Логика заказа:
+                    // 1) Продажи=0 И остаток>0 → НЕ заказываем (есть запас, товар не продаётся)
+                    // 2) Продажи>0 → обычный расчёт
+                    // 3) Остаток=0 (любые продажи) И товар в матрице → мин. заказ 0.5 кг
+                    // 4) Остаток=0 И продаж=0 И в матрице → мин. заказ 0.5 кг
+
+                    const hasSales = totalSales > 0;
+                    const hasStock = effectiveStock > 0;
+
+                    let order = 0;
+                    let orderReason = '';
+
+                    if (hasSales) {
+                        // Есть продажи — обычный расчёт
+                        order = rawOrder > 0 ? Math.ceil(rawOrder / quant) * quant : 0;
+                        if (order > 0) {
+                            orderReason = `заказ ${order} кг`;
+                        } else if (rawOrder <= 0) {
+                            orderReason = `хватает (${effectiveStock.toFixed(1)} кг)`;
+                        } else {
+                            orderReason = `достаточно`;
+                        }
+                    } else if (!hasStock) {
+                        // Нет остатков — мин. заказ 0.5 кг (товар в матрице, значит нужен)
+                        order = 0.5;
+                        orderReason = `мин. заказ 0.5 кг (нет остатков)`;
+                    } else {
+                        // Продаж нет, остаток есть — НЕ заказываем
+                        order = 0;
+                        orderReason = `остаток ${effectiveStock.toFixed(1)} кг, продаж нет`;
+                    }
+
+                    // Округляем чтобы убрать float ошибки (0.7000000000000001 → 0.7)
+                    order = Math.round(order * 100) / 100;
 
                     // Build supplierOrders для поставщиков с доставкой ЗАВТРА
                     const supplierOrders = {};
@@ -2408,9 +2438,16 @@
                     suppliers.forEach(sup => {
                         if (!(sup in supplierPeriodMap)) return;
                         const editKey = `${store.tt}_${code}_${sup}`;
-                        let supOrder = rawOrder > 0 ? Math.ceil(rawOrder / quant) * quant : 0;
-                        // Минимальный заказ 0.5 кг для каждого поставщика
-                        if (supOrder <= 0 && rawOrder > -0.5) supOrder = 0.5;
+                        let supOrder = 0;
+
+                        if (hasSales) {
+                            supOrder = rawOrder > 0 ? Math.ceil(rawOrder / quant) * quant : 0;
+                        } else if (!hasStock) {
+                            supOrder = 0.5;
+                        }
+                        // else: продаж нет, остаток есть → supOrder = 0
+
+                        supOrder = Math.round(supOrder * 100) / 100;
                         if (orderEdits[editKey] !== undefined) supOrder = orderEdits[editKey];
 
                         if (supOrder > 0) {
@@ -2423,20 +2460,11 @@
                     const activeSuppliersCount = Object.keys(supplierOrders).filter(s => supplierOrders[s].order > 0).length;
                     let hasConflict = activeSuppliersCount > 1;
 
-                    // Статус: информация для понимания расчёта
-                    let statusText = '';
-                    if (order > 0 && rawOrder > 0) {
-                        statusText = `заказ ${order} кг`;
-                    } else if (order > 0 && rawOrder <= 0) {
-                        statusText = `мин. заказ ${order} кг (нет продаж)`;
-                    } else if (rawOrder <= 0 && effectiveStock > 0) {
-                        statusText = `хватает (${effectiveStock.toFixed(1)} кг)`;
-                    } else {
-                        statusText = `достаточно`;
-                    }
+                    // Статус
+                    let statusText = orderReason;
                     if (hasConflict && order > 0) {
                         const supNames = Object.keys(supplierPeriodMap).join('/');
-                        statusText += ` ⚠️ пересечение: ${supNames}`;
+                        statusText += ` | пересечение: ${supNames}`;
                     }
 
                     if (hasConflict) {
@@ -2587,8 +2615,8 @@
                                     <th class="text-center" style="min-width:55px">Продажи, кг</th>
                                     <th class="text-center" style="min-width:60px">Среднее/день</th>
                                     <th class="text-center" style="min-width:55px">Остаток, кг</th>
-                                    <th class="text-left" style="min-width:180px">Статус</th>
                                     ${supplierColumns.map(sup => `<th class="text-center bg-emerald-50" style="min-width:100px" title="${esc(sup)}">${esc(sup)}<br><span class="text-[10px] font-normal opacity-70">заказ / сумма</span></th>`).join('')}
+                                    <th class="text-left" style="min-width:180px">Статус</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -2626,14 +2654,14 @@
                                                 <td class="text-center"><span class="cursor-pointer underline decoration-dotted decoration-gray-400 hover:text-sky-600 hover:decoration-sky-400 transition-colors" onclick="event.stopPropagation();showCalcDetail(this, ${JSON.stringify(r).replace(/"/g, '&quot;')})">${r.sales.toFixed(2)}</span></td>
                                                 <td class="text-center font-medium ${(r.weekendAvg > 0 || r.weekdayAvg > 0) ? 'text-blue-700' : 'text-gray-400'}">${(r.weekendAvg > 0 || r.weekdayAvg > 0) ? ((r.weekdayCount * r.weekdayAvg + r.weekendCount * r.weekendAvg) / Math.max(1, r.weekdayCount + r.weekendCount)).toFixed(3) : (r.avgSalesPerDay > 0 ? r.avgSalesPerDay.toFixed(3) : '—')}</td>
                                                 <td class="text-center">${r.deliveredQty > 0 ? r.currentStock.toFixed(2) + ' <span class="text-emerald-600 font-medium">(+' + r.deliveredQty + ')</span>' : r.currentStock.toFixed(2)}</td>
-                                                <td class="text-left text-xs ${r.hasConflict ? 'text-amber-700 font-medium' : r.order > 0 ? 'text-emerald-700' : 'text-gray-500'}">${r.status}</td>
                                                 ${supplierColumns.map(sup => {
                                                     const so = (r.supplierOrders || {})[sup];
                                                     if (so && so.order > 0) {
-                                                        return `<td class="text-center ${cellBg}"><input type="number" value="${so.order}" data-tt="${esc(r.tt)}" data-code="${esc(r.code)}" data-supplier="${esc(sup)}" onchange="editOrder(this)" class="input w-16 text-center text-sm font-bold"><div class="text-[10px] text-gray-500">${so.sum.toFixed(0)} ₽</div></td>`;
+                                                        return `<td class="text-center ${cellBg}"><input type="number" step="0.5" value="${Number(so.order).toFixed(1)}" data-tt="${esc(r.tt)}" data-code="${esc(r.code)}" data-supplier="${esc(sup)}" onchange="editOrder(this)" class="input w-16 text-center text-sm font-bold"><div class="text-[10px] text-gray-500">${so.sum.toFixed(0)} ₽</div></td>`;
                                                     }
                                                     return `<td class="text-center text-gray-300">—</td>`;
                                                 }).join('')}
+                                                <td class="text-left text-xs ${r.hasConflict ? 'text-amber-700 font-medium' : r.order > 0 ? 'text-emerald-700' : 'text-gray-500'}">${r.status}</td>
                                             </tr>`;
                                         }).join('')}
                                     `).join('')}
@@ -2665,18 +2693,18 @@
             if (hasWeekendData) {
                 formulaRows = `
                     <span style="color:#9ca3af">Будние дни:</span><span style="font-weight:600">${r.weekdayCount || 0} дн.</span>
-                    <span style="color:#9ca3af">Ср. продажа будни:</span><span style="font-weight:600">${(r.weekdayAvg || 0).toFixed(3)} шт/день</span>
+                    <span style="color:#9ca3af">Ср. продажа будни:</span><span style="font-weight:600">${(r.weekdayAvg || 0).toFixed(3)} кг/день</span>
                     <span style="color:#9ca3af">Выходные дни:</span><span style="font-weight:600;color:#fb923c">${r.weekendCount || 0} дн.</span>
-                    <span style="color:#9ca3af">Ср. продажа выходные:</span><span style="font-weight:600;color:#fb923c">${(r.weekendAvg || 0).toFixed(3)} шт/день</span>
-                    <span style="color:#9ca3af">Прогноз продаж:</span><span style="font-weight:600;color:#fbbf24">${(r.weekdayCount || 0) * (r.weekdayAvg || 0) + (r.weekendCount || 0) * (r.weekendAvg || 0)} шт</span>
+                    <span style="color:#9ca3af">Ср. продажа выходные:</span><span style="font-weight:600;color:#fb923c">${(r.weekendAvg || 0).toFixed(3)} кг/день</span>
+                    <span style="color:#9ca3af">Прогноз продаж:</span><span style="font-weight:600;color:#fbbf24">${((r.weekdayCount || 0) * (r.weekdayAvg || 0) + (r.weekendCount || 0) * (r.weekendAvg || 0)).toFixed(2)} кг</span>
                     <span style="color:#9ca3af;font-size:10px">= ${r.weekdayCount || 0}×${(r.weekdayAvg || 0).toFixed(2)} + ${r.weekendCount || 0}×${(r.weekendAvg || 0).toFixed(2)}</span><span></span>`;
             } else {
                 formulaRows = `
                     <span style="color:#9ca3af">Дней присутствия:</span><span style="font-weight:600">${r.daysPresent || 0}</span>
                     ${r.effectiveDays && r.effectiveDays !== r.daysPresent ? `<span style="color:#9ca3af">Всего дней:</span><span style="font-weight:600">${r.effectiveDays}</span>` : ''}
-                    <span style="color:#9ca3af">Ср. продажа/день:</span><span style="font-weight:600">${(r.avgSalesPerDay || 0).toFixed(3)} шт</span>
+                    <span style="color:#9ca3af">Ср. продажа/день:</span><span style="font-weight:600">${(r.avgSalesPerDay || 0).toFixed(3)} кг</span>
                     <span style="color:#9ca3af;font-size:10px">= ${r.sales || 0} продаж / ${r.daysPresent > 0 ? r.daysPresent : (r.effectiveDays || '?')} дней</span><span></span>
-                    <span style="color:#9ca3af">Прогноз продаж:</span><span style="font-weight:600;color:#fbbf24">${(r.estimatedSales || 0).toFixed(1)} шт</span>
+                    <span style="color:#9ca3af">Прогноз продаж:</span><span style="font-weight:600;color:#fbbf24">${(r.estimatedSales || 0).toFixed(2)} кг</span>
                     <span style="color:#9ca3af;font-size:10px">= ${(r.avgSalesPerDay || 0).toFixed(2)} × ${r.daysUntil} дн.</span><span></span>`;
             }
 
@@ -2698,22 +2726,22 @@
                 </div>
                 <div style="border-top:1px solid #374151;margin:8px 0;padding-top:8px;font-weight:600;color:#d1d5db;font-size:11px;letter-spacing:0.5px">ПРОДАЖИ</div>
                 <div style="display:grid;grid-template-columns:auto 1fr;gap:2px 12px;align-items:center">
-                    <span style="color:#9ca3af">Всего продаж:</span><span style="font-weight:600">${(r.sales || 0).toFixed(0)} шт</span>
+                    <span style="color:#9ca3af">Всего продаж:</span><span style="font-weight:600">${(r.sales || 0).toFixed(2)} кг</span>
                     ${formulaRows}
                 </div>
                 <div style="border-top:1px solid #374151;margin:8px 0;padding-top:8px;font-weight:600;color:#d1d5db;font-size:11px;letter-spacing:0.5px">РАСЧЁТ ЗАКАЗА</div>
                 <div style="display:grid;grid-template-columns:auto 1fr;gap:2px 12px;align-items:center">
-                    <span style="color:#9ca3af">Текущий остаток:</span><span style="font-weight:600">${r.currentStock.toFixed(2)} шт</span>
-                    ${r.deliveredQty > 0 ? `<span style="color:#9ca3af">+ Доставлено:</span><span style="font-weight:600;color:#6ee7b7">+${r.deliveredQty} шт</span>` : ''}
-                    <span style="color:#9ca3af">Эффект. остаток:</span><span style="font-weight:600">${effectiveStock.toFixed(2)} шт</span>
-                    ${r.inTransitQty > 0 ? `<span style="color:#9ca3af">− В пути:</span><span style="font-weight:600;color:#60a5fa">−${r.inTransitQty} шт</span>` : ''}
-                    <span style="color:#9ca3af">Потребность:</span><span style="font-weight:600;color:#f87171">${rawNeed > 0 ? rawNeed.toFixed(2) + ' шт' : '0 (хватает)'}</span>
+                    <span style="color:#9ca3af">Текущий остаток:</span><span style="font-weight:600">${r.currentStock.toFixed(2)} кг</span>
+                    ${r.deliveredQty > 0 ? `<span style="color:#9ca3af">+ Доставлено:</span><span style="font-weight:600;color:#6ee7b7">+${r.deliveredQty} кг</span>` : ''}
+                    <span style="color:#9ca3af">Эффект. остаток:</span><span style="font-weight:600">${effectiveStock.toFixed(2)} кг</span>
+                    ${r.inTransitQty > 0 ? `<span style="color:#9ca3af">− В пути:</span><span style="font-weight:600;color:#60a5fa">−${r.inTransitQty} кг</span>` : ''}
+                    <span style="color:#9ca3af">Потребность:</span><span style="font-weight:600;color:#f87171">${rawNeed > 0 ? rawNeed.toFixed(2) + ' кг' : '0 (хватает)'}</span>
                 </div>
                 <div style="border-top:1px solid #374151;margin:8px 0;padding-top:8px;font-weight:600;color:#d1d5db;font-size:11px;letter-spacing:0.5px">ИТОГО</div>
                 <div style="display:grid;grid-template-columns:auto 1fr;gap:2px 12px;align-items:center">
-                    <span style="color:#9ca3af">Заказ (сырой):</span><span>${(r.rawOrder || 0).toFixed(2)} шт</span>
-                    <span style="color:#9ca3af">Заказ (с квантом):</span><span style="font-weight:700;color:#6ee7b7;font-size:14px">${r.order} шт</span>
-                    ${r.inPrice > 0 ? `<span style="color:#9ca3af">Сумма заказа:</span><span style="font-weight:700;color:#fbbf24">${(r.order * r.inPrice).toFixed(0)} ₽ (${r.inPrice} ₽/шт)</span>` : ''}
+                    <span style="color:#9ca3af">Заказ (сырой):</span><span>${(r.rawOrder || 0).toFixed(2)} кг</span>
+                    <span style="color:#9ca3af">Заказ (с квантом):</span><span style="font-weight:700;color:#6ee7b7;font-size:14px">${Number(r.order).toFixed(1)} кг</span>
+                    ${r.inPrice > 0 ? `<span style="color:#9ca3af">Сумма заказа:</span><span style="font-weight:700;color:#fbbf24">${(r.order * r.inPrice).toFixed(0)} ₽ (${r.inPrice} ₽/кг)</span>` : ''}
                 </div>`;
             document.body.appendChild(tooltip);
 
