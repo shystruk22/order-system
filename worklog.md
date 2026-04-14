@@ -19,3 +19,29 @@ Work Log:
 Stage Summary:
 - File: /home/z/my-project/download/fish-order.html (v3.8, 2960 lines)
 - Key fixes: supplier auto-sync, stock parsing via SharedUtils, calculation fallback, button unification, schedule Итого row + weekend highlighting
+---
+Task ID: 2
+Agent: main
+Task: Update universal.html order logic — matrix filtering, min orders, quantum rounding
+
+Work Log:
+- Analyzed existing order calculation logic in renderOrder() and exportOrder()
+- Implemented 4 key rules:
+  1. Items NOT in matrix (no ДА mark) → skip entirely, not shown on screen or in export
+  2. In matrix, stock=0, sales=0 → min order: 4 шт (ШТ) or 0.5 кг (КГ), with amber marking
+  3. In matrix, no stock data → same min order by packaging type
+  4. In matrix, stock>0, sales=0 → NO order (хватает/нет продаж)
+- Min order rounded to quantum: Math.ceil(minQty/quant)*quant for КГ, Math.max(quant, Math.round(minQty/quant)*quant) for ШТ
+- Normal orders: calcOrder already handles shelf (домашняя полка) and quantum rounding
+- Added Math.round(order*100)/100 for float precision fix
+- Updated stats: replaced НЕ В МАТР./ВНЕ МАТР. counters with МИН. ЗАКАЗ/ХВАТАЕТ
+- Updated filter options: replaced noMatrix/outMatrix/noStock with minOrder/ok
+- Updated row styling: amber for minOrder, green for order, no highlight for ok
+- Updated exportOrder() with identical logic
+- Updated showCalcDetail tooltip to show proper units (кг/шт) instead of always шт
+- Updated editOrder() to show status with proper units
+- Version bumped to 1.6
+
+Stage Summary:
+- File: /home/z/my-project/download/universal.html (v1.6)
+- File hosting services (0x0, catbox, file.io, oshi.at) all temporarily unavailable
