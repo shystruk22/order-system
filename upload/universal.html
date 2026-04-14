@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Универсальный расчёт</title>
-    <!-- Version: 1.7 -->
+    <!-- Version: 1.8 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -511,7 +511,6 @@
         function renderTabs() {
             const tabs = [
                 { id: 'upload', label: 'Загрузка', icon: icons.upload },
-                { id: 'suppliers', label: 'Поставщики', icon: icons.supplier },
                 { id: 'assortment', label: 'Ассортимент', icon: icons.list },
                 { id: 'matrix', label: 'Матрица', icon: icons.grid },
                 { id: 'prices', label: 'Цены', icon: icons.dollar },
@@ -527,9 +526,9 @@
 
         function renderContent() {
             const el = document.getElementById('content');
+            if (tab === 'suppliers') tab = 'upload';
             switch(tab) {
                 case 'upload': el.innerHTML = renderUpload(); break;
-                case 'suppliers': el.innerHTML = renderSuppliers(); break;
                 case 'assortment': el.innerHTML = renderAssortment(); break;
                 case 'matrix': el.innerHTML = renderMatrix(); break;
                 case 'prices': el.innerHTML = renderPrices(); break;
