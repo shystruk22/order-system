@@ -339,13 +339,6 @@
                                 ${knownGroups.map(g => `<option value="${esc(g)}">`).join('')}
                             </datalist>
                         </div>
-                        <div>
-                            <label class="block font-medium text-gray-700 mb-1">Поставщик</label>
-                            <input type="text" id="newSupplier" placeholder="Поставщик" list="supplierListAdd" class="input w-full">
-                            <datalist id="supplierListAdd">
-                                ${knownSuppliers.map(s => `<option value="${esc(s)}">`).join('')}
-                            </datalist>
-                        </div>
                         <div class="grid grid-cols-3 gap-3">
                             <div>
                                 <label class="block font-medium text-gray-700 mb-1">Цена</label>
@@ -394,7 +387,6 @@
                 nomenclature: name,
                 group: document.getElementById('newGroup').value.trim(),
                 packaging: (document.getElementById('newPackaging').value || 'ШТ').toUpperCase().trim(),
-                supplier: document.getElementById('newSupplier').value.trim(),
                 price,
                 inPrice: price,
                 shelfPrice: parseFloat(document.getElementById('newShelfPrice').value) || 0,
@@ -524,7 +516,6 @@
             const tabs = [
                 { id: 'upload', label: 'Загрузка', icon: icons.upload },
                 { id: 'assortment', label: 'Ассортимент', icon: icons.list },
-                { id: 'suppliers', label: 'Поставщики', icon: icons.grid },
                 { id: 'lists', label: 'Списки', icon: icons.save },
             ];
             document.getElementById('tabs').innerHTML = tabs.map(t => `
@@ -550,7 +541,6 @@
             switch(tab) {
                 case 'upload': content.innerHTML = renderUpload(); break;
                 case 'assortment': content.innerHTML = renderAssortment(); break;
-                case 'suppliers': content.innerHTML = renderSuppliersTab(); break;
                 case 'lists': content.innerHTML = renderListsTab(); break;
             }
             updateStats();
@@ -704,8 +694,7 @@
                         const q = searchQuery.toLowerCase();
                         if (!(p.nomenclature || '').toLowerCase().includes(q) &&
                             !(p.code || '').toLowerCase().includes(q) &&
-                            !(p.group || '').toLowerCase().includes(q) &&
-                            !(p.supplier || '').toLowerCase().includes(q)) return;
+                            !(p.group || '').toLowerCase().includes(q)) return;
                     }
                     if (filterGroup && p.group !== filterGroup) return;
                     const gr = p.group || 'Без группы';
@@ -732,7 +721,6 @@
                                     <th class="text-left" style="min-width:200px">Наименование</th>
                                     <th style="min-width:60px">Код</th>
                                     <th style="min-width:50px">Упак.</th>
-                                    <th style="min-width:120px">Поставщик</th>
                                     <th style="min-width:65px">Цена</th>
                                     <th style="min-width:75px">Цена на полке</th>
                                     <th style="min-width:65px">Дом. полка</th>
@@ -747,7 +735,7 @@
                                         <td class="text-center px-1 py-1">
                                             <span class="text-[10px]">${collapsedGroups[gr] ? '▶' : '▼'}</span>
                                         </td>
-                                        <td colspan="11" class="text-left py-1 px-2">
+                                        <td colspan="10" class="text-left py-1 px-2">
                                             <div class="flex items-center gap-2">
                                                 <span class="font-semibold">${esc(gr)}</span>
                                                 <span class="text-[10px] bg-teal-200 text-teal-800 px-1.5 py-0.5 rounded-full font-medium">${items.length}</span>
@@ -766,9 +754,6 @@
                                             <td class="font-mono text-[10px] text-gray-600">${esc(p.code)}</td>
                                             <td>
                                                 <input type="text" value="${esc(p.packaging || 'ШТ')}" onchange="updateProduct('${esc(p.code)}', 'packaging', this.value.toUpperCase())" class="cell-input" style="text-align:center;width:50px">
-                                            </td>
-                                            <td>
-                                                <input type="text" value="${esc(p.supplier || '')}" onchange="updateProduct('${esc(p.code)}', 'supplier', this.value)" class="cell-input" list="supplierListDl">
                                             </td>
                                             <td>
                                                 <input type="number" step="0.01" value="${p.price || ''}" onchange="updateProduct('${esc(p.code)}', 'price', parseFloat(this.value)||0)" class="cell-input-num" style="width:65px">
@@ -794,11 +779,6 @@
                             </tbody>
                         </table>
                     </div>`;
-
-                    // Supplier datalist
-                    const knownSuppliers = [...new Set(products.map(p => p.supplier || '').filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ru'));
-                    html += `<datalist id="supplierListDl">${knownSuppliers.map(s => `<option value="${esc(s)}">`).join('')}</datalist>`;
-                }
             }
 
             return html;
