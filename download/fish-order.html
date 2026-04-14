@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Заказ рыбы</title>
-    <!-- Version: 3.9 -->
+    <!-- Version: 3.10 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -2397,15 +2397,36 @@
                     let rawOrder = estimatedSales - effectiveStock - inTransitQty;
                     let order = rawOrder > 0 ? Math.ceil(rawOrder / quant) * quant : 0;
 
+                    // Минимальный заказ для товаров в матрице: 0.5 кг
+                    const minOrder = 0.5;
+                    if (order <= 0 && rawOrder > -minOrder) order = minOrder;
+
+                    // Статус: информация для понимания расчёта
+                    let statusText = '';
+                    if (order > 0 && rawOrder > 0) {
+                        statusText = `заказ ${order} кг`;
+                    } else if (order > 0 && rawOrder <= 0) {
+                        statusText = `мин. заказ ${order} кг (нет продаж)`;
+                    } else if (rawOrder <= 0 && effectiveStock > 0) {
+                        statusText = `хватает (${effectiveStock.toFixed(1)} кг)`;
+                    } else {
+                        statusText = `достаточно`;
+                    }
+                    if (hasConflict && order > 0) {
+                        const supNames = Object.keys(supplierPeriodMap).join('/');
+                        statusText += ` ⚠️ пересечение: ${supNames}`;
+                    }
+
                     // Build supplierOrders для поставщиков с доставкой ЗАВТРА
                     const supplierOrders = {};
-                    let hasConflict = false;
                     const primarySupplier = p.supplier || '';
 
                     suppliers.forEach(sup => {
                         if (!(sup in supplierPeriodMap)) return;
                         const editKey = `${store.tt}_${code}_${sup}`;
                         let supOrder = rawOrder > 0 ? Math.ceil(rawOrder / quant) * quant : 0;
+                        // Минимальный заказ 0.5 кг для каждого поставщика
+                        if (supOrder <= 0 && rawOrder > -0.5) supOrder = 0.5;
                         if (orderEdits[editKey] !== undefined) supOrder = orderEdits[editKey];
 
                         if (supOrder > 0) {
@@ -2416,13 +2437,29 @@
 
                     // hasConflict: >1 поставщик с заказом > 0
                     const activeSuppliersCount = Object.keys(supplierOrders).filter(s => supplierOrders[s].order > 0).length;
-                    hasConflict = activeSuppliersCount > 1;
+                    let hasConflict = activeSuppliersCount > 1;
+
+                    // Статус: информация для понимания расчёта
+                    let statusText = '';
+                    if (order > 0 && rawOrder > 0) {
+                        statusText = `заказ ${order} кг`;
+                    } else if (order > 0 && rawOrder <= 0) {
+                        statusText = `мин. заказ ${order} кг (нет продаж)`;
+                    } else if (rawOrder <= 0 && effectiveStock > 0) {
+                        statusText = `хватает (${effectiveStock.toFixed(1)} кг)`;
+                    } else {
+                        statusText = `достаточно`;
+                    }
+                    if (hasConflict && order > 0) {
+                        const supNames = Object.keys(supplierPeriodMap).join('/');
+                        statusText += ` ⚠️ пересечение: ${supNames}`;
+                    }
 
                     if (hasConflict) {
-                        const supNames = Object.keys(supplierOrders).filter(s => supplierOrders[s].order > 0).join(', ');
+                        const supNames2 = Object.keys(supplierOrders).filter(s => supplierOrders[s].order > 0).join(', ');
                         conflictSummary.push({
                             tt: store.tt, code, name: p.nomenclature || code,
-                            suppliers: supNames, order
+                            suppliers: supNames2, order
                         });
                     }
 
@@ -2443,7 +2480,7 @@
                         estimatedSales, inTransitQty,
                         rawOrder: rawOrder > 0 ? rawOrder : 0,
                         order, quant, inPrice, sum, shelf: p.shelf || 0,
-                        status: order > 0 ? `заказ ${order}` : 'достаточно',
+                        status: statusText,
                         statusType: order > 0 ? 'order' : 'ok',
                         supplierOrders, hasConflict
                     });
@@ -2481,7 +2518,7 @@
 
             // Dynamic supplier columns
             const supplierColumns = [...allOrderSuppliers].sort();
-            const colCount = 6 + supplierColumns.length;
+            const colCount = 7 + supplierColumns.length;
 
             // In-transit stats
             const inTransitCount = inTransitOrders.filter(o => o.status === 'in_transit').length;
@@ -2562,10 +2599,11 @@
                                 <tr>
                                     <th class="text-left sticky left-0 bg-gray-50 z-20" style="min-width:160px">Наименование</th>
                                     <th class="text-center" style="min-width:55px">Код</th>
-                                    <th class="text-center" style="min-width:80px">Группа</th>
-                                    <th class="text-center" style="min-width:60px">Продажи</th>
-                                    <th class="text-center" style="min-width:70px">Продажи вых.</th>
-                                    <th class="text-center" style="min-width:60px">Остаток</th>
+                                    <th class="text-center" style="min-width:70px">Группа</th>
+                                    <th class="text-center" style="min-width:55px">Продажи, кг</th>
+                                    <th class="text-center" style="min-width:60px">Среднее/день</th>
+                                    <th class="text-center" style="min-width:55px">Остаток, кг</th>
+                                    <th class="text-left" style="min-width:180px">Статус</th>
                                     ${supplierColumns.map(sup => `<th class="text-center bg-emerald-50" style="min-width:100px" title="${esc(sup)}">${esc(sup)}<br><span class="text-[10px] font-normal opacity-70">заказ / сумма</span></th>`).join('')}
                                 </tr>
                             </thead>
@@ -2601,9 +2639,10 @@
                                                 <td class="sticky left-0 bg-white text-left cell-wrap">${r.nomenclature}</td>
                                                 <td class="text-center font-mono text-xs text-gray-600">${r.code}</td>
                                                 <td class="text-center text-xs text-gray-600">${r.group}</td>
-                                                <td class="text-center"><span class="cursor-pointer underline decoration-dotted decoration-gray-400 hover:text-sky-600 hover:decoration-sky-400 transition-colors" onclick="event.stopPropagation();showCalcDetail(this, ${JSON.stringify(r).replace(/"/g, '&quot;')})">${r.sales.toFixed(0)}</span></td>
-                                                <td class="text-center ${r.weekendAvg > 0 ? 'text-orange-600 font-semibold' : 'text-gray-400'}">${r.weekendAvg > 0 ? r.weekendAvg.toFixed(1) : '—'}</td>
+                                                <td class="text-center"><span class="cursor-pointer underline decoration-dotted decoration-gray-400 hover:text-sky-600 hover:decoration-sky-400 transition-colors" onclick="event.stopPropagation();showCalcDetail(this, ${JSON.stringify(r).replace(/"/g, '&quot;')})">${r.sales.toFixed(2)}</span></td>
+                                                <td class="text-center font-medium ${(r.weekendAvg > 0 || r.weekdayAvg > 0) ? 'text-blue-700' : 'text-gray-400'}">${(r.weekendAvg > 0 || r.weekdayAvg > 0) ? ((r.weekdayCount * r.weekdayAvg + r.weekendCount * r.weekendAvg) / Math.max(1, r.weekdayCount + r.weekendCount)).toFixed(3) : (r.avgSalesPerDay > 0 ? r.avgSalesPerDay.toFixed(3) : '—')}</td>
                                                 <td class="text-center">${r.deliveredQty > 0 ? r.currentStock.toFixed(2) + ' <span class="text-emerald-600 font-medium">(+' + r.deliveredQty + ')</span>' : r.currentStock.toFixed(2)}</td>
+                                                <td class="text-left text-xs ${r.hasConflict ? 'text-amber-700 font-medium' : r.order > 0 ? 'text-emerald-700' : 'text-gray-500'}">${r.status}</td>
                                                 ${supplierColumns.map(sup => {
                                                     const so = (r.supplierOrders || {})[sup];
                                                     if (so && so.order > 0) {
@@ -3082,26 +3121,29 @@
                 return;
             }
 
-            const rows = [['№ Маг.', 'ТТ', 'Код', 'Наименование', 'Группа', 'Поставщик', 'Продажи', 'Продажи вых.', 'Остаток', 'Доставлено', 'В пути', 'Дн. до дост.', 'Заказ', 'Сумма', 'Статус']];
+            const rows = [['№ Маг.', 'ТТ', 'Код', 'Наименование', 'Группа', 'Поставщик', 'Продажи, кг', 'Среднее/день', 'Остаток, кг', 'Доставлено', 'В пути', 'Дн. до дост.', 'Заказ, кг', 'Сумма', 'Статус']];
 
             savedOrderResults.forEach(r => {
+                const avgDay = (r.weekendAvg > 0 || r.weekdayAvg > 0)
+                    ? ((r.weekdayCount * r.weekdayAvg + r.weekendCount * r.weekendAvg) / Math.max(1, r.weekdayCount + r.weekendCount))
+                    : r.avgSalesPerDay;
+
                 if (!r.supplierOrders) {
                     // Fallback for results without supplierOrders (single supplier)
                     const editKey = `${r.tt}_${r.code}`;
                     const orderQty = orderEdits[editKey] !== undefined ? orderEdits[editKey] : r.order;
-                    const status = orderQty > 0 ? 'заказ' : 'достаточно';
                     rows.push([
                         r.tt || '', r.tt, r.code, r.nomenclature || '', r.group || '',
                         r.supplier || '',
-                        (r.sales || 0).toFixed(0),
-                        r.weekendAvg > 0 ? r.weekendAvg.toFixed(1) : '—',
+                        (r.sales || 0).toFixed(2),
+                        avgDay > 0 ? avgDay.toFixed(3) : '—',
                         (r.currentStock || 0).toFixed(2),
                         r.deliveredQty || 0,
                         r.inTransitQty || 0,
                         r.daysUntil >= 99 ? '∞' : r.daysUntil,
                         orderQty,
                         (orderQty * (r.inPrice || 0)).toFixed(2),
-                        status
+                        r.status || ''
                     ]);
                 } else {
                     // Multi-supplier: one row per active supplier
@@ -3110,8 +3152,8 @@
                         rows.push([
                             r.tt || '', r.tt, r.code, r.nomenclature || '', r.group || '',
                             sup,
-                            (r.sales || 0).toFixed(0),
-                            r.weekendAvg > 0 ? r.weekendAvg.toFixed(1) : '—',
+                            (r.sales || 0).toFixed(2),
+                            avgDay > 0 ? avgDay.toFixed(3) : '—',
                             (r.currentStock || 0).toFixed(2),
                             r.deliveredQty || 0,
                             r.inTransitQty || 0,
