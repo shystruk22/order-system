@@ -2150,24 +2150,23 @@
                 return;
             }
 
-            // Collect all items with order > 0 from savedOrderResults
+            // Collect all items with order > 0 from savedOrderResults (multi-supplier)
             const ordersBySupplierStore = {};
             savedOrderResults.forEach(r => {
-                const editKey = `${r.tt}_${r.code}`;
-                const orderQty = orderEdits[editKey] !== undefined ? orderEdits[editKey] : r.order;
-                if (orderQty <= 0) return;
-
-                const supplier = r.supplier || '';
-                const store = r.tt;
-                const groupKey = `${supplier}|||${store}`;
-                if (!ordersBySupplierStore[groupKey]) ordersBySupplierStore[groupKey] = [];
-                ordersBySupplierStore[groupKey].push({
-                    code: r.code,
-                    nomenclature: r.nomenclature,
-                    qty: orderQty,
-                    sum: orderQty * (r.inPrice || 0),
-                    supplier,
-                    store
+                if (!r.supplierOrders) return;
+                Object.entries(r.supplierOrders).forEach(([sup, so]) => {
+                    if (!so || so.order <= 0) return;
+                    const store = r.tt;
+                    const groupKey = `${sup}|||${store}`;
+                    if (!ordersBySupplierStore[groupKey]) ordersBySupplierStore[groupKey] = [];
+                    ordersBySupplierStore[groupKey].push({
+                        code: r.code,
+                        nomenclature: r.nomenclature,
+                        qty: so.order,
+                        sum: so.sum,
+                        supplier: sup,
+                        store
+                    });
                 });
             });
 
@@ -2199,10 +2198,9 @@
             // Clear orderEdits for placed items
             Object.keys(ordersBySupplierStore).forEach(key => {
                 const [supplier, store] = key.split('|||');
-                // Find matching items in savedOrderResults and clear edits
                 savedOrderResults.forEach(r => {
                     if (r.tt === store) {
-                        const editKey = `${r.tt}_${r.code}`;
+                        const editKey = `${r.tt}_${r.code}_${supplier}`;
                         delete orderEdits[editKey];
                     }
                 });
@@ -2211,6 +2209,17 @@
             savedOrderStats = null;
             render();
             alert('Заказы сформированы!');
+        }
+
+        // Определить, доставляется ли сегодня в магазин
+        function hasDeliveryToday(storeName) {
+            const today = new Date(); today.setHours(0,0,0,0);
+            const dow = today.getDay();
+            const arrIdx = dow === 0 ? 6 : dow - 1;
+            return Object.values(deliverySchedule).some(storeData => {
+                const days = storeData[storeName];
+                return days && days[arrIdx];
+            });
         }
 
         function renderOrder() {
@@ -2248,6 +2257,10 @@
                     </div>`;
             }
 
+            // Пропустить магазины с доставкой сегодня
+            const skippedStores = stores.filter(s => hasDeliveryToday(s.tt));
+            const activeStores = stores.filter(s => !hasDeliveryToday(s.tt));
+
             // Карта остатков по ТТ и коду
             const stockMap = new Map();
             stocks.forEach(s => stockMap.set(`${s.tt}_${s.code}`, s));
@@ -2278,7 +2291,9 @@
             });
 
             const results = [];
-            stores.forEach(store => {
+            const allOrderSuppliers = new Set();
+
+            activeStores.forEach(store => {
                 Object.entries(matrix).forEach(([code, p]) => {
                     const key = `${store.tt}_${code}`;
                     const stockData = stockMap.get(key);
@@ -2286,54 +2301,87 @@
                     const markForTT = codeInMatrix ? (matrixMarks[code][store.tt] || 'НЕТ') : null;
                     const matrixDA = markForTT === 'ДА';
 
-                    if (!matrixDA) return; // Only show matrix items for fish order
+                    if (!matrixDA) return;
 
-                    const supplier = p.supplier || '';
-                    let daysUntil = getDaysUntilDelivery(supplier, store.tt);
-                    // Если доставка не назначена (99) — используем период вместо 99
-                    if (daysUntil >= 99) daysUntil = period;
+                    // Получить всех поставщиков для товара
+                    const suppliers = (supplierAssortment[code] && supplierAssortment[code].length > 0)
+                        ? supplierAssortment[code]
+                        : (p.supplier ? [p.supplier] : []);
+
+                    // Для каждого поставщика получить daysUntil, пропустить если <= 0 (сегодня)
+                    const supplierDaysMap = {};
+                    suppliers.forEach(sup => {
+                        let du = getDaysUntilDelivery(sup, store.tt);
+                        if (du <= 0) return;
+                        if (du >= 99) du = period;
+                        supplierDaysMap[sup] = du;
+                    });
+
+                    const daysArr = Object.values(supplierDaysMap);
+                    if (daysArr.length === 0) return;
+
+                    const minDU = Math.min(...daysArr);
+                    let daysUntil = minDU;
+
                     const inTransitQty = getInTransitQty(store.tt, code);
                     const deliveredQty = getDeliveredQty(store.tt, code);
                     const currentStock = stockData ? (stockData.currentStock || 0) : 0;
                     const effectiveStock = currentStock + deliveredQty;
                     const totalSales = salesByTTCode[key] || 0;
                     const daysPresent = stockData ? (stockData.daysPresent || 0) : 0;
-                    // Используем totalDays как количество дней если daysPresent = 0
                     const effectiveDays = daysPresent > 0 ? daysPresent : (stockData ? (stockData.totalDays || 0) : 0);
                     const avgSalesPerDay = effectiveDays > 0 ? totalSales / effectiveDays : 0;
 
-                    // Calculate estimated sales based on weekend/weekday
                     const { weekendCount, weekdayCount } = countDaysTypes(daysUntil);
                     const weekendAvg = getWeekendAvg(store.tt, code);
                     const weekdayAvg = getWeekdayAvg(store.tt, code);
 
                     let estimatedSales;
                     if (weekendAvg > 0 || weekdayAvg > 0) {
-                        // Use weekend/weekday specific averages
                         estimatedSales = (weekdayCount * weekdayAvg) + (weekendCount * weekendAvg);
                     } else {
-                        // Fallback to regular average
                         estimatedSales = avgSalesPerDay * daysUntil;
                     }
 
                     const quant = p.quant || 1;
                     const inPrice = p.inPrice || 0;
                     let rawOrder = estimatedSales - effectiveStock - inTransitQty;
-                    // Round up to quant
                     let order = rawOrder > 0 ? Math.ceil(rawOrder / quant) * quant : 0;
 
-                    // Apply manual edit
-                    const editKey = `${store.tt}_${code}`;
-                    if (orderEdits[editKey] !== undefined) order = orderEdits[editKey];
+                    // Build supplierOrders for suppliers with daysUntil == minDU
+                    const supplierOrders = {};
+                    let hasConflict = false;
+                    const primarySupplier = p.supplier || '';
 
-                    // Weekend avg for display
+                    suppliers.forEach(sup => {
+                        const du = supplierDaysMap[sup];
+                        if (du === undefined || du !== minDU) return;
+
+                        const editKey = `${store.tt}_${code}_${sup}`;
+                        let supOrder = rawOrder > 0 ? Math.ceil(rawOrder / quant) * quant : 0;
+                        if (orderEdits[editKey] !== undefined) supOrder = orderEdits[editKey];
+
+                        if (supOrder > 0) {
+                            supplierOrders[sup] = { order: supOrder, inPrice, sum: supOrder * inPrice, daysUntil: du };
+                            allOrderSuppliers.add(sup);
+                        }
+                    });
+
+                    // hasConflict: >1 supplier with order > 0
+                    const activeSuppliersCount = Object.keys(supplierOrders).filter(s => supplierOrders[s].order > 0).length;
+                    hasConflict = activeSuppliersCount > 1;
+
+                    // Primary order for stats
+                    const editKeyPrimary = `${store.tt}_${code}_${primarySupplier}`;
+                    if (orderEdits[editKeyPrimary] !== undefined) order = orderEdits[editKeyPrimary];
+                    else if (orderEdits[`${store.tt}_${code}`] !== undefined) order = orderEdits[`${store.tt}_${code}`];
+
                     const weekendAvgDisplay = weekendAvg || 0;
-
                     const sum = order * inPrice;
 
                     results.push({
                         tt: store.tt, code, nomenclature: p.nomenclature || stockData?.name || '',
-                        group: p.group || '', supplier, currentStock, deliveredQty, effectiveStock,
+                        group: p.group || '', supplier: primarySupplier, currentStock, deliveredQty, effectiveStock,
                         sales: totalSales, daysPresent, effectiveDays,
                         weekendAvg: weekendAvgDisplay, weekdayAvg, avgSalesPerDay,
                         weekendCount, weekdayCount, daysUntil,
@@ -2341,7 +2389,8 @@
                         rawOrder: rawOrder > 0 ? rawOrder : 0,
                         order, quant, inPrice, sum, shelf: p.shelf || 0,
                         status: order > 0 ? `заказ ${order}` : 'достаточно',
-                        statusType: order > 0 ? 'order' : 'ok'
+                        statusType: order > 0 ? 'order' : 'ok',
+                        supplierOrders, hasConflict
                     });
                 });
             });
@@ -2375,6 +2424,10 @@
             const stats = { total: filtered.length, toOrder: filtered.filter(r => r.order > 0).length, sum: filtered.reduce((s, r) => s + r.sum, 0) };
             const allGroups = getAllGroups();
 
+            // Dynamic supplier columns
+            const supplierColumns = [...allOrderSuppliers].sort();
+            const colCount = 6 + supplierColumns.length;
+
             // In-transit stats
             const inTransitCount = inTransitOrders.filter(o => o.status === 'in_transit').length;
             let nextDelivStr = '—';
@@ -2393,7 +2446,13 @@
             savedOrderResults = filtered;
             savedOrderStats = stats;
 
+            // Yellow banner for skipped stores
+            const skippedBanner = skippedStores.length > 0
+                ? `<div class="bg-yellow-50 border border-yellow-300 text-yellow-800 rounded-lg px-4 py-3 text-sm font-medium">⏭ Пропущено ${skippedStores.length} ТТ с доставкой сегодня: ${skippedStores.map(s => s.tt).join(', ')}</div>`
+                : '';
+
             return `<div class="space-y-3">
+                ${skippedBanner}
                 <div class="bg-white rounded-lg border border-gray-200 p-3">
                     <div class="flex justify-between items-center flex-wrap gap-3">
                         <div class="flex gap-3 items-center flex-wrap">
@@ -2430,23 +2489,20 @@
                                     <th class="text-left sticky left-0 bg-gray-50 z-20" style="min-width:160px">Наименование</th>
                                     <th class="text-center" style="min-width:55px">Код</th>
                                     <th class="text-center" style="min-width:80px">Группа</th>
-                                    <th class="text-center" style="min-width:100px">Поставщик</th>
                                     <th class="text-center" style="min-width:60px">Продажи</th>
                                     <th class="text-center" style="min-width:70px">Продажи вых.</th>
                                     <th class="text-center" style="min-width:60px">Остаток</th>
-                                    <th class="text-center" style="min-width:60px">В пути</th>
-                                    <th class="text-center" style="min-width:70px">Дн. до дост.</th>
-                                    <th class="text-center bg-emerald-100" style="min-width:70px">Заказ</th>
+                                    ${supplierColumns.map(sup => `<th class="text-center bg-emerald-50" style="min-width:100px" title="${esc(sup)}">${esc(sup)}<br><span class="text-[10px] font-normal opacity-70">заказ / сумма</span></th>`).join('')}
                                 </tr>
                             </thead>
                             <tbody>
                                 ${Object.entries(groupedTT).map(([tt, groups]) => `
                                     <tr class="bg-sky-50 cursor-pointer hover:bg-sky-100" onclick="collapsedTT['${esc(tt)}']=!collapsedTT['${esc(tt)}'];render()">
-                                        <td colspan="10" class="text-left font-semibold text-sky-800"><span class="inline-flex items-center gap-1">${collapsedTT[tt] ? icons.chevronRight : icons.chevronDown}${icons.mapPin}${tt}<span class="font-normal text-sky-600">(${Object.values(groups).reduce((s, items) => s + items.length, 0)} поз.)</span></span></td>
+                                        <td colspan="${colCount}" class="text-left font-semibold text-sky-800"><span class="inline-flex items-center gap-1">${collapsedTT[tt] ? icons.chevronRight : icons.chevronDown}${icons.mapPin}${tt}<span class="font-normal text-sky-600">(${Object.values(groups).reduce((s, items) => s + items.length, 0)} поз.)</span></span></td>
                                     </tr>
                                     ${collapsedTT[tt] ? '' : Object.entries(groups).map(([gr, items]) => `
                                         <tr class="group-header cursor-pointer" onclick="collapsedG['order_${esc(tt)}_${esc(gr)}']=!collapsedG['order_${esc(tt)}_${esc(gr)}'];render()">
-                                            <td colspan="10" class="text-left py-1 px-2">
+                                            <td colspan="${colCount}" class="text-left py-1 px-2">
                                                 <div class="flex items-center gap-2">
                                                     ${collapsedG['order_' + tt + '_' + gr] ? icons.chevronRight : icons.chevronDown}
                                                     <span class="font-semibold text-indigo-800">${gr}</span>
@@ -2455,21 +2511,32 @@
                                             </td>
                                         </tr>
                                         ${collapsedG['order_' + tt + '_' + gr] ? '' : items.map(r => {
-                                            let rowClass = r.statusType === 'order' ? 'bg-emerald-50' : '';
+                                            let rowClass = '';
+                                            let cellBg = '';
+                                            let titleAttr = '';
+                                            if (r.hasConflict) {
+                                                rowClass = 'bg-amber-50';
+                                                cellBg = 'bg-amber-100';
+                                                titleAttr = ' title="⚠️ Конфликт: несколько поставщиков с заказом"';
+                                            } else if (r.order > 0) {
+                                                rowClass = 'bg-emerald-50';
+                                                cellBg = 'bg-emerald-100';
+                                            }
                                             return `
-                                            <tr class="${rowClass} hover:bg-gray-100">
+                                            <tr class="${rowClass} hover:bg-gray-100"${titleAttr}>
                                                 <td class="sticky left-0 bg-white text-left cell-wrap">${r.nomenclature}</td>
                                                 <td class="text-center font-mono text-xs text-gray-600">${r.code}</td>
                                                 <td class="text-center text-xs text-gray-600">${r.group}</td>
-                                                <td class="text-center text-xs text-gray-600">${r.supplier || '—'}</td>
                                                 <td class="text-center"><span class="cursor-pointer underline decoration-dotted decoration-gray-400 hover:text-sky-600 hover:decoration-sky-400 transition-colors" onclick="event.stopPropagation();showCalcDetail(this, ${JSON.stringify(r).replace(/"/g, '&quot;')})">${r.sales.toFixed(0)}</span></td>
                                                 <td class="text-center ${r.weekendAvg > 0 ? 'text-orange-600 font-semibold' : 'text-gray-400'}">${r.weekendAvg > 0 ? r.weekendAvg.toFixed(1) : '—'}</td>
                                                 <td class="text-center">${r.deliveredQty > 0 ? r.currentStock.toFixed(2) + ' <span class="text-emerald-600 font-medium">(+' + r.deliveredQty + ')</span>' : r.currentStock.toFixed(2)}</td>
-                                                <td class="text-center ${r.inTransitQty > 0 ? 'text-blue-600 font-semibold' : 'text-gray-400'}">${r.inTransitQty > 0 ? r.inTransitQty : '0'}</td>
-                                                <td class="text-center ${r.daysUntil >= 99 ? 'text-red-500' : r.daysUntil <= 1 ? 'text-amber-600 font-semibold' : ''}">${r.daysUntil >= 99 ? '∞' : r.daysUntil}</td>
-                                                <td class="text-center font-semibold bg-emerald-100">
-                                                    <input type="number" value="${r.order}" data-tt="${esc(r.tt)}" data-code="${esc(r.code)}" onchange="editOrder(this)" class="input w-16 text-center text-sm font-bold">
-                                                </td>
+                                                ${supplierColumns.map(sup => {
+                                                    const so = (r.supplierOrders || {})[sup];
+                                                    if (so && so.order > 0) {
+                                                        return `<td class="text-center ${cellBg}"><input type="number" value="${so.order}" data-tt="${esc(r.tt)}" data-code="${esc(r.code)}" data-supplier="${esc(sup)}" onchange="editOrder(this)" class="input w-16 text-center text-sm font-bold"><div class="text-[10px] text-gray-500">${so.sum.toFixed(0)} ₽</div></td>`;
+                                                    }
+                                                    return `<td class="text-center text-gray-300">—</td>`;
+                                                }).join('')}
                                             </tr>`;
                                         }).join('')}
                                     `).join('')}
@@ -2481,19 +2548,15 @@
             </div>`;
         }
 
+
         function editOrder(input) {
             const newOrder = parseFloat(input.value) || 0;
             const tt = input.dataset.tt;
             const code = input.dataset.code;
-            const editKey = `${tt}_${code}`;
+            const supplier = input.dataset.supplier || '';
+            const editKey = supplier ? `${tt}_${code}_${supplier}` : `${tt}_${code}`;
             orderEdits[editKey] = newOrder;
-            const p = matrix[code];
-            const newSum = newOrder * (p ? p.inPrice || 0 : 0);
-            const row = input.closest('tr');
-            if (row) {
-                const statusTd = row.querySelector('td:last-child');
-                if (statusTd) statusTd.textContent = newOrder > 0 ? `заказ ${newOrder}` : 'достаточно';
-            }
+            render(); // Re-render to update sums and conflicts
         }
 
         function showCalcDetail(el, r) {
@@ -2826,22 +2889,43 @@
             const rows = [['№ Маг.', 'ТТ', 'Код', 'Наименование', 'Группа', 'Поставщик', 'Продажи', 'Продажи вых.', 'Остаток', 'Доставлено', 'В пути', 'Дн. до дост.', 'Заказ', 'Сумма', 'Статус']];
 
             savedOrderResults.forEach(r => {
-                const editKey = `${r.tt}_${r.code}`;
-                const orderQty = orderEdits[editKey] !== undefined ? orderEdits[editKey] : r.order;
-                const status = orderQty > 0 ? 'заказ' : 'достаточно';
-                rows.push([
-                    r.tt || '', r.tt, r.code, r.nomenclature || '', r.group || '',
-                    r.supplier || '',
-                    (r.sales || 0).toFixed(0),
-                    r.weekendAvg > 0 ? r.weekendAvg.toFixed(1) : '—',
-                    (r.currentStock || 0).toFixed(2),
-                    r.deliveredQty || 0,
-                    r.inTransitQty || 0,
-                    r.daysUntil >= 99 ? '∞' : r.daysUntil,
-                    orderQty,
-                    (orderQty * (r.inPrice || 0)).toFixed(2),
-                    status
-                ]);
+                if (!r.supplierOrders) {
+                    // Fallback for results without supplierOrders (single supplier)
+                    const editKey = `${r.tt}_${r.code}`;
+                    const orderQty = orderEdits[editKey] !== undefined ? orderEdits[editKey] : r.order;
+                    const status = orderQty > 0 ? 'заказ' : 'достаточно';
+                    rows.push([
+                        r.tt || '', r.tt, r.code, r.nomenclature || '', r.group || '',
+                        r.supplier || '',
+                        (r.sales || 0).toFixed(0),
+                        r.weekendAvg > 0 ? r.weekendAvg.toFixed(1) : '—',
+                        (r.currentStock || 0).toFixed(2),
+                        r.deliveredQty || 0,
+                        r.inTransitQty || 0,
+                        r.daysUntil >= 99 ? '∞' : r.daysUntil,
+                        orderQty,
+                        (orderQty * (r.inPrice || 0)).toFixed(2),
+                        status
+                    ]);
+                } else {
+                    // Multi-supplier: one row per active supplier
+                    Object.entries(r.supplierOrders).forEach(([sup, so]) => {
+                        if (!so || so.order <= 0) return;
+                        rows.push([
+                            r.tt || '', r.tt, r.code, r.nomenclature || '', r.group || '',
+                            sup,
+                            (r.sales || 0).toFixed(0),
+                            r.weekendAvg > 0 ? r.weekendAvg.toFixed(1) : '—',
+                            (r.currentStock || 0).toFixed(2),
+                            r.deliveredQty || 0,
+                            r.inTransitQty || 0,
+                            r.daysUntil >= 99 ? '∞' : r.daysUntil,
+                            so.order,
+                            (so.order * ((so.inPrice || 0))).toFixed(2),
+                            'заказ'
+                        ]);
+                    });
+                }
             });
 
             const headers = rows.shift();
