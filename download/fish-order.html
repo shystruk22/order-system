@@ -2401,22 +2401,6 @@
                     const minOrder = 0.5;
                     if (order <= 0 && rawOrder > -minOrder) order = minOrder;
 
-                    // Статус: информация для понимания расчёта
-                    let statusText = '';
-                    if (order > 0 && rawOrder > 0) {
-                        statusText = `заказ ${order} кг`;
-                    } else if (order > 0 && rawOrder <= 0) {
-                        statusText = `мин. заказ ${order} кг (нет продаж)`;
-                    } else if (rawOrder <= 0 && effectiveStock > 0) {
-                        statusText = `хватает (${effectiveStock.toFixed(1)} кг)`;
-                    } else {
-                        statusText = `достаточно`;
-                    }
-                    if (hasConflict && order > 0) {
-                        const supNames = Object.keys(supplierPeriodMap).join('/');
-                        statusText += ` ⚠️ пересечение: ${supNames}`;
-                    }
-
                     // Build supplierOrders для поставщиков с доставкой ЗАВТРА
                     const supplierOrders = {};
                     const primarySupplier = p.supplier || '';
