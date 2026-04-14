@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Универсальный расчёт</title>
-    <!-- Version: 1.6 -->
+    <!-- Version: 1.7 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -88,6 +88,7 @@
         let savedOrderResults = null; // Сохранённые результаты расчёта заказа
         let savedOrderStats = null;   // Сохранённая статистика заказа
         let orderEdits = {};          // Ручные правки заказа: {"tt_code": value}
+        let newMarkupEdits = {};      // Временные «новые наценки» для вкладки Цены: {"code": value}
 
         function resetSavedOrders() { savedOrderResults = null; savedOrderStats = null; orderEdits = {}; }
 
@@ -1184,14 +1185,12 @@
             let totalRevenue = 0, totalProfit = 0, totalPurchase = 0;
             
             sales.forEach(s => {
-                // Ищем товар по коду (основной формат) или по названию (fallback)
                 const nc = s.code ? normCode(s.code) : null;
                 const product = nc ? matrix[nc] : 
                     (s.name ? Object.values(matrix).find(p => p.nomenclature === s.name) : null);
                 if (product) {
                     const inPrice = product.inPrice || 0;
-                    const markup = product.markup ?? groupMarkups[product.group || ''] ?? defaultMarkup;
-                    const shelfPrice = product.shelfPrice > 0 ? product.shelfPrice : inPrice * (1 + markup / 100);
+                    const shelfPrice = product.shelfPrice > 0 ? product.shelfPrice : inPrice * (1 + (product.markup ?? groupMarkups[product.group || ''] ?? defaultMarkup) / 100);
                     totalPurchase += s.quantity * inPrice;
                     totalRevenue += s.quantity * shelfPrice;
                     totalProfit += s.quantity * (shelfPrice - inPrice);
@@ -1254,6 +1253,11 @@
                             <button onclick="exportPrices()" class="btn px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50">${icons.download}</button>
                         </div>
                     </div>
+                    <div class="mb-2 px-2 py-1.5 bg-sky-50 rounded-md border border-sky-200 text-[11px] text-sky-700">
+                        <b>Как читать таблицу:</b> Первые колонки — текущие данные из ассортимента (наценка/маржа/доход рассчитаны автоматически). 
+                        Колонки <span class="text-blue-700 font-semibold">«Новая наценка»</span> — введите процент, чтобы увидеть, как изменятся цена, маржа и доход.
+                        Цена на полке меняется <b>только</b> через вкладку «Ассортимент».
+                    </div>
                     <div class="table-container">
                         <table class="table-modern">
                             <thead>
@@ -1261,11 +1265,15 @@
                                     <th class="text-left">Группа</th>
                                     <th class="text-left">Наименование</th>
                                     <th class="text-center">Код</th>
-                                    <th class="text-center">Вход. цена</th>
-                                    <th class="text-center bg-green-100">Цена на полке</th>
-                                    <th class="text-center bg-orange-100">Наценка %</th>
-                                    <th class="text-center">Доход ₽</th>
-                                    <th class="text-center">Доход %</th>
+                                    <th class="text-center">Вход.<br>цена</th>
+                                    <th class="text-center bg-green-100">Цена<br>на полке</th>
+                                    <th class="text-center bg-orange-100">Наценка<br>%</th>
+                                    <th class="text-center">Маржа<br>%</th>
+                                    <th class="text-center">Доход<br>₽</th>
+                                    <th class="text-center bg-blue-100">Новая<br>наценка %</th>
+                                    <th class="text-center bg-blue-50">Новая<br>цена</th>
+                                    <th class="text-center bg-blue-50">Новая<br>маржа %</th>
+                                    <th class="text-center bg-blue-50">Новый<br>доход ₽</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -1282,7 +1290,7 @@
                                     });
                                     return Object.entries(grouped).sort((a,b) => a[0].localeCompare(b[0], 'ru')).map(([gr, items]) => `
                                         <tr class="group-header cursor-pointer" onclick="collapsedG['prices_${esc(gr)}']=!collapsedG['prices_${esc(gr)}'];renderPricesDebounced()">
-                                            <td colspan="8" class="text-left py-1 px-2">
+                                            <td colspan="12" class="text-left py-1 px-2">
                                                 <div class="flex items-center gap-2">
                                                     ${collapsedG['prices_' + gr] ? icons.chevronRight : icons.chevronDown}
                                                     <span class="font-semibold">${gr}</span>
@@ -1293,22 +1301,40 @@
                                         ${collapsedG['prices_' + gr] ? '' : items.map(p => {
                                             const inPrice = p.inPrice || 0;
                                             const markup = p.markup ?? groupMarkups[p.group || ''] ?? defaultMarkup;
-                                            // Если задана цена на полке вручную — используем её, иначе считаем из наценки
                                             const shelfPrice = p.shelfPrice > 0 ? p.shelfPrice : Math.round(inPrice * (1 + markup / 100));
+                                            // Текущие расчётные показатели
                                             const effectiveMarkup = inPrice > 0 ? Math.round(((shelfPrice - inPrice) / inPrice) * 100) : markup;
+                                            const margin = shelfPrice > 0 ? (((shelfPrice - inPrice) / shelfPrice) * 100).toFixed(1) : '0.0';
                                             const profit = shelfPrice - inPrice;
-                                            const profitPercent = inPrice > 0 ? ((profit / inPrice) * 100).toFixed(1) : 0;
                                             const hasIndividual = p.markup !== undefined && p.markup !== null;
+                                            // Новая наценка из временного хранилища
+                                            const newMarkupKey = 'newMarkup_' + p.code;
+                                            const newMarkupVal = newMarkupEdits[newMarkupKey];
+                                            const hasNewMarkup = newMarkupVal !== undefined && newMarkupVal !== '';
+                                            const appliedNewMarkup = hasNewMarkup ? (parseFloat(newMarkupVal) || 0) : null;
+                                            let newPrice = '-', newMargin = '-', newProfit = '-';
+                                            if (hasNewMarkup && inPrice > 0) {
+                                                newPrice = Math.round(inPrice * (1 + appliedNewMarkup / 100));
+                                                newMargin = newPrice > 0 ? (((newPrice - inPrice) / newPrice) * 100).toFixed(1) : '0.0';
+                                                newProfit = newPrice - inPrice;
+                                            }
+                                            const newPriceClass = hasNewMarkup ? (newPrice > shelfPrice ? 'text-emerald-700' : newPrice < shelfPrice ? 'text-red-600' : 'text-gray-700') : 'text-gray-400';
+                                            const newMarginClass = hasNewMarkup ? (appliedNewMarkup > effectiveMarkup ? 'text-emerald-700' : appliedNewMarkup < effectiveMarkup ? 'text-red-600' : 'text-gray-700') : 'text-gray-400';
+                                            const newProfitClass = hasNewMarkup ? (newProfit > profit ? 'text-emerald-700' : newProfit < profit ? 'text-red-600' : 'text-gray-700') : 'text-gray-400';
                                             return `
                                                 <tr class="hover:bg-gray-50">
                                                     <td class="text-left text-[10px] text-gray-500">${p.group || ''}</td>
                                                     <td class="text-left font-medium text-gray-700">${p.nomenclature || ''}</td>
                                                     <td class="text-center font-mono text-[10px] text-gray-500">${p.code}</td>
-                                                    <td class="text-center"><input type="number" value="${inPrice}" oninput="handlePriceInput(this)" class="input w-20 text-center text-xs"></td>
-                                                    <td class="text-center font-semibold bg-green-50" id="shelf_${p.code}">${shelfPrice.toLocaleString('ru-RU')} ₽</td>
-                                                    <td class="text-center bg-orange-50"><input type="number" value="${hasIndividual ? p.markup : ''}" oninput="handleMarkupInput(this)" placeholder="${groupMarkups[p.group || ''] ?? defaultMarkup}" class="input w-14 text-center text-xs font-bold ${hasIndividual ? 'text-blue-700' : ''}"></td>
+                                                    <td class="text-center">${inPrice.toLocaleString('ru-RU')} ₽</td>
+                                                    <td class="text-center font-semibold bg-green-50">${shelfPrice.toLocaleString('ru-RU')} ₽</td>
+                                                    <td class="text-center bg-orange-50 font-semibold text-orange-700">${effectiveMarkup}%</td>
+                                                    <td class="text-center font-medium text-gray-700">${margin}%</td>
                                                     <td class="text-center font-medium ${profit > 0 ? 'text-emerald-600' : 'text-gray-500'}">${profit.toLocaleString('ru-RU')} ₽</td>
-                                                    <td class="text-center font-medium ${profit > 0 ? 'text-emerald-600' : 'text-gray-500'}">${profitPercent}%</td>
+                                                    <td class="text-center bg-blue-50"><input type="number" value="${hasNewMarkup ? newMarkupVal : ''}" oninput="handleNewMarkupInput(this)" data-code="${esc(p.code)}" placeholder="—" class="input w-16 text-center text-xs font-bold text-blue-700"></td>
+                                                    <td class="text-center font-semibold ${newPriceClass}">${hasNewMarkup ? newPrice.toLocaleString('ru-RU') + ' ₽' : '—'}</td>
+                                                    <td class="text-center font-medium ${newMarginClass}">${hasNewMarkup ? newMargin + '%' : '—'}</td>
+                                                    <td class="text-center font-medium ${newProfitClass}">${hasNewMarkup ? newProfit.toLocaleString('ru-RU') + ' ₽' : '—'}</td>
                                                 </tr>`;
                                         }).join('')}
                                     `).join('');
@@ -1337,70 +1363,80 @@
             render();
         }
 
-        // === ЖИВОЕ ОБНОВЛЕНИЕ ЦЕН (без полного рендера) ===
-        function handlePriceInput(inputEl) {
+        // === ЖИВОЕ ОБНОВЛЕНИЕ «НОВАЯ НАЦЕНКА» (без полного рендера) ===
+        function handleNewMarkupInput(inputEl) {
+            const code = inputEl.dataset.code;
+            if (!code) return;
+            const key = 'newMarkup_' + code;
+            const val = inputEl.value;
             const row = inputEl.closest('tr');
             if (!row) return;
-            const codeCell = row.querySelectorAll('td')[2];
-            const code = normCode(codeCell.textContent.trim());
+
+            if (val === '' || val === null) {
+                delete newMarkupEdits[key];
+            } else {
+                newMarkupEdits[key] = val;
+            }
+
             const product = matrix[code];
-            if (!product) return;
-
-            const val = parseFloat(inputEl.value) || 0;
-            product.inPrice = val;
-            save(KEYS.ASSORTMENT, matrix);
-
-            const markup = product.markup ?? groupMarkups[product.group || ''] ?? defaultMarkup;
-            const shelfPrice = Math.round(val * (1 + markup / 100));
-            const profit = shelfPrice - val;
-            const profitPercent = val > 0 ? ((profit / val) * 100).toFixed(1) : 0;
-
-            const cells = row.querySelectorAll('td');
-            cells[4].innerHTML = shelfPrice.toLocaleString('ru-RU') + ' ₽';
-            cells[6].innerHTML = profit.toLocaleString('ru-RU') + ' ₽';
-            cells[7].innerHTML = profitPercent + '%';
-            cells[6].className = 'text-center font-medium ' + (profit > 0 ? 'text-emerald-600' : 'text-gray-500');
-            cells[7].className = 'text-center font-medium ' + (profit > 0 ? 'text-emerald-600' : 'text-gray-500');
-        }
-
-        function handleMarkupInput(inputEl) {
-            const row = inputEl.closest('tr');
-            if (!row) return;
-            const codeCell = row.querySelectorAll('td')[2];
-            const code = normCode(codeCell.textContent.trim());
-            const product = matrix[code];
-            if (!product) return;
-
-            const val = inputEl.value === '' ? null : (parseFloat(inputEl.value) || 0);
-            if (val === null) delete product.markup;
-            else product.markup = val;
-            save(KEYS.ASSORTMENT, matrix);
-
-            const effectiveMarkup = val ?? groupMarkups[product.group || ''] ?? defaultMarkup;
-            const inPrice = product.inPrice || 0;
-            const shelfPrice = Math.round(inPrice * (1 + effectiveMarkup / 100));
+            const inPrice = product ? (product.inPrice || 0) : 0;
+            const markup = product ? (product.markup ?? groupMarkups[product.group || ''] ?? defaultMarkup) : defaultMarkup;
+            const shelfPrice = product && product.shelfPrice > 0 ? product.shelfPrice : Math.round(inPrice * (1 + markup / 100));
+            const effectiveMarkup = inPrice > 0 ? Math.round(((shelfPrice - inPrice) / inPrice) * 100) : markup;
             const profit = shelfPrice - inPrice;
-            const profitPercent = inPrice > 0 ? ((profit / inPrice) * 100).toFixed(1) : 0;
 
             const cells = row.querySelectorAll('td');
-            cells[4].innerHTML = shelfPrice.toLocaleString('ru-RU') + ' ₽';
-            cells[6].innerHTML = profit.toLocaleString('ru-RU') + ' ₽';
-            cells[7].innerHTML = profitPercent + '%';
-            cells[6].className = 'text-center font-medium ' + (profit > 0 ? 'text-emerald-600' : 'text-gray-500');
-            cells[7].className = 'text-center font-medium ' + (profit > 0 ? 'text-emerald-600' : 'text-gray-500');
-            inputEl.className = 'input w-14 text-center text-xs font-bold ' + (val !== null ? 'text-blue-700' : '');
+            // cells[8] = новая наценка (input), cells[9] = новая цена, cells[10] = новая маржа, cells[11] = новый доход
+            if (val === '' || !inPrice) {
+                cells[9].innerHTML = '—';
+                cells[9].className = 'text-center font-semibold text-gray-400';
+                cells[10].innerHTML = '—';
+                cells[10].className = 'text-center font-medium text-gray-400';
+                cells[11].innerHTML = '—';
+                cells[11].className = 'text-center font-medium text-gray-400';
+                return;
+            }
+
+            const appliedNewMarkup = parseFloat(val) || 0;
+            const newPrice = Math.round(inPrice * (1 + appliedNewMarkup / 100));
+            const newMargin = newPrice > 0 ? (((newPrice - inPrice) / newPrice) * 100).toFixed(1) : '0.0';
+            const newProfit = newPrice - inPrice;
+
+            const priceClass = newPrice > shelfPrice ? 'text-emerald-700' : newPrice < shelfPrice ? 'text-red-600' : 'text-gray-700';
+            const marginClass = appliedNewMarkup > effectiveMarkup ? 'text-emerald-700' : appliedNewMarkup < effectiveMarkup ? 'text-red-600' : 'text-gray-700';
+            const profitClass = newProfit > profit ? 'text-emerald-700' : newProfit < profit ? 'text-red-600' : 'text-gray-700';
+
+            cells[9].innerHTML = newPrice.toLocaleString('ru-RU') + ' ₽';
+            cells[9].className = 'text-center font-semibold ' + priceClass;
+            cells[10].innerHTML = newMargin + '%';
+            cells[10].className = 'text-center font-medium ' + marginClass;
+            cells[11].innerHTML = newProfit.toLocaleString('ru-RU') + ' ₽';
+            cells[11].className = 'text-center font-medium ' + profitClass;
         }
 
         function exportPrices() {
-            const headers = ['Группа', 'Наименование', 'Код', 'Вход. цена', 'Наценка %', 'Цена на полке', 'Доход ₽', 'Доход %'];
+            const headers = ['Группа', 'Наименование', 'Код', 'Вход. цена', 'Цена на полке', 'Наценка %', 'Маржа %', 'Доход ₽', 'Новая наценка %', 'Новая цена', 'Новая маржа %', 'Новый доход ₽'];
             const data = [];
             Object.entries(matrix).forEach(([code, p]) => {
                 const inPrice = p.inPrice || 0;
                 const markup = p.markup ?? groupMarkups[p.group || ''] ?? defaultMarkup;
                 const shelfPrice = p.shelfPrice > 0 ? p.shelfPrice : Math.round(inPrice * (1 + markup / 100));
-                const effectiveMarkup = p.shelfPrice > 0 ? Math.round(((p.shelfPrice - inPrice) / inPrice) * 100) : markup;
+                const effectiveMarkup = inPrice > 0 ? Math.round(((shelfPrice - inPrice) / inPrice) * 100) : markup;
+                const margin = shelfPrice > 0 ? (((shelfPrice - inPrice) / shelfPrice) * 100).toFixed(1) : '0.0';
                 const profit = shelfPrice - inPrice;
-                data.push([p.group || '', p.nomenclature || '', code, inPrice, effectiveMarkup, shelfPrice, profit, inPrice > 0 ? ((profit / inPrice) * 100).toFixed(1) + '%' : '0%']);
+                // Новая наценка
+                const newMarkupKey = 'newMarkup_' + code;
+                const newMarkupVal = newMarkupEdits[newMarkupKey];
+                const hasNewMarkup = newMarkupVal !== undefined && newMarkupVal !== '' && inPrice > 0;
+                let newPrice = '', newMargin = '', newProfit = '', newMarkupStr = '';
+                if (hasNewMarkup) {
+                    const nm = parseFloat(newMarkupVal) || 0;
+                    newPrice = Math.round(inPrice * (1 + nm / 100));
+                    newMargin = newPrice > 0 ? (((newPrice - inPrice) / newPrice) * 100).toFixed(1) : '0.0';
+                    newProfit = newPrice - inPrice;
+                    newMarkupStr = nm + '%';
+                }
+                data.push([p.group || '', p.nomenclature || '', code, inPrice, shelfPrice, effectiveMarkup + '%', margin + '%', profit, newMarkupStr, newPrice !== '' ? newPrice : '', newMargin !== '' ? newMargin + '%' : '', newProfit !== '' ? newProfit : '']);
             });
             const ws = SharedUtils.createStyledSheet(data, headers, [0, 1]);
             const wb = XLSX.utils.book_new();
