@@ -20,6 +20,25 @@ Stage Summary:
 - File: /home/z/my-project/download/fish-order.html (v3.8, 2960 lines)
 - Key fixes: supplier auto-sync, stock parsing via SharedUtils, calculation fallback, button unification, schedule Итого row + weekend highlighting
 ---
+Task ID: 3
+Agent: main
+Task: Remove suppliers column from assortment.html, verify sync with universal.html
+
+Work Log:
+- Confirmed upload/universal.html and download/universal.html are identical (v1.8, 2526 lines)
+- Found assortment.html already had supplierList/supplierMatrix variable declarations removed by previous session
+- Removed "Поставщик" from 3 table locations in assortment.html:
+  1. Expected format header (import tab)
+  2. Import preview table header
+  3. Import preview table data cell
+- Removed entire renderSuppliersTab() block and all supplier helper functions (206 lines → 1 comment)
+- Verified assortment.html ↔ universal.html sync mechanism: both use PRODUCTS_KEY + UNIV_PRODUCTS_KEY via syncAll() and SharedData.onChange
+
+Stage Summary:
+- File: /home/z/my-project/download/assortment.html — all supplier references removed
+- File: /home/z/my-project/download/universal.html — preserved as user's v1.8 (unchanged)
+- Sync verified: assortment.html saves to both storage keys, listens for changes via SharedData
+---
 Task ID: 2
 Agent: main
 Task: Update universal.html order logic — matrix filtering, min orders, quantum rounding
