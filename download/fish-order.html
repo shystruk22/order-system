@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Заказ рыбы</title>
-    <!-- Version: 3.8 -->
+    <!-- Version: 3.9 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -91,8 +91,9 @@
         let weekdaySales = {};     // {"tt_code": totalWeekdayQty}
         let weekendDays = {};      // {"tt_code": countOfWeekendDays}
         let weekdayDays = {};      // {"tt_code": countOfWeekdayDays}
+        let stockConsumptionData = {}; // {"tt_code": {weekendSales, weekendDays, weekdaySales, weekdayDays}} — из файла остатков (постоянное)
 
-        function resetSavedOrders() { savedOrderResults = null; savedOrderStats = null; orderEdits = {}; weekendSales = {}; weekdaySales = {}; weekendDays = {}; weekdayDays = {}; }
+        function resetSavedOrders() { savedOrderResults = null; savedOrderStats = null; orderEdits = {}; weekendSales = {}; weekdaySales = {}; weekendDays = {}; weekdayDays = {}; /* stockConsumptionData НЕ очищаем — постоянные данные из остатков */ }
 
         const KEYS = {
             ASSORTMENT: 'fish_assortment_v1',
@@ -103,7 +104,8 @@
             SCHEDULE: 'fish_schedule_v1',
             INTRANSIT: 'fish_intransit_v1',
             SUPPLIER_ASSORTMENT: 'fish_supplier_assortment_v1',
-            SUPPLIER_PRICES: 'fish_supplier_prices_v1'
+            SUPPLIER_PRICES: 'fish_supplier_prices_v1',
+            STOCK_CONSUMPTION: 'fish_stock_consumption_v1'
         };
 
         // Поля каталога товаров (не ДА/НЕТ)
@@ -397,6 +399,7 @@
             inTransitOrders = load(KEYS.INTRANSIT, []);
             supplierAssortment = load(KEYS.SUPPLIER_ASSORTMENT, {});
             supplierPrices = load(KEYS.SUPPLIER_PRICES, {});
+            stockConsumptionData = load(KEYS.STOCK_CONSUMPTION, {});
             autoCloseDeliveredOrders();
 
             // Загрузка с миграцией: старый формат (всё в matrix) → новый (matrix + matrixMarks)
@@ -2117,6 +2120,45 @@
             return Math.ceil((nextDate - today) / 86400000);
         }
 
+        // Получить период доставки для поставщика → магазин:
+        // Возвращает {firstDeliveryDate, secondDeliveryDate, period} если доставка ЗАВТРА,
+        // или null если завтра нет доставки
+        function getDeliveryPeriod(supplier, storeName) {
+            if (!deliverySchedule[supplier] || !deliverySchedule[supplier][storeName]) return null;
+            const days = deliverySchedule[supplier][storeName];
+            const today = new Date();
+            today.setHours(0,0,0,0);
+
+            let firstDeliveryDate = null;
+            let secondDeliveryDate = null;
+
+            for (let d = 1; d < 14; d++) {
+                const checkDate = new Date(today);
+                checkDate.setDate(today.getDate() + d);
+                let dow = checkDate.getDay();
+                let arrIdx = dow === 0 ? 6 : dow - 1;
+                if (days[arrIdx]) {
+                    if (!firstDeliveryDate) {
+                        firstDeliveryDate = new Date(checkDate);
+                    } else {
+                        secondDeliveryDate = new Date(checkDate);
+                        break;
+                    }
+                }
+            }
+
+            if (!firstDeliveryDate) return null;
+
+            const daysUntilFirst = Math.ceil((firstDeliveryDate - today) / 86400000);
+            if (daysUntilFirst !== 1) return null; // Только завтра!
+
+            const period = secondDeliveryDate
+                ? Math.ceil((secondDeliveryDate - firstDeliveryDate) / 86400000)
+                : 7; // По умолчанию 7 дней если нет следующей доставки
+
+            return { firstDeliveryDate, secondDeliveryDate, period };
+        }
+
         function getInTransitQty(tt, code) {
             let total = 0;
             inTransitOrders.forEach(order => {
@@ -2128,12 +2170,12 @@
             return total;
         }
 
-        // Расчёт: подсчёт выходных/будних дней в периоде от сегодня до nextDeliveryDate
-        function countDaysTypes(daysUntil) {
+        // Расчёт: подсчёт выходных/будних дней в периоде начиная с ЗАВТРА
+        function countDaysTypesFromTomorrow(period) {
             let weekendCount = 0, weekdayCount = 0;
             const today = new Date();
             today.setHours(0,0,0,0);
-            for (let d = 0; d < daysUntil; d++) {
+            for (let d = 1; d <= period; d++) {
                 const checkDate = new Date(today);
                 checkDate.setDate(today.getDate() + d);
                 let dow = checkDate.getDay(); // 0=Вс, 1=Пн, 6=Сб
@@ -2211,15 +2253,13 @@
             alert('Заказы сформированы!');
         }
 
-        // Определить, доставляется ли сегодня в магазин
-        function hasDeliveryToday(storeName) {
+        // Определить, доставляется ли сегодня в магазин от конкретного поставщика
+        function hasSupplierDeliveryToday(supplier, storeName) {
+            if (!deliverySchedule[supplier] || !deliverySchedule[supplier][storeName]) return false;
             const today = new Date(); today.setHours(0,0,0,0);
             const dow = today.getDay();
             const arrIdx = dow === 0 ? 6 : dow - 1;
-            return Object.values(deliverySchedule).some(storeData => {
-                const days = storeData[storeName];
-                return days && days[arrIdx];
-            });
+            return deliverySchedule[supplier][storeName][arrIdx];
         }
 
         function renderOrder() {
@@ -2257,9 +2297,9 @@
                     </div>`;
             }
 
-            // Пропустить магазины с доставкой сегодня
-            const skippedStores = stores.filter(s => hasDeliveryToday(s.tt));
-            const activeStores = stores.filter(s => !hasDeliveryToday(s.tt));
+            // Перебираем ВСЕ магазины (без глобального пропуска)
+            const allStores = [...stores];
+            const skippedTodayInfo = []; // Для информирования о пропущенных
 
             // Карта остатков по ТТ и коду
             const stockMap = new Map();
@@ -2292,8 +2332,9 @@
 
             const results = [];
             const allOrderSuppliers = new Set();
+            const conflictSummary = []; // Конфликты пересечения продукции
 
-            activeStores.forEach(store => {
+            allStores.forEach(store => {
                 Object.entries(matrix).forEach(([code, p]) => {
                     const key = `${store.tt}_${code}`;
                     const stockData = stockMap.get(key);
@@ -2308,20 +2349,28 @@
                         ? supplierAssortment[code]
                         : (p.supplier ? [p.supplier] : []);
 
-                    // Для каждого поставщика получить daysUntil, пропустить если <= 0 (сегодня)
-                    const supplierDaysMap = {};
+                    // Для каждого поставщика проверить: доставка ЗАВТРА?
+                    const supplierPeriodMap = {};
                     suppliers.forEach(sup => {
-                        let du = getDaysUntilDelivery(sup, store.tt);
-                        if (du <= 0) return;
-                        if (du >= 99) du = period;
-                        supplierDaysMap[sup] = du;
+                        const dp = getDeliveryPeriod(sup, store.tt);
+                        if (dp) {
+                            supplierPeriodMap[sup] = dp.period;
+                        } else {
+                            // Если доставка сегодня — запомним для информации
+                            if (hasSupplierDeliveryToday(sup, store.tt)) {
+                                const infoKey = `${sup}→${store.tt}`;
+                                if (!skippedTodayInfo.find(i => i.key === infoKey)) {
+                                    skippedTodayInfo.push({ key: infoKey, supplier: sup, store: store.tt });
+                                }
+                            }
+                        }
                     });
 
-                    const daysArr = Object.values(supplierDaysMap);
-                    if (daysArr.length === 0) return;
+                    const periodArr = Object.values(supplierPeriodMap);
+                    if (periodArr.length === 0) return; // Никто не доставляет завтра
 
-                    const minDU = Math.min(...daysArr);
-                    let daysUntil = minDU;
+                    // Берём минимальный период (самый частый цикл)
+                    const forecastPeriod = Math.min(...periodArr);
 
                     const inTransitQty = getInTransitQty(store.tt, code);
                     const deliveredQty = getDeliveredQty(store.tt, code);
@@ -2332,7 +2381,7 @@
                     const effectiveDays = daysPresent > 0 ? daysPresent : (stockData ? (stockData.totalDays || 0) : 0);
                     const avgSalesPerDay = effectiveDays > 0 ? totalSales / effectiveDays : 0;
 
-                    const { weekendCount, weekdayCount } = countDaysTypes(daysUntil);
+                    const { weekendCount, weekdayCount } = countDaysTypesFromTomorrow(forecastPeriod);
                     const weekendAvg = getWeekendAvg(store.tt, code);
                     const weekdayAvg = getWeekdayAvg(store.tt, code);
 
@@ -2340,7 +2389,7 @@
                     if (weekendAvg > 0 || weekdayAvg > 0) {
                         estimatedSales = (weekdayCount * weekdayAvg) + (weekendCount * weekendAvg);
                     } else {
-                        estimatedSales = avgSalesPerDay * daysUntil;
+                        estimatedSales = avgSalesPerDay * forecastPeriod;
                     }
 
                     const quant = p.quant || 1;
@@ -2348,28 +2397,34 @@
                     let rawOrder = estimatedSales - effectiveStock - inTransitQty;
                     let order = rawOrder > 0 ? Math.ceil(rawOrder / quant) * quant : 0;
 
-                    // Build supplierOrders for suppliers with daysUntil == minDU
+                    // Build supplierOrders для поставщиков с доставкой ЗАВТРА
                     const supplierOrders = {};
                     let hasConflict = false;
                     const primarySupplier = p.supplier || '';
 
                     suppliers.forEach(sup => {
-                        const du = supplierDaysMap[sup];
-                        if (du === undefined || du !== minDU) return;
-
+                        if (!(sup in supplierPeriodMap)) return;
                         const editKey = `${store.tt}_${code}_${sup}`;
                         let supOrder = rawOrder > 0 ? Math.ceil(rawOrder / quant) * quant : 0;
                         if (orderEdits[editKey] !== undefined) supOrder = orderEdits[editKey];
 
                         if (supOrder > 0) {
-                            supplierOrders[sup] = { order: supOrder, inPrice, sum: supOrder * inPrice, daysUntil: du };
+                            supplierOrders[sup] = { order: supOrder, inPrice, sum: supOrder * inPrice, daysUntil: 1 };
                             allOrderSuppliers.add(sup);
                         }
                     });
 
-                    // hasConflict: >1 supplier with order > 0
+                    // hasConflict: >1 поставщик с заказом > 0
                     const activeSuppliersCount = Object.keys(supplierOrders).filter(s => supplierOrders[s].order > 0).length;
                     hasConflict = activeSuppliersCount > 1;
+
+                    if (hasConflict) {
+                        const supNames = Object.keys(supplierOrders).filter(s => supplierOrders[s].order > 0).join(', ');
+                        conflictSummary.push({
+                            tt: store.tt, code, name: p.nomenclature || code,
+                            suppliers: supNames, order
+                        });
+                    }
 
                     // Primary order for stats
                     const editKeyPrimary = `${store.tt}_${code}_${primarySupplier}`;
@@ -2384,7 +2439,7 @@
                         group: p.group || '', supplier: primarySupplier, currentStock, deliveredQty, effectiveStock,
                         sales: totalSales, daysPresent, effectiveDays,
                         weekendAvg: weekendAvgDisplay, weekdayAvg, avgSalesPerDay,
-                        weekendCount, weekdayCount, daysUntil,
+                        weekendCount, weekdayCount, daysUntil: forecastPeriod,
                         estimatedSales, inTransitQty,
                         rawOrder: rawOrder > 0 ? rawOrder : 0,
                         order, quant, inPrice, sum, shelf: p.shelf || 0,
@@ -2446,13 +2501,32 @@
             savedOrderResults = filtered;
             savedOrderStats = stats;
 
-            // Yellow banner for skipped stores
-            const skippedBanner = skippedStores.length > 0
-                ? `<div class="bg-yellow-50 border border-yellow-300 text-yellow-800 rounded-lg px-4 py-3 text-sm font-medium">⏭ Пропущено ${skippedStores.length} ТТ с доставкой сегодня: ${skippedStores.map(s => s.tt).join(', ')}</div>`
+            // Баннер о пропущенных поставщиках (доставка сегодня)
+            const skippedBanner = skippedTodayInfo.length > 0
+                ? `<div class="bg-yellow-50 border border-yellow-300 text-yellow-800 rounded-lg px-4 py-3 text-sm font-medium">⏭ Пропущены (доставка сегодня): ${skippedTodayInfo.map(i => `<span class="font-semibold">${i.supplier}</span> → ${i.store}`).join(', ')}</div>`
                 : '';
 
+            // Баннер о конфликтах (пересечение продукции)
+            const conflictBanner = conflictSummary.length > 0
+                ? `<div class="bg-red-50 border border-red-300 text-red-800 rounded-lg px-4 py-3 text-sm">
+                    <div class="font-semibold mb-1">⚠️ Пересечение поставщиков (${conflictSummary.length} поз.) — возможна перетарка:</div>
+                    <div class="text-xs space-y-0.5 max-h-32 overflow-auto">
+                        ${conflictSummary.map(c => `<div>• <b>${c.name}</b> (${c.code}) → ${c.tt}: <b>${c.suppliers}</b></div>`).join('')}
+                    </div>
+                    <div class="text-xs mt-1 opacity-80">Уберите заказ у одного из поставщиков вручную, чтобы избежать перетарки</div>
+                   </div>`
+                : '';
+
+            // Информационная плашка о дне заказа
+            const todayStr = new Date().toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' });
+            const tomorrowStr = new Date(Date.now() + 86400000).toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' });
+
             return `<div class="space-y-3">
+                <div class="bg-sky-50 border border-sky-200 text-sky-800 rounded-lg px-4 py-2 text-sm">
+                    📅 Заказ формируется: <b>сегодня (${todayStr})</b> → доставка <b>завтра (${tomorrowStr})</b>
+                </div>
                 ${skippedBanner}
+                ${conflictBanner}
                 <div class="bg-white rounded-lg border border-gray-200 p-3">
                     <div class="flex justify-between items-center flex-wrap gap-3">
                         <div class="flex gap-3 items-center flex-wrap">
@@ -2671,7 +2745,10 @@
                         }
                         stocks = localItems;
                         save(KEYS.STOCKS, stocks);
-                        alert(`Загружено ${stocks.length} остатков\n(с днями присутствия: ${withDays})`);
+                        // Расчёт потребления из файла остатков (выходные/будние)
+                        parseStockConsumption(json);
+                        const consCount = Object.keys(stockConsumptionData).length;
+                        alert(`Загружено ${stocks.length} остатков\n(с днями присутствия: ${withDays})\nПотребление рассчитано: ${consCount} тов.`);
                     }
                     render();
                 } catch (err) { console.error('Parse error:', err); alert('Ошибка: ' + err.message); }
@@ -2720,6 +2797,118 @@
             return items;
         }
 
+        // === РАСЧЁТ ПОТРЕБЛЕНИЯ ИЗ ФАЙЛА ОСТАТКОВ ===
+        // Парсим даты из строки 3 заголовков (json[2]) и вычисляем ежедневное потребление
+        // по разнице остатков между соседними днями. Разделяем на выходные/будние.
+        function parseStockConsumption(json) {
+            stockConsumptionData = {};
+
+            // Строка с датами — json[2] (3-я строка: 0=заголовок, 1=подзаголовок, 2=даты)
+            const dateRow = json[2] || [];
+            const dateInfos = []; // [{col, isWeekend, dow, date}]
+
+            for (let c = 2; c < dateRow.length; c++) {
+                const cellVal = String(dateRow[c] || '').trim();
+                if (!cellVal) continue;
+
+                let date = null;
+                if (/^\d{4}-\d{2}-\d{2}/.test(cellVal)) {
+                    date = new Date(cellVal);
+                } else if (/^\d{2}\.\d{2}\.\d{2,4}/.test(cellVal)) {
+                    const parts = cellVal.split('.');
+                    const year = parts[2].length === 2 ? '20' + parts[2] : parts[2];
+                    date = new Date(year, parts[1]-1, parts[0]);
+                } else {
+                    const numDate = parseFloat(cellVal);
+                    if (numDate > 40000 && numDate < 60000) {
+                        date = new Date((numDate - 25569) * 86400 * 1000);
+                    }
+                }
+
+                if (date && !isNaN(date.getTime())) {
+                    const dow = date.getDay();
+                    const isWeekend = (dow === 1 || dow === 6 || dow === 0); // ПН, СБ, ВС = выходные
+                    dateInfos.push({ col: c, isWeekend, dow, date });
+                }
+            }
+
+            if (dateInfos.length < 2) {
+                console.log(`[FishOrder] Недостаточно дат в файле остатков для расчёта потребления (найдено: ${dateInfos.length})`);
+                return;
+            }
+
+            // Собираем данные по ТТ: {tt: [{code, values: {col: stock}}]}
+            let curTT = '';
+            const ttData = {};
+
+            for (let i = 3; i < json.length; i++) {
+                const r = json[i];
+                if (!r || r.length < 3) continue;
+
+                const c0 = String(r[0] || '').trim();
+                const code = String(r[1] || '').trim();
+                const isTT = /склад|магазин|основной/i.test(c0) && !/^\d/.test(code);
+
+                if (isTT) {
+                    curTT = c0;
+                    if (!ttData[curTT]) ttData[curTT] = [];
+                } else {
+                    const isProductCode = /^\d/.test(code) || code.length >= 5;
+                    if (isProductCode && curTT) {
+                        const values = {};
+                        dateInfos.forEach(di => {
+                            const val = parseFloat(String(r[di.col] || ''));
+                            if (!isNaN(val)) values[di.col] = val;
+                        });
+                        ttData[curTT].push({ code: normCode(code), values });
+                    }
+                }
+            }
+
+            // Вычисляем потребление: stock[prev] - stock[curr] (только положительное = реальные продажи)
+            let totalProducts = 0;
+
+            Object.entries(ttData).forEach(([tt, products]) => {
+                products.forEach(prod => {
+                    const key = `${tt}_${prod.code}`;
+                    let wSales = 0, wDays = 0, wdSales = 0, wdDays = 0;
+
+                    for (let di = 1; di < dateInfos.length; di++) {
+                        const prevStock = prod.values[dateInfos[di-1].col];
+                        const currStock = prod.values[dateInfos[di].col];
+
+                        if (prevStock === undefined || currStock === undefined) continue;
+
+                        const consumption = prevStock - currStock;
+                        if (consumption <= 0) continue; // Остаток вырос (доставка) — пропускаем
+
+                        if (dateInfos[di].isWeekend) {
+                            wSales += consumption;
+                            wDays++;
+                        } else {
+                            wdSales += consumption;
+                            wdDays++;
+                        }
+                    }
+
+                    if (wDays > 0 || wdDays > 0) {
+                        stockConsumptionData[key] = {
+                            weekendSales: wSales, weekendDays: wDays,
+                            weekdaySales: wdSales, weekdayDays: wdDays
+                        };
+                        totalProducts++;
+                    }
+                });
+            });
+
+            // Сохраняем в localStorage
+            save(KEYS.STOCK_CONSUMPTION, stockConsumptionData);
+
+            console.log(`[FishOrder] Расчёт потребления из остатков: ${totalProducts} товаров, ${dateInfos.length} дней`);
+            console.log(`[FishOrder] С выходными данными: ${Object.values(stockConsumptionData).filter(d => d.weekendDays > 0).length}, С будними: ${Object.values(stockConsumptionData).filter(d => d.weekdayDays > 0).length}`);
+        }
+
+        // === ПАРСИНГ ВЫХОДНЫХ ПРОДАЖ ИЗ ФАЙЛА ПРОДАЖ ===
         function parseWeekendSales(json) {
             weekendSales = {};
             weekdaySales = {};
@@ -2871,12 +3060,18 @@
 
         function getWeekendAvg(tt, code) {
             const key = `${tt}_${code}`;
+            // Сначала проверяем постоянные данные из файла остатков
+            const sc = stockConsumptionData[key];
+            if (sc && sc.weekendDays > 0) return sc.weekendSales / sc.weekendDays;
+            // Fallback: данные из файла продаж
             const days = weekendDays[key] || 0;
             return days > 0 ? weekendSales[key] / days : 0;
         }
 
         function getWeekdayAvg(tt, code) {
             const key = `${tt}_${code}`;
+            const sc = stockConsumptionData[key];
+            if (sc && sc.weekdayDays > 0) return sc.weekdaySales / sc.weekdayDays;
             const days = weekdayDays[key] || 0;
             return days > 0 ? weekdaySales[key] / days : 0;
         }
