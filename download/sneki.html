@@ -815,17 +815,25 @@
 
       const exportPrices = useCallback(() => {
         if (Object.keys(matrix).length === 0) { alert('Нет данных!'); return; }
-        const headers = ['Группа', 'Наименование', 'Код', 'НДС %', 'Вход. цена', 'Выход с РЦ', 'Наценка %', 'Полка'];
-        const data = Object.entries(matrix).map(([code, p]) => { 
+        const headers = ['Группа', 'Наименование', 'Код', 'НДС %', 'Вх. цена', 'Выход РЦ', 'Полка', 'Доход', 'Доход с РЦ', 'Наценка %', 'Новая наценка %', 'Новая полка', 'Новый доход'];
+        const R = v => Math.round(v * 100) / 100;
+        const data = Object.entries(matrix).map(([code, p]) => {
           const productMarkup = p.markup ?? groupMarkups[p.group || ''] ?? warehouseMarkup;
-          const rcOutput = (p.inPrice || 0) * (1 + warehouseMarkup / 100);
-          const shelfPrice = Math.round((p.inPrice || 0) * (1 + productMarkup / 100));
-          return [p.group || '', p.nomenclature || '', code, p.vat ?? vatRate, p.inPrice || 0, rcOutput.toFixed(2), productMarkup, shelfPrice]; 
+          const inPrice = p.inPrice || 0;
+          const rcOutput = R(inPrice * (1 + warehouseMarkup / 100));
+          const shelfPrice = R(rcOutput * (1 + productMarkup / 100));
+          const income = R(shelfPrice - inPrice);
+          const incomeRC = R(shelfPrice - rcOutput);
+          const calcMarkup = rcOutput > 0 ? R((shelfPrice / rcOutput - 1) * 100) : 0;
+          const newMarkup = p.newMarkup ?? '';
+          const newShelfPrice = newMarkup !== '' && newMarkup !== undefined ? R(rcOutput * (1 + newMarkup / 100)) : '';
+          const newIncome = newShelfPrice !== '' ? R(newShelfPrice - rcOutput) : '';
+          return [p.group || '', p.nomenclature || '', code, p.vat ?? vatRate, R(inPrice), rcOutput, shelfPrice, income, incomeRC, calcMarkup, newMarkup, newShelfPrice, newIncome];
         });
         const ws = createStyledSheet(data, headers, [0, 1]);
         const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, 'Цены');
-        XLSX.writeFile(wb, `sneki_prices_${new Date().toISOString().slice(0, 10)}.xlsx`);
+        XLSX.utils.book_append_sheet(wb, ws, 'Наценки');
+        XLSX.writeFile(wb, 'Наценки ' + new Date().toISOString().slice(0, 10) + '.xlsx');
       }, [matrix, vatRate, groupMarkups, warehouseMarkup]);
 
       const exportShelf = useCallback(() => {
@@ -1262,17 +1270,16 @@
         let currentRevenue = 0;
         let newRevenue = 0;
         let individualMarkups = 0;
-        sales.forEach(s => { 
-          const product = matrix[s.code]; 
-          if (!product) return; 
-          const inPrice = product.inPrice || 0; 
-          // Приоритет наценки: индивидуальная → групповая → глобальная
+        sales.forEach(s => {
+          const product = matrix[s.code];
+          if (!product) return;
+          const inPrice = product.inPrice || 0;
           const productMarkup = product.markup ?? groupMarkups[product.group || ''] ?? warehouseMarkup;
-          const outPrice = inPrice * (1 + productMarkup / 100);
-          currentRevenue += s.quantity * (product.outPrice || inPrice); 
-          newRevenue += s.quantity * outPrice; 
+          const rcOutput = Math.round(inPrice * (1 + warehouseMarkup / 100) * 100) / 100;
+          const shelfPrice = Math.round(rcOutput * (1 + productMarkup / 100) * 100) / 100;
+          currentRevenue += s.quantity * (product.outPrice || shelfPrice);
+          newRevenue += s.quantity * shelfPrice;
         });
-        // Считаем количество индивидуальных наценок
         Object.values(matrix).forEach(p => {
           if (p.markup !== undefined && p.markup !== null) individualMarkups++;
         });
@@ -1754,7 +1761,12 @@
                           <th className="text-right bg-yellow-50">Вх. цена</th>
                           <th className="text-right bg-emerald-100">Выход РЦ</th>
                           <th className="text-right bg-green-100">Полка ₽</th>
+                          <th className="text-right bg-green-50">Доход</th>
+                          <th className="text-right bg-green-50">Доход с РЦ</th>
                           <th className="text-right bg-orange-100">Наценка %</th>
+                          <th className="text-right bg-amber-100">Новая наценка %</th>
+                          <th className="text-right bg-amber-100">Новая полка</th>
+                          <th className="text-right bg-amber-100">Новый доход</th>
                           <th className="text-right">Ост. РЦ</th>
                         </tr>
                       </thead>
@@ -1764,16 +1776,22 @@
                           return (
                             <React.Fragment key={group}>
                               <tr className="bg-amber-50 cursor-pointer hover:bg-amber-100 transition-colors" onClick={() => setCollapsedGroups(p => ({ ...p, [group]: !p[group] }))}>
-                                <td colSpan={9} className="font-semibold text-amber-800"><span className="flex items-center gap-2">{isCollapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}{group} ({items.length})</span></td>
+                                <td colSpan={14} className="font-semibold text-amber-800"><span className="flex items-center gap-2">{isCollapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}{group} ({items.length})</span></td>
                               </tr>
                               {!isCollapsed && items.map(p => {
-                                // Приоритет наценки: индивидуальная → групповая → глобальная
                                 const productMarkup = p.markup ?? groupMarkups[p.group || ''] ?? warehouseMarkup;
-                                const rcOutput = (p.inPrice || 0) * (1 + warehouseMarkup / 100);
-                                const shelfPrice = Math.round((p.inPrice || 0) * (1 + productMarkup / 100));
+                                const inPrice = p.inPrice || 0;
+                                const rcOutput = Math.round(inPrice * (1 + warehouseMarkup / 100) * 100) / 100;
+                                const shelfPrice = Math.round(rcOutput * (1 + productMarkup / 100) * 100) / 100;
+                                const income = Math.round((shelfPrice - inPrice) * 100) / 100;
+                                const incomeRC = Math.round((shelfPrice - rcOutput) * 100) / 100;
+                                const calcMarkup = rcOutput > 0 ? Math.round((shelfPrice / rcOutput - 1) * 10000) / 100 : 0;
                                 const rcStock = rcStocks[p.code] || 0;
                                 const productVat = p.vat ?? vatRate;
-                                const hasIndividualMarkup = p.markup !== undefined && p.markup !== null;
+                                const hasNewMarkup = p.newMarkup !== undefined && p.newMarkup !== null && p.newMarkup !== '';
+                                const newMarkupVal = p.newMarkup !== undefined && p.newMarkup !== null ? p.newMarkup : '';
+                                const newShelfPrice = hasNewMarkup ? Math.round(rcOutput * (1 + newMarkupVal / 100) * 100) / 100 : '';
+                                const newIncome = hasNewMarkup ? Math.round((newShelfPrice - rcOutput) * 100) / 100 : '';
                                 return (
                                   <tr key={p.code} className="hover:bg-gray-50 transition-colors">
                                     <td className="sticky left-0 bg-white text-xs text-gray-500">{p.group || ''}</td>
@@ -1784,27 +1802,16 @@
                                     </td>
                                     <td className="text-right bg-yellow-50"><input type="number" value={p.inPrice || 0} onChange={e => updateProduct(p.code, 'inPrice', parseFloat(e.target.value) || 0)} className="input w-20 text-right text-xs font-mono" min="0" step="0.01" /></td>
                                     <td className="text-right bg-emerald-100 font-mono text-sm font-medium text-emerald-700">{rcOutput.toFixed(2)}</td>
-                                    <td className="text-right bg-green-100 font-mono text-sm font-bold text-green-700">{shelfPrice}</td>
-                                    <td className="text-right bg-orange-100">
-                                      <input 
-                                        type="number" 
-                                        value={hasIndividualMarkup ? p.markup : (groupMarkups[p.group || ''] ?? '')} 
-                                        onChange={e => { 
-                                          const v = e.target.value;
-                                          if (v === '' || v === null) {
-                                            // Удаляем индивидуальную наценку
-                                            updateProduct(p.code, 'markup', undefined);
-                                          } else {
-                                            // Устанавливаем индивидуальную наценку
-                                            updateProduct(p.code, 'markup', parseFloat(v) || 0);
-                                          }
-                                        }} 
-                                        placeholder={String(groupMarkups[p.group || ''] ?? warehouseMarkup)} 
-                                        className={`input w-14 text-right text-xs font-bold ${hasIndividualMarkup ? 'text-purple-700 bg-purple-50' : 'text-orange-700'}`} 
-                                        step="0.1" 
-                                      />
+                                    <td className="text-right bg-green-100 font-mono text-sm font-bold text-green-700">{shelfPrice.toFixed(2)}</td>
+                                    <td className="text-right bg-green-50 font-mono text-sm">{income.toFixed(2)}</td>
+                                    <td className="text-right bg-green-50 font-mono text-sm">{incomeRC.toFixed(2)}</td>
+                                    <td className="text-right bg-orange-100 font-mono text-sm font-bold text-orange-700">{calcMarkup.toFixed(2)}</td>
+                                    <td className="text-right bg-amber-100">
+                                      <input type="number" value={newMarkupVal} onChange={e => { const v = e.target.value; if (v === '' || v === null) { updateProduct(p.code, 'newMarkup', undefined); } else { updateProduct(p.code, 'newMarkup', parseFloat(v) || 0); } }} placeholder={'—'} className="input w-14 text-right text-xs font-bold text-amber-700" step="0.1" />
                                     </td>
-                                    <td className={`text-right font-mono text-sm ${rcStock > 0 ? 'text-emerald-600' : 'text-rose-500'}`}>{rcStock}</td>
+                                    <td className="text-right bg-amber-100 font-mono text-sm text-amber-700">{hasNewMarkup ? newShelfPrice.toFixed(2) : '—'}</td>
+                                    <td className="text-right bg-amber-100 font-mono text-sm font-bold text-amber-700">{hasNewMarkup ? newIncome.toFixed(2) : '—'}</td>
+                                    <td className={'text-right font-mono text-sm ' + (rcStock > 0 ? 'text-emerald-600' : 'text-rose-500')}>{rcStock}</td>
                                   </tr>
                                 );
                               })}
