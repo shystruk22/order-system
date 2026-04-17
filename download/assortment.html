@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ассортимент</title>
-    <!-- Version: 2.0 (self-contained) -->
+    <!-- Version: 3.0 (shared infrastructure) -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -58,193 +58,37 @@
     </div>
     <div class="px-2 py-2" id="content"></div>
 
+    <!-- Shared infrastructure -->
+    <script src="shared-utils.js"></script>
+    <script src="shared-data.js"></script>
+    <script src="storage.js"></script>
+
     <script>
         // ============================================================================
-        // EMBEDDED UTILITIES (formerly shared-utils.js)
+        // ТОНКИЕ ОБЁРТКИ — делегируют в SharedUtils
         // ============================================================================
+        var STORAGE_KEYS = SharedUtils.STORAGE_KEYS;
+        var load = function(k, d) { return SharedUtils.load(k, d); };
+        var save = function(k, d) { return SharedUtils.save(k, d); };
+        var normCode = SharedUtils.normCode;
+        var esc = SharedUtils.esc;
 
-        // --- Storage Keys ---
-        var STORAGE_KEYS = {
-            PRODUCTS: 'shared_products_v1',
-            UNIV_PRODUCTS: 'univ_products_v1',
-            SAVED_ASSORTMENTS: 'saved_assortments_v1'
-        };
-
-        // --- normCode: normalize product code (trim, remove leading zeros) ---
-        function normCode(code) {
-            return String(code || '').trim().replace(/^0+/, '') || '0';
+        // createStyledSheet и parseAssortment используются локально
+        function createStyledSheet(data, headers, leftAlignCols) {
+            return SharedUtils.createStyledSheet(data, headers, leftAlignCols);
+        }
+        function parseAssortment(json) {
+            return SharedUtils.parseAssortment(json);
         }
 
-        // --- esc: HTML escape for XSS prevention ---
-        function esc(str) {
-            return String(str || '')
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#39;');
-        }
-
-        // --- load: load from localStorage with LZ compression support ---
-        function load(key, defaultValue) {
-            try {
-                var data = localStorage.getItem(key);
-                if (!data) return defaultValue;
-                if (data.startsWith('{') || data.startsWith('[')) {
-                    return JSON.parse(data) || defaultValue;
-                }
-                if (typeof LZString !== 'undefined') {
-                    try {
-                        return JSON.parse(LZString.decompressFromUTF16(data)) || defaultValue;
-                    } catch (e2) {
-                        return JSON.parse(data) || defaultValue;
-                    }
-                }
-                return JSON.parse(data) || defaultValue;
-            } catch (e) {
-                console.warn('load error for key', key, e);
-                return defaultValue;
-            }
-        }
-
-        // --- save: save to localStorage with LZ compression support ---
-        function save(key, data) {
-            try {
-                var json = JSON.stringify(data);
-                if (typeof LZString !== 'undefined' && json.length > 1000) {
-                    localStorage.setItem(key, LZString.compressToUTF16(json));
-                } else {
-                    localStorage.setItem(key, json);
-                }
-            } catch (e) {
-                console.error('save error for key', key, e);
-            }
-        }
-
-        // --- ASSORTMENT_HEADERS for export column headers ---
+        // --- ASSORTMENT_HEADERS для экспорта колонок (специфично для assortment.html) ---
         var ASSORTMENT_HEADERS = [
             '\u2B50', 'Группа', 'Наименование', 'Код', 'Упак.', 'Объём', 'Квант',
             'Дом. полка', 'Поставщик', 'Продажи', 'Цена входящая', 'Цена на полке',
             'Доход', 'Наценка %', 'Маржа %'
         ];
 
-        // --- createStyledSheet: create styled XLSX sheet ---
-        function createStyledSheet(data, headers, leftAlignCols) {
-            leftAlignCols = leftAlignCols || [];
-            var allData = [headers].concat(data);
-            var ws = XLSX.utils.aoa_to_sheet(allData);
-
-            var range = XLSX.utils.decode_range(ws['!ref']);
-            var numRows = range.e.r + 1;
-            var numCols = range.e.c + 1;
-
-            var colWidths = new Array(numCols).fill(0);
-            for (var c = 0; c < numCols; c++) {
-                for (var r = 0; r < numRows; r++) {
-                    var cellAddress = XLSX.utils.encode_cell({ r: r, c: c });
-                    var cell = ws[cellAddress];
-                    if (cell && cell.v !== undefined) {
-                        var cellText = String(cell.v);
-                        var cyrillicCount = (cellText.match(/[а-яА-ЯёЁ]/g) || []).length;
-                        var otherCount = cellText.length - cyrillicCount;
-                        var estimatedWidth = Math.ceil(cyrillicCount * 1.5 + otherCount * 1.0) + 2;
-                        colWidths[c] = Math.max(colWidths[c], estimatedWidth);
-                    }
-                }
-                colWidths[c] = Math.max(colWidths[c], 8);
-                colWidths[c] = Math.min(colWidths[c], 60);
-            }
-            ws['!cols'] = colWidths.map(function(w) { return { wch: w }; });
-
-            ws['!rows'] = [];
-            for (var r = 0; r < numRows; r++) {
-                ws['!rows'][r] = { hpt: 15 };
-            }
-
-            for (var r = 0; r < numRows; r++) {
-                for (var c = 0; c < numCols; c++) {
-                    var cellAddress = XLSX.utils.encode_cell({ r: r, c: c });
-                    var cell = ws[cellAddress];
-                    if (cell) {
-                        if (r === 0) {
-                            cell.s = {
-                                fill: { fgColor: { rgb: "B8CCE4" } },
-                                font: { bold: true, sz: 10 },
-                                alignment: { horizontal: "center", vertical: "center", wrapText: false },
-                                border: {
-                                    top: { style: "dotted", color: { rgb: "808080" } },
-                                    bottom: { style: "dotted", color: { rgb: "808080" } },
-                                    left: { style: "dotted", color: { rgb: "808080" } },
-                                    right: { style: "dotted", color: { rgb: "808080" } }
-                                }
-                            };
-                        } else {
-                            var isLeftAlign = leftAlignCols.indexOf(c) >= 0;
-                            cell.s = {
-                                font: { sz: 10 },
-                                alignment: {
-                                    horizontal: isLeftAlign ? "left" : "center",
-                                    vertical: "center",
-                                    wrapText: false
-                                },
-                                border: {
-                                    top: { style: "dotted", color: { rgb: "808080" } },
-                                    bottom: { style: "dotted", color: { rgb: "808080" } },
-                                    left: { style: "dotted", color: { rgb: "808080" } },
-                                    right: { style: "dotted", color: { rgb: "808080" } }
-                                }
-                            };
-                        }
-                    }
-                }
-            }
-
-            return ws;
-        }
-
-        // --- parseAssortment: fallback positional parser ---
-        function parseAssortment(json) {
-            var items = [];
-            var headerRow = 1;
-            for (var i = 0; i < Math.min(5, json.length); i++) {
-                var row = (json[i] || []).map(function(c) { return String(c || '').trim().toLowerCase(); });
-                var hasGroup = row.some(function(c) { return c === 'группа' || c === 'групп'; });
-                var hasCode = row.some(function(c) { return c === 'код' || c === 'код товара' || c === 'код(товар)'; });
-                if (hasGroup && hasCode) {
-                    headerRow = i;
-                    break;
-                }
-            }
-
-            for (var i = headerRow + 1; i < json.length; i++) {
-                var r = json[i];
-                if (!r || r.length < 3) continue;
-
-                var group = String(r[0] || '').trim();
-                var name = String(r[1] || '').trim();
-                var code = normCode(r[2]);
-
-                if (!code || (!name && !group)) continue;
-
-                var packaging = String(r[3] || 'ШТ').toUpperCase().trim();
-                var supplier = String(r[4] || '').trim();
-                var price = parseFloat(String(r[5] || '0').replace(',', '.')) || 0;
-                var shelfPrice = parseFloat(String(r[6] || '0').replace(',', '.')) || 0;
-                var shelf = parseFloat(String(r[7] || '0').replace(',', '.')) || 0;
-                var quant = parseFloat(String(r[8] || '1').replace(',', '.')) || 1;
-                var volume = parseFloat(String(r[9] || '0').replace(',', '.')) || 0;
-
-                items.push({
-                    code: code, nomenclature: name, group: group, packaging: packaging,
-                    supplier: supplier, price: price, inPrice: price,
-                    shelfPrice: shelfPrice, shelf: shelf, quant: quant, volume: volume
-                });
-            }
-
-            return { items: items };
-        }
-
-        // --- importAssortmentUnified: parse Excel file and extract products ---
+        // --- importAssortmentUnified: парсинг Excel файла и извлечение товаров (специфично для assortment.html) ---
         function importAssortmentUnified(file) {
             return new Promise(function(resolve, reject) {
                 var reader = new FileReader();
@@ -257,7 +101,7 @@
 
                         if (rawJson.length < 2) { reject(new Error('Файл пуст или неверный формат')); return; }
 
-                        // Search for header row
+                        // Поиск строки заголовка
                         var headerRow = -1;
                         for (var i = 0; i < Math.min(5, rawJson.length); i++) {
                             var row = (rawJson[i] || []).map(function(c) { return String(c || '').trim().toLowerCase(); });
@@ -278,7 +122,7 @@
                         var headersRaw = rawJson[headerRow];
                         var headers = headersRaw.map(function(h) { return String(h || '').trim().toLowerCase(); });
 
-                        // Build column mapping by headers
+                        // Построение маппинга колонок по заголовкам
                         var colMap = {};
                         headers.forEach(function(h, idx) {
                             if (h === 'код' || h === 'код товара' || h === 'код(товар)' || h === 'code') colMap.code = idx;
@@ -358,7 +202,7 @@
             });
         }
 
-        // --- exportAssortmentUnified: export products to styled Excel ---
+        // --- exportAssortmentUnified: экспорт товаров в стилизованый Excel (специфично для assortment.html) ---
         function exportAssortmentUnified(products, options) {
             options = options || {};
             if (!products || products.length === 0) {
@@ -454,7 +298,10 @@
         // SYNC — save to ALL storage locations
         // ============================================================================
         function syncAll() {
+            // Save to shared keys (backward compatible)
             save(PRODUCTS_KEY, products);
+
+            // Convert to object format for universal/fish compatibility
             var obj = {};
             products.forEach(function(p) {
                 if (p.code) obj[p.code] = {
@@ -466,19 +313,15 @@
                 };
             });
             save(UNIV_PRODUCTS_KEY, obj);
+
             // Sync with fish-order.html
-            var fishObj = {};
-            products.forEach(function(p) {
-                if (p.code) fishObj[p.code] = {
-                    code: p.code, nomenclature: p.nomenclature || '',
-                    group: p.group || '', packaging: p.packaging || 'ШТ',
-                    supplier: p.supplier || '', price: p.price || 0,
-                    inPrice: p.inPrice || p.price || 0, shelfPrice: p.shelfPrice || 0,
-                    shelf: p.shelf || 0, quant: p.quant || 1, volume: p.volume || 0,
-                    markup: p.markup || defaultMarkup
-                };
-            });
-            save('fish_assortment_v1', fishObj);
+            save('fish_assortment_v1', obj);
+
+            // Sync via SharedData (for cross-tab real-time sync)
+            if (window.SharedData) {
+                SharedData.saveProducts(products, 'assortment');
+            }
+
             syncToSavedAssortment();
         }
 
@@ -1193,59 +1036,91 @@
         // ============================================================================
         // INIT
         // ============================================================================
-        function init() {
-            var arrData = load(PRODUCTS_KEY, null);
-            var objData = load(UNIV_PRODUCTS_KEY, null);
-            var fishData = load('fish_assortment_v1', null);
-
-            if (Array.isArray(arrData) && arrData.length > 0) {
-                products = arrData;
-            } else if (objData && typeof objData === 'object' && Object.keys(objData).length > 0) {
-                products = Object.values(objData).map(function(p) {
-                    return {
-                        code: p.code, nomenclature: p.nomenclature || p.name || '',
-                        group: p.group || '', packaging: p.packaging || 'ШТ',
-                        supplier: p.supplier || '', price: p.price || 0,
-                        inPrice: p.inPrice || p.price || 0, shelfPrice: p.shelfPrice || 0,
-                        shelf: p.shelf || 0, quant: p.quant || 1, volume: p.volume || 0,
-                        markup: p.markup || defaultMarkup
-                    };
-                });
-            } else if (fishData && typeof fishData === 'object' && Object.keys(fishData).length > 0) {
-                products = Object.values(fishData).map(function(p) {
-                    return {
-                        code: p.code, nomenclature: p.nomenclature || p.name || '',
-                        group: p.group || '', packaging: p.packaging || 'ШТ',
-                        supplier: p.supplier || '', price: p.price || 0,
-                        inPrice: p.inPrice || p.price || 0, shelfPrice: p.shelfPrice || 0,
-                        shelf: p.shelf || 0, quant: p.quant || 1, volume: p.volume || 0,
-                        markup: p.markup || defaultMarkup
-                    };
-                });
-            } else {
-                products = [];
+        async function init() {
+            // Ждём завершения облачной синхронизации
+            if (window.CloudStorage && window.CloudStorage.waitForReady) {
+                await window.CloudStorage.waitForReady();
             }
 
-            // Listen for localStorage events from other tabs
-            window.addEventListener('storage', function(e) {
-                if (e.key === PRODUCTS_KEY || e.key === UNIV_PRODUCTS_KEY) {
-                    var arrData = load(PRODUCTS_KEY, null);
-                    var objData = load(UNIV_PRODUCTS_KEY, null);
-                    if (Array.isArray(arrData) && arrData.length > 0) {
-                        products = arrData;
-                    } else if (objData && typeof objData === 'object' && Object.keys(objData).length > 0) {
-                        products = Object.values(objData).map(function(p) {
-                            return {
-                                code: p.code, nomenclature: p.nomenclature || p.name || '',
-                                group: p.group || '', packaging: p.packaging || 'ШТ',
-                                supplier: p.supplier || '', price: p.price || 0,
-                                inPrice: p.inPrice || p.price || 0, shelfPrice: p.shelfPrice || 0,
-                                shelf: p.shelf || 0, quant: p.quant || 1, volume: p.volume || 0,
-                                markup: p.markup || defaultMarkup
-                            };
-                        });
+            // Миграция: старый ключ saved_assortments_v1 → shared_saved_assortments_v1
+            try {
+                var oldKey = 'saved_assortments_v1';
+                var oldData = localStorage.getItem(oldKey);
+                var newKey = STORAGE_KEYS.SAVED_ASSORTMENTS;
+                var newData = localStorage.getItem(newKey);
+                if (oldData && !newData) {
+                    localStorage.setItem(newKey, oldData);
+                    console.log('[Assortment] Миграция: ' + oldKey + ' → ' + newKey);
+                }
+            } catch (e) { console.warn('Migration error:', e); }
+
+            // Загрузка товаров — сначала пробуем SharedData, затем fallback на прямые ключи
+            if (window.SharedData) {
+                var sharedProducts = SharedData.getProducts();
+                if (sharedProducts && sharedProducts.length > 0) {
+                    products = sharedProducts;
+                } else {
+                    products = load(PRODUCTS_KEY, []);
+                }
+            } else {
+                products = load(PRODUCTS_KEY, []);
+            }
+
+            // Fallback: пробуем другие ключи если основной пуст
+            if (products.length === 0) {
+                var objData = load(UNIV_PRODUCTS_KEY, null);
+                var fishData = load('fish_assortment_v1', null);
+
+                if (objData && typeof objData === 'object' && Object.keys(objData).length > 0) {
+                    products = Object.values(objData).map(function(p) {
+                        return {
+                            code: p.code, nomenclature: p.nomenclature || p.name || '',
+                            group: p.group || '', packaging: p.packaging || 'ШТ',
+                            supplier: p.supplier || '', price: p.price || 0,
+                            inPrice: p.inPrice || p.price || 0, shelfPrice: p.shelfPrice || 0,
+                            shelf: p.shelf || 0, quant: p.quant || 1, volume: p.volume || 0,
+                            markup: p.markup || defaultMarkup
+                        };
+                    });
+                } else if (fishData && typeof fishData === 'object' && Object.keys(fishData).length > 0) {
+                    products = Object.values(fishData).map(function(p) {
+                        return {
+                            code: p.code, nomenclature: p.nomenclature || p.name || '',
+                            group: p.group || '', packaging: p.packaging || 'ШТ',
+                            supplier: p.supplier || '', price: p.price || 0,
+                            inPrice: p.inPrice || p.price || 0, shelfPrice: p.shelfPrice || 0,
+                            shelf: p.shelf || 0, quant: p.quant || 1, volume: p.volume || 0,
+                            markup: p.markup || defaultMarkup
+                        };
+                    });
+                }
+            }
+
+            // Cross-tab sync: слушаем изменения из других файлов
+            if (window.SharedData) {
+                SharedData.onChange(function(info) {
+                    if (info.source !== 'assortment') {
+                        // Перезагружаем товары из SharedData
+                        var fresh = SharedData.getProducts();
+                        if (fresh && fresh.length > 0 && fresh.length !== products.length) {
+                            products = fresh;
+                            render();
+                            console.log('[Assortment] Synced from ' + info.source + ': ' + products.length + ' products');
+                        }
                     }
-                    render();
+                });
+            }
+
+            // Also listen for direct storage events (fallback)
+            window.addEventListener('storage', function(e) {
+                if (e.key === 'shared_products_v1' || e.key === 'db_products_v1' || e.key === 'db_timestamp_v1') {
+                    if (window.SharedData) {
+                        var fresh = SharedData.getProducts();
+                        if (fresh && fresh.length > 0) {
+                            products = fresh;
+                            render();
+                        }
+                    }
                 }
             });
 

@@ -9,6 +9,7 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
     <script src="shared-utils.js"></script>
+    <script src="shared-data.js"></script>
     <style>
         * { font-family: system-ui, -apple-system, sans-serif; box-sizing: border-box; }
         .btn { transition: all 0.2s; }
@@ -214,13 +215,15 @@
                 }
             });
 
-            save(KEYS.ASSORTMENT, matrix);
+            syncFishAssortment();
             currentLoadedAssortment = name;
             // Синхронизация: подтянуть поставщиков из ассортимента
             ensureSupplierAssortment();
             save(KEYS.SUPPLIER_ASSORTMENT, supplierAssortment);
             save(KEYS.SUPPLIER_PRICES, supplierPrices);
             save(KEYS.SCHEDULE, deliverySchedule);
+            // Sync to SharedData
+            if (window.SharedData) { try { SharedData.saveProducts(Object.values(matrix).filter(p => p && p.code), 'fish-order'); } catch(e) {} }
             render();
             alert(`Загружено: ${Object.keys(matrix).length} товаров из "${name}"\nОтметки матрицы: ${Object.keys(matrixMarks).length} товаров`);
         }
@@ -270,7 +273,7 @@
                 }
             });
 
-            save(KEYS.ASSORTMENT, matrix);
+            syncFishAssortment();
             save(KEYS.MATRIX_MARKS, matrixMarks);
 
             const modal = document.getElementById('matrixSelectModal');
@@ -432,7 +435,7 @@
                         });
                         if (Object.keys(marks).length > 0) matrixMarks[code] = marks;
                     });
-                    save(KEYS.ASSORTMENT, matrix);
+                    syncFishAssortment();
                     save(KEYS.MATRIX_MARKS, matrixMarks);
                     console.log(`Миграция: ${Object.keys(matrix).length} каталог, ${Object.keys(matrixMarks).length} marks`);
                 }
@@ -441,6 +444,42 @@
             window.addEventListener('storage', (e) => {
                 if (e.key === KEYS.STORES) loadStoresFromHTML();
             });
+
+            // SharedData: cross-tab real-time sync
+            if (window.SharedData) {
+                // Push local data to SharedData on init
+                try {
+                    const arr = Object.values(matrix).filter(p => p && p.code);
+                    if (arr.length > 0) SharedData.saveProducts(arr, 'fish-order');
+                } catch(e) { console.warn('SharedData sync error:', e); }
+
+                // Listen for changes from other tabs (assortment.html, sneki.html)
+                SharedData.onChange(function(info) {
+                    if (info.source !== 'fish-order') {
+                        const fresh = SharedData.getProducts();
+                        if (fresh && fresh.length > 0) {
+                            // Convert array to object format and merge
+                            fresh.forEach(function(p) {
+                                if (!p.code) return;
+                                const nc = SharedUtils.normCode(p.code);
+                                if (!matrix[nc]) {
+                                    matrix[nc] = {
+                                        code: nc, nomenclature: p.nomenclature || p.name || '',
+                                        group: p.group || '', packaging: p.packaging || 'ШТ',
+                                        supplier: p.supplier || '', price: p.price || 0,
+                                        inPrice: p.inPrice || p.price || 0, shelfPrice: p.shelfPrice || 0,
+                                        shelf: p.shelf || 0, quant: p.quant || 1, volume: p.volume || 0,
+                                        markup: p.markup || 0
+                                    };
+                                }
+                            });
+                            syncFishAssortment();
+                            render();
+                            console.log('[FishOrder] Synced from ' + info.source + ': ' + Object.keys(matrix).length + ' products');
+                        }
+                    }
+                });
+            }
 
             render();
         }
@@ -455,6 +494,17 @@
                 }
             } catch (e) { console.error('Load stores error:', e); }
             stores = [];
+        }
+
+        // === SharedData sync helper ===
+        function syncFishAssortment() {
+            syncFishAssortment();
+            if (window.SharedData) {
+                try {
+                    const arr = Object.values(matrix).filter(p => p && p.code);
+                    if (arr.length > 0) SharedData.saveProducts(arr, 'fish-order');
+                } catch(e) {}
+            }
         }
 
         function render() {
@@ -1626,7 +1676,7 @@
             if (product) {
                 product.inPrice = maxP;
                 product.price = maxP;
-                save(KEYS.ASSORTMENT, matrix);
+                syncFishAssortment();
             }
             save(KEYS.SUPPLIER_PRICES, supplierPrices);
             render();
@@ -1638,7 +1688,7 @@
             if (!product) return;
             product[field] = value;
             if (field === 'inPrice') product.price = value;
-            save(KEYS.ASSORTMENT, matrix);
+            syncFishAssortment();
             render();
         }
 
@@ -1661,7 +1711,7 @@
                 }
             });
 
-            save(KEYS.ASSORTMENT, matrix);
+            syncFishAssortment();
             render();
             alert(`Наценка ${markupVal}% применена (от макс. цены поставщика).\nОбновлено: ${updated}\n(только товары без цены на полке)`);
         }
@@ -1702,7 +1752,7 @@
             const product = matrix[nc] || matrix[code];
             if (!product) return;
             product[field] = value;
-            save(KEYS.ASSORTMENT, matrix);
+            syncFishAssortment();
             if (['inPrice', 'markup', 'group'].includes(field)) render();
         }
 
@@ -1715,7 +1765,7 @@
                 delete matrix[key];
                 delete matrixMarks[nc];
                 delete matrixMarks[code];
-                save(KEYS.ASSORTMENT, matrix);
+                syncFishAssortment();
                 save(KEYS.MATRIX_MARKS, matrixMarks);
                 syncToSavedAssortment();
                 render();
@@ -1748,7 +1798,7 @@
                 inPrice: parseFloat(document.getElementById('newProductPrice').value) || 0,
                 markup: defaultMarkup
             };
-            save(KEYS.ASSORTMENT, matrix);
+            syncFishAssortment();
             syncToSavedAssortment();
             hideAddProductModal();
             render();
@@ -1793,7 +1843,7 @@
                     };
                 });
                 
-                save(KEYS.ASSORTMENT, matrix);
+                syncFishAssortment();
                 syncToSavedAssortment();
                 ensureSupplierAssortment();
                 save(KEYS.SUPPLIER_PRICES, supplierPrices);
@@ -1932,7 +1982,7 @@
             if (confirm(`Удалить "${matrix[code]?.nomenclature || code}"?`)) {
                 delete matrix[code];
                 delete matrixMarks[code];
-                save(KEYS.ASSORTMENT, matrix);
+                syncFishAssortment();
                 save(KEYS.MATRIX_MARKS, matrixMarks);
                 render();
             }
@@ -1972,7 +2022,7 @@
                             }
                         });
                     });
-                    save(KEYS.ASSORTMENT, matrix);
+                    syncFishAssortment();
                     save(KEYS.MATRIX_MARKS, matrixMarks);
                     render();
                     alert(`Ассортимент: ${Object.keys(matrix).length} товаров\nОтметки матрицы: ${Object.keys(matrixMarks).length} товаров`);

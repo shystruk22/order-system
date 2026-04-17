@@ -13,6 +13,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="storage.js"></script>
+  <script src="shared-data.js"></script>
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f7fa; min-height: 100vh; }
@@ -398,7 +399,11 @@
       }, []);
 
       // Save on change
-      useEffect(() => { if (mounted && products.length) save(KEYS.PRODUCTS, products); }, [products, mounted]);
+      useEffect(() => { if (mounted && products.length) {
+        save(KEYS.PRODUCTS, products);
+        // Sync to SharedData for cross-tab real-time sync
+        if (window.SharedData) { try { SharedData.saveProducts(products, 'sneki'); } catch(e) {} }
+      } }, [products, mounted]);
       useEffect(() => { if (mounted && Object.keys(matrix).length) save(KEYS.MATRIX, matrix); }, [matrix, mounted]);
       useEffect(() => { if (mounted && sales.length) save(KEYS.SALES, sales); }, [sales, mounted]);
       useEffect(() => { if (mounted && stocks.length) save(KEYS.STOCKS, stocks); }, [stocks, mounted]);
@@ -414,6 +419,22 @@
       useEffect(() => { if (mounted && results.length > 0) save(KEYS.RESULTS, results); }, [results, mounted]);
       useEffect(() => { if (mounted && rcResults.length > 0) save(KEYS.RC_RESULTS, rcResults); }, [rcResults, mounted]);
       useEffect(() => { if (mounted && Object.keys(groupDays).length) save(KEYS.GROUP_DAYS, groupDays); }, [groupDays, mounted]);
+
+      // Cross-tab sync: listen for product changes from other files (assortment.html, fish-order.html)
+      useEffect(() => {
+        if (!window.SharedData) return;
+        const handler = (info) => {
+          if (info.source !== 'sneki') {
+            const fresh = SharedData.getProducts();
+            if (fresh && fresh.length > 0 && fresh.length !== products.length) {
+              setProducts(fresh);
+              console.log('[Sneki] Synced from ' + info.source + ': ' + fresh.length + ' products');
+            }
+          }
+        };
+        SharedData.onChange(handler);
+        return () => { /* cleanup not needed for SharedData */ };
+      }, [mounted]);
 
       // Parse assortment file
       // Структура: Да | Группа | Код | Упаковка | Номенклатура | Код(повтор) | Код весовой | Вход пивной | Вход РЦ | Цена | Полка

@@ -1,6 +1,6 @@
 // ============================================================================
 // shared-utils.js — Общие утилиты для всех страниц (кроме sneki.html)
-// Версия 3.1 — унифицированная библиотека + единый формат матрицы
+// Версия 3.0 — унифицированная библиотека
 // ============================================================================
 
 (function() {
@@ -307,7 +307,6 @@
     //   Кол 5: Цена (входная)
     //   Кол 6: Полка (минимальный остаток)
     //   Кол 7: Квант (шаг заказа для КГ)
-    //   Кол 8: Объём
     // ============================================================================
     function parseAssortment(json) {
         const items = [];
@@ -338,14 +337,12 @@
             const packaging = String(r[3] || 'ШТ').toUpperCase().trim();
             const supplier = String(r[4] || '').trim();
             const price = parseFloat(String(r[5] || '0').replace(',', '.')) || 0;
-            const shelfPrice = parseFloat(String(r[6] || '0').replace(',', '.')) || 0;
-            const shelf = parseFloat(String(r[7] || '0').replace(',', '.')) || 0;
-            const quant = parseFloat(String(r[8] || '1').replace(',', '.')) || 1;
-            const volume = parseFloat(String(r[9] || '0').replace(',', '.')) || 0;
+            const shelf = parseFloat(String(r[6] || '0').replace(',', '.')) || 0;
+            const quant = parseFloat(String(r[7] || '1').replace(',', '.')) || 1;
 
             items.push({
                 code, nomenclature: name, group, packaging, supplier,
-                price, inPrice: price, shelfPrice, shelf, quant, volume
+                price, inPrice: price, shelf, quant
             });
 
             if (shelf > 0) newShelf[code] = shelf;
@@ -495,315 +492,6 @@
     }
 
     // ============================================================================
-    // ЕДИНЫЙ ЭКСПОРТ МАТРИЦЫ
-    // Формат: Наименование товара / Код товара / ТТ1 / ТТ2 / ... / ТТn
-    // Значения: ДА / НЕТ
-    // ============================================================================
-    function exportMatrixExcel(items, storeList, filename) {
-        if (!items || items.length === 0) return;
-
-        const headers = ['Наименование товара', 'Код товара', ...storeList];
-        const data = items.map(p => [
-            p.nomenclature || '',
-            p.code || '',
-            ...storeList.map(tt => {
-                const val = p[tt];
-                return (val === 'ДА' || val === 'YES' || val === '1') ? 'ДА' : 'НЕТ';
-            })
-        ]);
-
-        const ws = createStyledSheet(data, headers, [0]);
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, 'Матрица');
-        XLSX.writeFile(wb, filename || `матрица_${new Date().toISOString().slice(0, 10)}.xlsx`);
-    }
-
-    // ============================================================================
-    // ЕДИНЫЙ ИМПОРТ МАТРИЦЫ (автоопределение формата)
-    // Поддерживает:
-    //   Новый формат:  Наименование товара / Код товара / ТТ1 / ТТ2 / ...
-    //   Старый формат matrix-calc/universal: Группа / Наименование / Код / ТТ1 / ТТ2 / ...
-    //   Старый формат sneki: Группа / Наименование / Код товара / Упак / Вес. код / ТТ1 / ...
-    // Возвращает Promise: { marks, products, ttNames }
-    //   marks = { code: { tt1: 'ДА'/'НЕТ', tt2: 'ДА'/'НЕТ', ... } }
-    //   products = [{ code, nomenclature, group }]
-    //   ttNames = ['ТТ1', 'ТТ2', ...]
-    // ============================================================================
-    function importMatrixExcel(file) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                try {
-                    const data = new Uint8Array(e.target.result);
-                    const wb = XLSX.read(data, { type: 'array' });
-                    const json = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' });
-
-                    if (json.length < 2) { reject(new Error('Файл пуст или неверный формат')); return; }
-
-                    const headersRaw = json[0];
-                    const headers = headersRaw.map(h => String(h || '').trim().toLowerCase());
-
-                    // Автоопределение позиции колонок
-                    let codeCol = -1, nameCol = -1, groupCol = -1;
-
-                    headers.forEach((h, i) => {
-                        if (h === 'код товара' || h === 'код') codeCol = i;
-                        if (h === 'наименование товара' || h === 'наименование' || h === 'наим') nameCol = i;
-                        if (h === 'группа') groupCol = i;
-                    });
-
-                    if (codeCol === -1) { reject(new Error('Не найдена колонка "Код товара" в файле')); return; }
-
-                    // TT-колонки: всё после колонки Код, кроме известных не-TT колонок
-                    const knownNonTT = new Set([
-                        'группа', 'упак', 'вес. код', 'вес.код', 'упаковка',
-                        'наименование товара', 'наименование', 'наим', 'код товара', 'код'
-                    ]);
-                    const ttColumns = [];
-                    for (let c = codeCol + 1; c < headers.length; c++) {
-                        if (headers[c] && !knownNonTT.has(headers[c])) {
-                            ttColumns.push({ col: c, name: String(headersRaw[c] || '').trim() });
-                        }
-                    }
-
-                    if (ttColumns.length === 0) { reject(new Error('Не найдены колонки с торговыми точками в файле')); return; }
-
-                    const marks = {};
-                    const products = [];
-
-                    for (let i = 1; i < json.length; i++) {
-                        const r = json[i];
-                        if (!r || r.length < 2) continue;
-
-                        const code = normCode(r[codeCol]);
-                        if (!code) continue;
-
-                        const nomenclature = nameCol >= 0 ? String(r[nameCol] || '').trim() : '';
-                        const group = groupCol >= 0 ? String(r[groupCol] || '').trim() : '';
-
-                        if (!nomenclature) continue;
-
-                        if (!marks[code]) {
-                            marks[code] = {};
-                            products.push({ code, nomenclature, group });
-                        } else {
-                            const existing = products.find(p => p.code === code);
-                            if (existing) {
-                                if (!existing.nomenclature && nomenclature) existing.nomenclature = nomenclature;
-                                if (!existing.group && group) existing.group = group;
-                            }
-                        }
-
-                        ttColumns.forEach(({ col, name }) => {
-                            const val = String(r[col] || '').trim().toUpperCase();
-                            marks[code][name] = (val === 'ДА' || val === 'YES' || val === '1') ? 'ДА' : 'НЕТ';
-                        });
-                    }
-
-                    if (Object.keys(marks).length === 0) { reject(new Error('Не удалось прочитать данные матрицы из файла')); return; }
-
-                    resolve({ marks, products, ttNames: ttColumns.map(t => t.name) });
-                } catch (err) {
-                    reject(err);
-                }
-            };
-            reader.onerror = () => reject(new Error('Ошибка чтения файла'));
-            reader.readAsArrayBuffer(file);
-        });
-    }
-
-    // ============================================================================
-    // УНИФИЦИРОВАННАЯ СТРУКТУРА АССОРТИМЕНТА
-    // Всегда 15 колонок при экспорте/импорте:
-    //   ⭐, Группа, Наименование, Код, Упак., Объём, Квант,
-    //   Дом. полка, Поставщик, Продажи, Цена входящая, Цена на полке,
-    //   Доход (выч. полка-вход), Наценка % (выч.), Маржа % (выч.)
-    // ============================================================================
-    var ASSORTMENT_HEADERS = [
-        '\u2B50', 'Группа', 'Наименование', 'Код', 'Упак.', 'Объём', 'Квант',
-        'Дом. полка', 'Поставщик', 'Продажи', 'Цена входящая', 'Цена на полке',
-        'Доход', 'Наценка %', 'Маржа %'
-    ];
-
-    // ============================================================================
-    // УНИФИЦИРОВАННЫЙ ЭКСПОРТ АССОРТИМЕНТА
-    // Все файлы экспортируют один и тот же формат (15 колонок)
-    // options: { filename?, salesMap?, mandatorySet? }
-    //   salesMap = { code: totalSales }  — для колонки Продажи
-    //   mandatorySet = Set of codes     — для колонки ⭐
-    // ============================================================================
-    function exportAssortmentUnified(products, options) {
-        options = options || {};
-        if (!products || products.length === 0) {
-            alert('Нет данных для экспорта');
-            return;
-        }
-
-        var salesMap = options.salesMap || {};
-        var mandatorySet = options.mandatorySet;
-
-        var data = products.map(function(p) {
-            var code = p.code || '';
-            var inPrice = p.inPrice || 0;
-            var shelfPrice = p.shelfPrice || 0;
-            var income = shelfPrice - inPrice;
-            var markup = inPrice > 0 ? (shelfPrice - inPrice) / inPrice * 100 : (p.markup || 0);
-            var margin = shelfPrice > 0 ? (shelfPrice - inPrice) / shelfPrice * 100 : 0;
-            var totalSales = salesMap[code] || p.totalSales || 0;
-            var isMandatory = (mandatorySet && (mandatorySet.has ? mandatorySet.has(code) : mandatorySet[code])) || p.mandatory || false;
-
-            return [
-                isMandatory ? '\u2B50' : '',
-                p.group || '',
-                p.nomenclature || '',
-                code,
-                p.packaging || 'ШТ',
-                p.volume || 0,
-                p.quant || 1,
-                p.shelf || 0,
-                p.supplier || '',
-                totalSales,
-                inPrice,
-                shelfPrice,
-                Math.round(income * 100) / 100,
-                Math.round(markup * 100) / 100,
-                Math.round(margin * 100) / 100
-            ];
-        });
-
-        var ws = createStyledSheet(data, ASSORTMENT_HEADERS, [1, 2, 8]);
-        var wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, 'Ассортимент');
-
-        var d = new Date();
-        var filename = options.filename ||
-            'ассортимент_' + d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') + '.xlsx';
-        XLSX.writeFile(wb, filename);
-    }
-
-    // ============================================================================
-    // УНИФИЦИРОВАННЫЙ ИМПОРТ АССОРТИМЕНТА
-    // Автоматически определяет формат (новый 15-колоночный или старый 10-колоночный)
-    // Сначала пробует по заголовкам колонок, затем fallback на позиционный парсинг
-    // Возвращает Promise: { items }
-    // ============================================================================
-    function importAssortmentUnified(file) {
-        return new Promise(function(resolve, reject) {
-            var reader = new FileReader();
-            reader.onload = function(e) {
-                try {
-                    var data = new Uint8Array(e.target.result);
-                    var wb = XLSX.read(data, { type: 'array' });
-                    var sheet = wb.Sheets[wb.SheetNames[0]];
-                    var rawJson = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
-
-                    if (rawJson.length < 2) { reject(new Error('Файл пуст или неверный формат')); return; }
-
-                    // Ищем строку заголовков
-                    var headerRow = -1;
-                    for (var i = 0; i < Math.min(5, rawJson.length); i++) {
-                        var row = (rawJson[i] || []).map(function(c) { return String(c || '').trim().toLowerCase(); });
-                        var hasCode = row.some(function(c) { return c === 'код' || c === 'код товара' || c === 'код(товар)'; });
-                        var hasName = row.some(function(c) { return c === 'наименование' || c === 'наименование товара' || c === 'наим' || c === 'номенклатура'; });
-                        if (hasCode && hasName) {
-                            headerRow = i;
-                            break;
-                        }
-                    }
-
-                    if (headerRow === -1) {
-                        // Fallback на старый позиционный парсинг
-                        var result = parseAssortment(rawJson);
-                        resolve({ items: result.items });
-                        return;
-                    }
-
-                    var headersRaw = rawJson[headerRow];
-                    var headers = headersRaw.map(function(h) { return String(h || '').trim().toLowerCase(); });
-
-                    // Строим маппинг колонок по заголовкам
-                    var colMap = {};
-                    headers.forEach(function(h, idx) {
-                        if (h === 'код' || h === 'код товара' || h === 'код(товар)') colMap.code = idx;
-                        else if (h === 'наименование' || h === 'наименование товара' || h === 'наим' || h === 'номенклатура') colMap.name = idx;
-                        else if (h === 'группа' || h === 'категория') colMap.group = idx;
-                        else if (h === 'упак' || h === 'упак.' || h === 'упаковка') colMap.packaging = idx;
-                        else if (h === 'объём' || h === 'объем' || h === 'объем') colMap.volume = idx;
-                        else if (h === 'квант') colMap.quant = idx;
-                        else if (h === 'дом. полка' || h === 'домашняя полка') colMap.shelf = idx;
-                        else if (h === 'поставщик') colMap.supplier = idx;
-                        else if (h === 'продажи') colMap.sales = idx;
-                        else if (h === 'цена входящая' || h === 'вх. цена' || h === 'вход. цена' || h === 'закупка') colMap.inPrice = idx;
-                        else if (h === 'цена на полке' || h === 'цена полки' || h === 'розничная цена') colMap.shelfPrice = idx;
-                        else if (h === 'доход' || h === 'прибыль') colMap.income = idx;
-                        else if (h === 'наценка' || h === 'наценка %') colMap.markup = idx;
-                        else if (h === 'маржа' || h === 'маржа %') colMap.margin = idx;
-                        else if (h === '\u2B50' || h === 'обязательно') colMap.mandatory = idx;
-                        else if (h === 'цена') colMap.price = idx;
-                    });
-
-                    if (colMap.code === undefined) {
-                        reject(new Error('Не найдена колонка "Код" в файле'));
-                        return;
-                    }
-
-                    var items = [];
-                    for (var i = headerRow + 1; i < rawJson.length; i++) {
-                        var r = rawJson[i];
-                        if (!r || r.length < 2) continue;
-
-                        var code = normCode(String(r[colMap.code] || ''));
-                        if (!code) continue;
-
-                        var name = colMap.name !== undefined ? String(r[colMap.name] || '').trim() : '';
-                        var group = colMap.group !== undefined ? String(r[colMap.group] || '').trim() : '';
-
-                        if (!code && !name && !group) continue;
-
-                        var inPrice = colMap.inPrice !== undefined ? (parseFloat(String(r[colMap.inPrice])) || 0) : 0;
-                        var shelfPrice = colMap.shelfPrice !== undefined ? (parseFloat(String(r[colMap.shelfPrice])) || 0) : 0;
-                        // Если нет отдельной колонки «Цена входящая» — берём из «Цена»
-                        if (inPrice === 0 && colMap.price !== undefined && colMap.inPrice === undefined) {
-                            inPrice = parseFloat(String(r[colMap.price])) || 0;
-                        }
-
-                        var shelf = colMap.shelf !== undefined ? (parseFloat(String(r[colMap.shelf])) || 0) : 0;
-                        var quant = colMap.quant !== undefined ? (parseFloat(String(r[colMap.quant])) || 1) : 1;
-                        var volume = colMap.volume !== undefined ? (parseFloat(String(r[colMap.volume])) || 0) : 0;
-
-                        items.push({
-                            code: code,
-                            nomenclature: name,
-                            group: group,
-                            packaging: colMap.packaging !== undefined ? String(r[colMap.packaging] || 'ШТ').trim() : 'ШТ',
-                            supplier: colMap.supplier !== undefined ? String(r[colMap.supplier] || '').trim() : '',
-                            price: inPrice || shelfPrice || 0,
-                            inPrice: inPrice,
-                            shelfPrice: shelfPrice,
-                            shelf: shelf,
-                            quant: quant,
-                            volume: volume,
-                            markup: colMap.markup !== undefined ? (parseFloat(String(r[colMap.markup])) || 0) : 0,
-                            totalSales: colMap.sales !== undefined ? (parseFloat(String(r[colMap.sales])) || 0) : 0,
-                            mandatory: colMap.mandatory !== undefined ? (
-                                String(r[colMap.mandatory] || '') === '\u2B50' ||
-                                String(r[colMap.mandatory] || '').trim() === 'ДА'
-                            ) : false
-                        });
-                    }
-
-                    console.log('[SharedUtils] Унифицированный импорт ассортимента: ' + items.length + ' товаров');
-                    resolve({ items: items });
-                } catch (err) {
-                    reject(err);
-                }
-            };
-            reader.onerror = function() { reject(new Error('Ошибка чтения файла')); };
-            reader.readAsArrayBuffer(file);
-        });
-    }
-
-    // ============================================================================
     // БАЗОВЫЙ ЭКСПОРТ В EXCEL
     // ============================================================================
     function exportToExcel(data, filename) {
@@ -904,7 +592,6 @@
     // ============================================================================
     window.SharedUtils = {
         STORAGE_KEYS,
-        ASSORTMENT_HEADERS,
         load,
         save,
         debounceSave,
@@ -919,10 +606,6 @@
         parseStoresData,
         calculateOrder,
         createStyledSheet,
-        exportAssortmentUnified,
-        importAssortmentUnified,
-        exportMatrixExcel,
-        importMatrixExcel,
         exportToExcel,
         migrateOldKeys,
         markDirty,
@@ -940,5 +623,5 @@
         migrateOldKeys();
     }
 
-    console.log('[SharedUtils] Загружен v3.2 — унифицированный экспорт/импорт ассортимента');
+    console.log('[SharedUtils] Загружен v3.0');
 })();
