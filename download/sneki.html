@@ -141,8 +141,10 @@
     function RCPriceCalc({ warehouseMarkup, vatRate }) {
       const [inputPrice, setInputPrice] = useState('');
       const [inputVat, setInputVat] = useState(vatRate);
-      const rcPrice = inputPrice && parseFloat(inputPrice) > 0
-        ? Math.round(parseFloat(inputPrice) * (1 + (parseFloat(inputVat) || 0) / 100) * 100) / 100
+      const vat = parseFloat(inputVat) || 0;
+      const markup = parseFloat(warehouseMarkup) || 0;
+      const rcPrice = inputPrice && parseFloat(inputPrice) > 0 && vat > 0
+        ? Math.round(parseFloat(inputPrice) * (1 + markup / 100) / (1 + vat / 100) * 100) / 100
         : null;
       return (
         <div className="space-y-2">
@@ -165,7 +167,7 @@
             </span>
           </div>
           <div className="text-[10px] text-gray-400 leading-tight px-1">
-            Формула: Входящая цена × (1 + НДС % / 100)
+            Формула: (Вх. цена x (1 + Наценка РЦ % / 100)) / (1 + НДС % / 100)
           </div>
         </div>
       );
