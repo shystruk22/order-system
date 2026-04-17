@@ -131,6 +131,19 @@
                 };
             });
             save(UNIV_PRODUCTS_KEY, obj);
+            // Синхронизация с fish-order.html
+            const fishObj = {};
+            products.forEach(p => {
+                if (p.code) fishObj[p.code] = {
+                    code: p.code, nomenclature: p.nomenclature || '',
+                    group: p.group || '', packaging: p.packaging || 'ШТ',
+                    supplier: p.supplier || '', price: p.price || 0,
+                    inPrice: p.inPrice || p.price || 0, shelfPrice: p.shelfPrice || 0,
+                    shelf: p.shelf || 0, quant: p.quant || 1, volume: p.volume || 0,
+                    markup: p.markup || defaultMarkup
+                };
+            });
+            save('fish_assortment_v1', fishObj);
             // Notify SharedData for cross-tab sync
             if (window.SharedData) SharedData.saveProducts(products, 'assortment');
             // Sync to saved list if one is loaded
@@ -954,12 +967,30 @@
             // Load products from shared storage (try matrix-calc format first, then universal)
             const arrData = load(PRODUCTS_KEY, null);
             const objData = load(UNIV_PRODUCTS_KEY, null);
+            // Также пробуем fish-assortment (fish-order.html хранит в отдельном ключе)
+            const fishData = load('fish_assortment_v1', null);
 
             if (Array.isArray(arrData) && arrData.length > 0) {
                 products = arrData;
             } else if (objData && typeof objData === 'object' && Object.keys(objData).length > 0) {
                 // Convert object to array
                 products = Object.values(objData).map(p => ({
+                    code: p.code,
+                    nomenclature: p.nomenclature || p.name || '',
+                    group: p.group || '',
+                    packaging: p.packaging || 'ШТ',
+                    supplier: p.supplier || '',
+                    price: p.price || 0,
+                    inPrice: p.inPrice || p.price || 0,
+                    shelfPrice: p.shelfPrice || 0,
+                    shelf: p.shelf || 0,
+                    quant: p.quant || 1,
+                    volume: p.volume || 0,
+                    markup: p.markup || defaultMarkup
+                }));
+            } else if (fishData && typeof fishData === 'object' && Object.keys(fishData).length > 0) {
+                // Загрузка из fish-order.html
+                products = Object.values(fishData).map(p => ({
                     code: p.code,
                     nomenclature: p.nomenclature || p.name || '',
                     group: p.group || '',
