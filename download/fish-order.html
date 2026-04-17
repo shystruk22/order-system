@@ -1525,6 +1525,8 @@
                     </div>
                     <div class="ml-auto flex gap-2">
                         <button onclick="applyDefaultMarkup()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-violet-600 rounded-lg hover:bg-violet-700">${icons.refresh} Наценка</button>
+                        <button onclick="document.getElementById('pricesImportInput').click()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700">${icons.import} Импорт</button>
+                        <input type="file" id="pricesImportInput" accept=".xlsx,.xls,.csv" onchange="importPrices(this)" class="hidden">
                         <button onclick="exportPrices()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">${icons.export} Экспорт</button>
                     </div>
                 </div>
@@ -1750,6 +1752,142 @@
 
             const d = new Date();
             XLSX.writeFile(wb, 'цены_' + d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') + '.xlsx');
+        }
+
+        function importPrices(input) {
+            const file = input.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const wb = XLSX.read(data, { type: 'array' });
+                    const json = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' });
+
+                    if (json.length < 2) { alert('Файл пуст или некорректный формат'); return; }
+
+                    // Заголовки из файла
+                    const headers = json[0].map(h => String(h || '').trim());
+                    const supplierNamesInFile = headers
+                        .filter(h => h.startsWith('Цена '))
+                        .map(h => h.replace('Цена ', '').trim());
+
+                    // Находим индексы колонок
+                    const idxGroup = headers.indexOf('Группа');
+                    const idxName = headers.indexOf('Наименование');
+                    const idxCode = headers.indexOf('Код');
+                    const idxMaxIn = headers.indexOf('Макс. вх.');
+                    const idxShelfPrice = headers.indexOf('Цена полки');
+
+                    // Индексы цен поставщиков
+                    const supplierIdxMap = {};
+                    supplierNamesInFile.forEach(s => {
+                        const colIdx = headers.indexOf('Цена ' + s);
+                        if (colIdx >= 0) supplierIdxMap[s] = colIdx;
+                    });
+
+                    if (idxCode < 0) {
+                        alert('Не найдена колонка "Код" в файле. Проверьте что это файл экспорта цен.');
+                        return;
+                    }
+
+                    // Если в файле есть поставщики, которых нет в deliverySchedule — создаём их
+                    supplierNamesInFile.forEach(sName => {
+                        if (!deliverySchedule[sName]) {
+                            deliverySchedule[sName] = {};
+                            if (stores && stores.length > 0) {
+                                stores.forEach(st => {
+                                    deliverySchedule[sName][st.tt] = [false, false, false, false, false, false, false];
+                                });
+                            }
+                        }
+                    });
+
+                    let updatedProducts = 0;
+                    let updatedSupplierPrices = 0;
+                    let notFound = 0;
+                    let newSuppliersFound = 0;
+
+                    for (let i = 1; i < json.length; i++) {
+                        const r = json[i];
+                        if (!r || r.length < 2) continue;
+
+                        const code = normCode(String(r[idxCode] || '').trim());
+                        if (!code || code === '0') continue;
+
+                        const product = matrix[code];
+                        if (!product) { notFound++; continue; }
+
+                        // Обновляем цену полки
+                        if (idxShelfPrice >= 0 && r[idxShelfPrice] !== undefined && r[idxShelfPrice] !== '') {
+                            const shP = parseFloat(String(r[idxShelfPrice]).replace(',', '.')) || 0;
+                            if (shP > 0) {
+                                product.shelfPrice = shP;
+                                updatedProducts++;
+                            }
+                        }
+
+                        // Обновляем inPrice из Макс. вх.
+                        if (idxMaxIn >= 0 && r[idxMaxIn] !== undefined && r[idxMaxIn] !== '') {
+                            const maxIn = parseFloat(String(r[idxMaxIn]).replace(',', '.')) || 0;
+                            if (maxIn > 0) {
+                                product.inPrice = maxIn;
+                                product.price = maxIn;
+                            }
+                        }
+
+                        // Обновляем цены поставщиков
+                        Object.entries(supplierIdxMap).forEach(([sName, colIdx]) => {
+                            if (r[colIdx] !== undefined && r[colIdx] !== '') {
+                                const price = parseFloat(String(r[colIdx]).replace(',', '.')) || 0;
+                                if (price > 0) {
+                                    if (!supplierPrices[code]) supplierPrices[code] = {};
+                                    supplierPrices[code][sName] = price;
+                                    updatedSupplierPrices++;
+
+                                    // supplierAssortment
+                                    if (!supplierAssortment[code]) supplierAssortment[code] = [];
+                                    if (!supplierAssortment[code].includes(sName)) {
+                                        supplierAssortment[code].push(sName);
+                                        newSuppliersFound++;
+                                    }
+                                }
+                            }
+                        });
+
+                        // Обновляем группу/наименование если в файле есть
+                        if (idxGroup >= 0 && r[idxGroup]) {
+                            const g = String(r[idxGroup]).trim();
+                            if (g) product.group = g;
+                        }
+                        if (idxName >= 0 && r[idxName]) {
+                            const n = String(r[idxName]).trim();
+                            if (n) product.nomenclature = n;
+                        }
+                    }
+
+                    // Сохраняем всё
+                    syncFishAssortment();
+                    save(KEYS.SUPPLIER_PRICES, supplierPrices);
+                    save(KEYS.SUPPLIER_ASSORTMENT, supplierAssortment);
+                    save(KEYS.SCHEDULE, deliverySchedule);
+                    ensureSupplierAssortment();
+                    save(KEYS.SUPPLIER_PRICES, supplierPrices);
+                    render();
+
+                    const msg = `Импорт цен завершён:
+• Обновлено товаров (цена полки): ${updatedProducts}
+• Обновлено цен поставщиков: ${updatedSupplierPrices}
+• Новых связей товар↔поставщик: ${newSuppliersFound}
+• Не найдено в каталоге: ${notFound}`;
+                    alert(msg);
+                } catch (err) {
+                    console.error('Import prices error:', err);
+                    alert('Ошибка импорта: ' + err.message);
+                }
+            };
+            reader.readAsArrayBuffer(file);
+            input.value = '';
         }
 
         function updateProduct(code, field, value) {
