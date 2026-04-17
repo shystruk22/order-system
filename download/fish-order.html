@@ -441,6 +441,11 @@
                 }
             }
 
+            // Автозаполнение supplierPrices из inPrice при загрузке
+            ensureSupplierAssortment();
+            save(KEYS.SUPPLIER_PRICES, supplierPrices);
+            save(KEYS.SUPPLIER_ASSORTMENT, supplierAssortment);
+
             window.addEventListener('storage', (e) => {
                 if (e.key === KEYS.STORES) loadStoresFromHTML();
             });
@@ -498,7 +503,7 @@
 
         // === SharedData sync helper ===
         function syncFishAssortment() {
-            syncFishAssortment();
+            save(KEYS.ASSORTMENT, matrix);
             if (window.SharedData) {
                 try {
                     const arr = Object.values(matrix).filter(p => p && p.code);
