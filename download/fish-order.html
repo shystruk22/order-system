@@ -1092,13 +1092,15 @@
                                     <th class="text-left px-3 py-1.5 text-gray-500 font-medium border-b">Наименование</th>
                                     <th class="text-center px-3 py-1.5 text-gray-500 font-medium border-b">Кол-во</th>
                                     <th class="text-center px-3 py-1.5 text-gray-500 font-medium border-b">Сумма</th>
+                                    <th class="text-center px-3 py-1.5 text-gray-500 font-medium border-b w-10"></th>
                                 </tr></thead>
                                 <tbody>
-                                    ${(o.items || []).map(item => `<tr class="hover:bg-gray-50">
+                                    ${(o.items || []).map((item, idx) => `<tr class="hover:bg-gray-50">
                                         <td class="text-left px-3 py-1 font-mono text-gray-600">${item.code || ''}</td>
                                         <td class="text-left px-3 py-1 text-gray-700">${esc(item.name || '')}</td>
                                         <td class="text-center px-3 py-1 font-medium">${item.qty || 0}</td>
                                         <td class="text-center px-3 py-1 text-gray-600">${(item.sum || 0).toFixed(2)} ₽</td>
+                                        <td class="text-center px-3 py-1"><button onclick="deleteInTransitItem(${o.id}, ${idx})" class="text-red-400 hover:text-red-600 hover:bg-red-50 rounded p-1 transition-colors cursor-pointer" title="Удалить позицию">${icons.trash}</button></td>
                                     </tr>`).join('')}
                                 </tbody>
                             </table>
@@ -1135,6 +1137,7 @@
                                         <th class="text-left px-3 py-1 text-gray-500 font-medium border-b">Наименование</th>
                                         <th class="text-center px-3 py-1 text-gray-500 font-medium border-b">Заказано</th>
                                         <th class="text-center px-3 py-1 text-gray-500 font-medium border-b">Статус</th>
+                                        <th class="text-center px-3 py-1 text-gray-500 font-medium border-b w-10"></th>
                                     </tr></thead>
                                     <tbody>
                                         ${(o.items || []).map((item, idx) => `
@@ -1148,6 +1151,7 @@
                                                     : `<span class="text-green-600 cursor-pointer hover:underline" onclick="toggleItemArrived(${o.id}, ${idx})">✓ Приехало</span>`
                                                 }
                                             </td>
+                                            <td class="text-center px-3 py-1"><button onclick="deleteInTransitItem(${o.id}, ${idx})" class="text-red-400 hover:text-red-600 hover:bg-red-50 rounded p-1 transition-colors cursor-pointer" title="Удалить позицию">${icons.trash}</button></td>
                                         </tr>`).join('')}
                                     </tbody>
                                 </table>
@@ -1188,6 +1192,23 @@
         function deleteInTransitOrder(orderId) {
             if (!confirm('Удалить заказ?')) return;
             inTransitOrders = inTransitOrders.filter(o => o.id !== orderId);
+            save(KEYS.INTRANSIT, inTransitOrders);
+            render();
+        }
+
+        function deleteInTransitItem(orderId, itemIdx) {
+            const order = inTransitOrders.find(o => o.id === orderId);
+            if (!order || !order.items || !order.items[itemIdx]) return;
+            const item = order.items[itemIdx];
+            if (!confirm('Удалить позицию "' + (item.name || item.code || '') + '" (' + (item.qty || 0) + ')?')) return;
+            order.items.splice(itemIdx, 1);
+            // Если все позиции удалены — удаляем заказ целиком
+            if (order.items.length === 0) {
+                inTransitOrders = inTransitOrders.filter(o => o.id !== orderId);
+            } else {
+                // Пересчитываем итоги заказа
+                save(KEYS.INTRANSIT, inTransitOrders);
+            }
             save(KEYS.INTRANSIT, inTransitOrders);
             render();
         }
