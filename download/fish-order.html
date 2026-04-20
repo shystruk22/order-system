@@ -72,6 +72,7 @@
 
         let searchAssort = '';
         let searchResults = '';
+        let searchMatrix = '';
         let filterTT = '';
         let filterStatus = '';
         let filterGroup = '';
@@ -2039,14 +2040,19 @@
             if (Object.keys(matrix).length === 0) return `<div class="bg-white rounded-lg border border-gray-200 p-4"><div class="text-center py-12">${icons.db}<p class="text-gray-500 mt-3">Загрузите данные</p></div></div>`;
 
             const grouped = {};
+            const q = (searchMatrix || '').toLowerCase().trim();
+            let filteredCount = 0;
             Object.entries(matrix).forEach(([code, p]) => {
+                // Фильтрация по поиску
+                if (q && !code.includes(q) && !(p.nomenclature || '').toLowerCase().includes(q) && !(p.group || '').toLowerCase().includes(q)) return;
                 const gr = p.group || 'Без группы';
                 if (!grouped[gr]) grouped[gr] = [];
                 grouped[gr].push({ code, ...p });
+                filteredCount++;
             });
 
             return `<div class="bg-white rounded-lg border border-gray-200 p-3 mb-3">
-                <div class="flex justify-between items-center">
+                <div class="flex justify-between items-center flex-wrap gap-2">
                     <div class="flex gap-2 items-center">
                         <div class="bg-sky-100 text-sky-800 rounded-lg px-3 py-1.5">
                             <span class="text-xs">Товаров: </span><strong>${Object.keys(matrix).length}</strong>
@@ -2057,6 +2063,9 @@
                         <div class="bg-blue-100 text-blue-800 rounded-lg px-3 py-1.5">
                             <span class="text-xs">Магазинов: </span><strong>${stores.length}</strong>
                         </div>
+                        ${q ? `<div class="bg-amber-100 text-amber-800 rounded-lg px-3 py-1.5">
+                            <span class="text-xs">Найдено: </span><strong>${filteredCount}</strong>
+                        </div>` : ''}
                     </div>
                     <div class="flex gap-2">
                         <button onclick="document.getElementById('matrixImportInput').click()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700">${icons.import} Импорт</button>
@@ -2065,6 +2074,19 @@
                     </div>
                 </div>
             </div>
+
+            <div class="bg-white rounded-lg border border-gray-200 p-3 mb-3">
+                <div class="flex gap-2 items-center">
+                    <div class="relative flex-1">
+                        <input type="text" id="matrixSearchInput" placeholder="Поиск по коду, названию или группе..." value="${esc(searchMatrix)}" oninput="searchMatrix=this.value;debounceMatrixSearch()" class="w-full pl-9 pr-8 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-sky-400 focus:ring-1 focus:ring-sky-200">
+                        <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400">${icons.search}</span>
+                        ${searchMatrix ? `<button onclick="searchMatrix='';render()" class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">${icons.x}</button>` : ''}
+                    </div>
+                    ${q ? `<button onclick="searchMatrix='';render()" class="text-xs text-sky-600 hover:text-sky-800 font-medium whitespace-nowrap">Сбросить</button>` : ''}
+                </div>
+            </div>
+
+            ${filteredCount === 0 && q ? `<div class="bg-white rounded-lg border border-gray-200 p-6 text-center"><p class="text-gray-500">Ничего не найдено по запросу «${esc(searchMatrix)}»</p><button onclick="searchMatrix='';render()" class="mt-2 text-sky-600 hover:text-sky-800 text-sm font-medium">Сбросить поиск</button></div>` : ''}
 
             <div class="bg-white rounded-lg border border-gray-200 overflow-hidden">
                 <div class="table-container">
@@ -2219,6 +2241,23 @@
                     if (el) { el.focus(); el.setSelectionRange(pos, pos); }
                 }, 10);
             }, 300);
+        }
+
+        let searchTimeoutMatrix = null;
+        function debounceMatrixSearch() {
+            const input = document.getElementById('matrixSearchInput');
+            if (!input) return;
+            const val = input.value;
+            const pos = input.selectionStart;
+            clearTimeout(searchTimeoutMatrix);
+            searchTimeoutMatrix = setTimeout(() => {
+                searchMatrix = val;
+                render();
+                setTimeout(() => {
+                    const el = document.getElementById('matrixSearchInput');
+                    if (el) { el.focus(); el.setSelectionRange(pos, pos); }
+                }, 10);
+            }, 200);
         }
 
         // === ЗАКАЗ ===
