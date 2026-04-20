@@ -2234,19 +2234,13 @@
         }
 
         // === DEBOUNCE ПОИСКА ===
-        let searchTimeoutResults = null;
-        function debounceSearchResults(input) {
+        function onOrderSearch(input) {
             const val = input.value;
             const pos = input.selectionStart;
-            clearTimeout(searchTimeoutResults);
-            searchTimeoutResults = setTimeout(() => {
-                searchResults = val;
-                render();
-                setTimeout(() => {
-                    const el = document.getElementById('orderSearchInput');
-                    if (el) { el.focus(); el.setSelectionRange(pos, pos); }
-                }, 10);
-            }, 300);
+            searchResults = val;
+            render();
+            const el = document.getElementById('orderSearchInput');
+            if (el) { el.focus(); el.setSelectionRange(pos, pos); }
         }
 
         let searchTimeoutAssort = null;
@@ -2859,7 +2853,7 @@
 
                 <div class="bg-white rounded-lg border border-gray-200 p-3">
                     <div class="flex flex-wrap gap-2 items-center">
-                        <input id="orderSearchInput" type="text" placeholder="Поиск..." value="${searchResults}" oninput="debounceSearchResults(this)" class="input w-40">
+                        <input id="orderSearchInput" type="text" placeholder="Поиск..." value="${searchResults}" oninput="onOrderSearch(this)" class="input w-40">
                         <select onchange="filterGroup=this.value;render()" class="input bg-white"><option value="">Все категории</option>${allGroups.map(g => `<option value="${g}" ${filterGroup === g ? 'selected' : ''}>${g}</option>`).join('')}</select>
                         <select onchange="filterTT=this.value;render()" class="input bg-white"><option value="">Все ТТ</option>${stores.map(s => `<option value="${s.tt}" ${filterTT === s.tt ? 'selected' : ''}>${s.tt}</option>`).join('')}</select>
                         <select onchange="filterStatus=this.value;render()" class="input bg-white">
