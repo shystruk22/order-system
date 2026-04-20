@@ -2760,8 +2760,20 @@
             const stats = { total: filtered.length, toOrder: filtered.filter(r => r.order > 0).length, sum: filtered.reduce((s, r) => s + r.sum, 0) };
             const allGroups = getAllGroups();
 
-            // Dynamic supplier columns
-            const supplierColumns = [...allOrderSuppliers].sort();
+            // Dynamic supplier columns — все поставщики с активными днями доставки + с ручными правками
+            const allScheduledSuppliers = new Set();
+            Object.entries(deliverySchedule).forEach(function(entry) {
+                var sup = entry[0], storeMap = entry[1];
+                var hasActive = Object.values(storeMap).some(function(days) { return days && days.some(function(d) { return d; }); });
+                if (hasActive) allScheduledSuppliers.add(sup);
+            });
+            // Добавляем поставщиков из ручных правок (даже если нет в графике)
+            Object.keys(orderEdits).forEach(function(ek) {
+                Object.keys(deliverySchedule).forEach(function(sup) {
+                    if (ek.endsWith('_' + sup)) allScheduledSuppliers.add(sup);
+                });
+            });
+            const supplierColumns = [...allOrderSuppliers].concat([...allScheduledSuppliers].filter(function(s) { return !allOrderSuppliers.has(s); })).sort();
             const colCount = 7 + supplierColumns.length;
 
             // In-transit stats
@@ -2888,14 +2900,21 @@
                                                 <td class="text-center">${r.deliveredQty > 0 ? r.currentStock.toFixed(2) + ' <span class="text-emerald-600 font-medium">(+' + r.deliveredQty + ')</span>' : r.currentStock.toFixed(2)}</td>
                                                 ${supplierColumns.map(sup => {
                                                     const so = (r.supplierOrders || {})[sup];
-                                                    const editKey = `${r.tt}_${r.code}_${sup}`;
+                                                    const editKey = r.tt + '_' + r.code + '_' + sup;
                                                     const editedVal = orderEdits[editKey];
-                                                    const orderVal = editedVal !== undefined ? editedVal : (so ? so.order : 0);
-                                                    const sumVal = orderVal * (r.inPrice || 0);
+                                                    const hasManualEdit = editedVal !== undefined;
+                                                    const orderVal = hasManualEdit ? editedVal : (so ? so.order : 0);
+                                                    const supPrice = (supplierPrices[r.code] && supplierPrices[r.code][sup]) || r.inPrice || 0;
+                                                    const sumVal = orderVal * supPrice;
                                                     if (orderVal > 0) {
-                                                        return `<td class="text-center ${cellBg}"><input type="number" step="0.5" min="0" value="${Number(orderVal).toFixed(1)}" data-tt="${esc(r.tt)}" data-code="${esc(r.code)}" data-supplier="${esc(sup)}" onchange="editOrder(this)" class="input w-16 text-center text-sm font-bold"><div class="text-[10px] text-gray-500">${sumVal.toFixed(0)} ₽</div></td>`;
+                                                        const editBg = hasManualEdit ? 'bg-amber-100 ring-1 ring-amber-300' : '';
+                                                        const editTitle = hasManualEdit ? ' title="Ручная правка"' : '';
+                                                        return '<td class="text-center ' + (cellBg || '') + ' ' + editBg + '"' + editTitle + '><input type="number" step="0.5" min="0" value="' + Number(orderVal).toFixed(1) + '" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onchange="editOrder(this)" class="input w-16 text-center text-sm font-bold"><div class="text-[10px] text-gray-500">' + sumVal.toFixed(0) + ' ₽</div></td>';
                                                     }
-                                                    return `<td class="text-center"><input type="number" step="0.5" min="0" value="" placeholder="0" data-tt="${esc(r.tt)}" data-code="${esc(r.code)}" data-supplier="${esc(sup)}" onchange="editOrder(this)" class="input w-16 text-center text-sm text-gray-300 bg-gray-50"></td>`;
+                                                    const editBg = hasManualEdit ? 'bg-amber-50 ring-1 ring-amber-200' : '';
+                                                    const editTitle = hasManualEdit ? ' title="Ручная правка (очистите поле для авто)"' : '';
+                                                    const inputVal = hasManualEdit ? '0' : '';
+                                                    return '<td class="text-center ' + editBg + '"' + editTitle + '><input type="number" step="0.5" min="0" value="' + inputVal + '" placeholder="0" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onchange="editOrder(this)" class="input w-16 text-center text-sm text-gray-400 bg-gray-50"></td>';
                                                 }).join('')}
                                                 <td class="text-left text-xs ${r.hasConflict ? 'text-amber-700 font-medium' : r.order > 0 ? 'text-emerald-700' : 'text-gray-500'}">${r.status}</td>
                                             </tr>`;
@@ -2911,17 +2930,18 @@
 
 
         function editOrder(input) {
-            const newOrder = parseFloat(input.value) || 0;
+            const val = input.value.trim();
             const tt = input.dataset.tt;
             const code = input.dataset.code;
             const supplier = input.dataset.supplier || '';
             const editKey = supplier ? `${tt}_${code}_${supplier}` : `${tt}_${code}`;
-            if (newOrder > 0) {
-                orderEdits[editKey] = Math.round(newOrder * 100) / 100;
+            if (val === '') {
+                delete orderEdits[editKey]; // Пустое поле = вернуть авто
             } else {
-                delete orderEdits[editKey];
+                const num = parseFloat(val);
+                orderEdits[editKey] = isNaN(num) ? 0 : Math.round(num * 100) / 100;
             }
-            render(); // Re-render to update sums and conflicts
+            render();
         }
 
         function showCalcDetail(el, r) {
