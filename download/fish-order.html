@@ -2888,10 +2888,14 @@
                                                 <td class="text-center">${r.deliveredQty > 0 ? r.currentStock.toFixed(2) + ' <span class="text-emerald-600 font-medium">(+' + r.deliveredQty + ')</span>' : r.currentStock.toFixed(2)}</td>
                                                 ${supplierColumns.map(sup => {
                                                     const so = (r.supplierOrders || {})[sup];
-                                                    if (so && so.order > 0) {
-                                                        return `<td class="text-center ${cellBg}"><input type="number" step="0.5" value="${Number(so.order).toFixed(1)}" data-tt="${esc(r.tt)}" data-code="${esc(r.code)}" data-supplier="${esc(sup)}" onchange="editOrder(this)" class="input w-16 text-center text-sm font-bold"><div class="text-[10px] text-gray-500">${so.sum.toFixed(0)} ₽</div></td>`;
+                                                    const editKey = `${r.tt}_${r.code}_${sup}`;
+                                                    const editedVal = orderEdits[editKey];
+                                                    const orderVal = editedVal !== undefined ? editedVal : (so ? so.order : 0);
+                                                    const sumVal = orderVal * (r.inPrice || 0);
+                                                    if (orderVal > 0) {
+                                                        return `<td class="text-center ${cellBg}"><input type="number" step="0.5" min="0" value="${Number(orderVal).toFixed(1)}" data-tt="${esc(r.tt)}" data-code="${esc(r.code)}" data-supplier="${esc(sup)}" onchange="editOrder(this)" class="input w-16 text-center text-sm font-bold"><div class="text-[10px] text-gray-500">${sumVal.toFixed(0)} ₽</div></td>`;
                                                     }
-                                                    return `<td class="text-center text-gray-300">—</td>`;
+                                                    return `<td class="text-center"><input type="number" step="0.5" min="0" value="" placeholder="0" data-tt="${esc(r.tt)}" data-code="${esc(r.code)}" data-supplier="${esc(sup)}" onchange="editOrder(this)" class="input w-16 text-center text-sm text-gray-300 bg-gray-50"></td>`;
                                                 }).join('')}
                                                 <td class="text-left text-xs ${r.hasConflict ? 'text-amber-700 font-medium' : r.order > 0 ? 'text-emerald-700' : 'text-gray-500'}">${r.status}</td>
                                             </tr>`;
@@ -2912,7 +2916,11 @@
             const code = input.dataset.code;
             const supplier = input.dataset.supplier || '';
             const editKey = supplier ? `${tt}_${code}_${supplier}` : `${tt}_${code}`;
-            orderEdits[editKey] = newOrder;
+            if (newOrder > 0) {
+                orderEdits[editKey] = Math.round(newOrder * 100) / 100;
+            } else {
+                delete orderEdits[editKey];
+            }
             render(); // Re-render to update sums and conflicts
         }
 
