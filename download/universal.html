@@ -1133,6 +1133,7 @@
                         </div>
                     </div>
                     <div class="flex gap-2">
+                        <button onclick="saveCurrentMatrix()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-violet-600 rounded-lg hover:bg-violet-700">${icons.save} Сохранить</button>
                         <button onclick="document.getElementById('matrixImportInput').click()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700">${icons.import} Импорт</button>
                         <input type="file" id="matrixImportInput" accept=".xlsx,.xls" onchange="importMatrix(this)" class="hidden">
                         <button onclick="exportMatrix()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">${icons.export} Экспорт</button>
@@ -1205,6 +1206,50 @@
             }
         }
 
+        function saveCurrentMatrix() {
+            const name = prompt('Введите название для сохранения матрицы:', 'Матрица ' + new Date().toLocaleDateString('ru-RU'));
+            if (!name) return;
+
+            const saved = SharedUtils.load(SharedUtils.STORAGE_KEYS.SAVED_MATRICES, []);
+            const existingIdx = saved.findIndex(s => s.name === name);
+
+            // Формируем данные матрицы: ассортимент + отметки вместе
+            const matrixData = {};
+            Object.keys(matrix).forEach(code => {
+                matrixData[code] = { ...matrix[code] };
+                if (matrixMarks[code]) {
+                    Object.entries(matrixMarks[code]).forEach(([tt, val]) => {
+                        matrixData[code][tt] = val;
+                    });
+                }
+            });
+
+            // Считаем количество ДА
+            let daCount = 0;
+            Object.values(matrixMarks).forEach(marks => {
+                Object.values(marks).forEach(v => { if (v === 'ДА') daCount++; });
+            });
+
+            const record = {
+                name,
+                date: new Date().toISOString(),
+                products: Object.keys(matrix).length,
+                inMatrix: Object.keys(matrixMarks).length,
+                daCount,
+                matrixData
+            };
+
+            if (existingIdx >= 0) {
+                if (!confirm('Матрица "' + name + '" уже существует. Перезаписать?')) return;
+                saved[existingIdx] = record;
+            } else {
+                saved.push(record);
+            }
+
+            SharedUtils.save(SharedUtils.STORAGE_KEYS.SAVED_MATRICES, saved);
+            alert('Матрица сохранена: "' + name + '"\n' + Object.keys(matrix).length + ' товаров, ' + daCount + ' отметок ДА');
+        }
+
         function importMatrix(input) {
             resetSavedOrders();
             const file = input.files[0];
@@ -1242,17 +1287,22 @@
         function exportMatrix() {
             if (Object.keys(matrix).length === 0) { alert('Нет данных'); return; }
 
-            // Собираем данные в единый формат
             const storeList = stores.map(s => s.tt);
-            const items = Object.entries(matrix).map(([code, p]) => {
-                const item = { code, nomenclature: p.nomenclature || '' };
+            const headers = ['Группа', 'Наименование', 'Код', ...storeList];
+            const data = Object.entries(matrix).map(([code, p]) => {
+                const row = [p.group || '', p.nomenclature || '', code];
                 storeList.forEach(tt => {
-                    item[tt] = (matrixMarks[code] && matrixMarks[code][tt] === 'ДА') ? 'ДА' : 'НЕТ';
+                    row.push((matrixMarks[code] && matrixMarks[code][tt] === 'ДА') ? 'ДА' : 'НЕТ');
                 });
-                return item;
+                return row;
             });
 
-            SharedUtils.exportMatrixExcel(items, storeList);
+            const ws = SharedUtils.createStyledSheet(data, headers, [0, 1]);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Матрица');
+
+            const d = new Date();
+            XLSX.writeFile(wb, 'матрица_' + d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') + '.xlsx');
         }
 
         // === ЦЕНЫ ===
