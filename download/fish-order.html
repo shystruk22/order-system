@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Заказ рыбы</title>
-    <!-- Version: 3.12 -->
+    <!-- Version: 3.13 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -94,7 +94,7 @@
         let weekendDays = {};      // {"tt_code": countOfWeekendDays}
         let weekdayDays = {};      // {"tt_code": countOfWeekdayDays}
         let stockConsumptionData = {}; // {"tt_code": {weekendSales, weekendDays, weekdaySales, weekdayDays}} — из файла остатков (постоянное)
-        let orderSnapshots = [];   // Сохранённые снимки заказов: [{id, date, items, stats, orderEditsCopy}]
+        let savedOrderDate = null; // Дата сохранённого заказа (для отображения в заголовке)
 
         function resetSavedOrders() { savedOrderResults = null; savedOrderStats = null; orderEdits = {}; weekendSales = {}; weekdaySales = {}; weekendDays = {}; weekdayDays = {}; /* stockConsumptionData НЕ очищаем — постоянные данные из остатков */ }
 
@@ -109,7 +109,7 @@
             SUPPLIER_ASSORTMENT: 'fish_supplier_assortment_v1',
             SUPPLIER_PRICES: 'fish_supplier_prices_v1',
             STOCK_CONSUMPTION: 'fish_stock_consumption_v1',
-            ORDER_SNAPSHOTS: 'fish_order_snapshots_v1'
+            SAVED_ORDER: 'fish_saved_order_v1'
         };
 
         // Поля каталога товаров (не ДА/НЕТ)
@@ -406,9 +406,18 @@
             supplierAssortment = load(KEYS.SUPPLIER_ASSORTMENT, {});
             supplierPrices = load(KEYS.SUPPLIER_PRICES, {});
             stockConsumptionData = load(KEYS.STOCK_CONSUMPTION, {});
-            orderSnapshots = load(KEYS.ORDER_SNAPSHOTS, []);
-            orderSnapshots = orderSnapshots.filter(function(s) { return (Date.now() - new Date(s.createdAt).getTime()) < 14 * 86400000; });
-            if (orderSnapshots.length > 0) save(KEYS.ORDER_SNAPSHOTS, orderSnapshots);
+            // Загрузка сохранённого заказа (автоудаление после 14 дней)
+            var saved = load(KEYS.SAVED_ORDER, null);
+            if (saved && saved.createdAt && (Date.now() - new Date(saved.createdAt).getTime()) < 14 * 86400000) {
+                savedOrderResults = saved.items;
+                savedOrderStats = saved.stats;
+                orderEdits = saved.orderEdits || {};
+                savedOrderDate = saved.date;
+            } else {
+                // Протух — удаляем
+                if (saved) SharedUtils.save(KEYS.SAVED_ORDER, null);
+                savedOrderResults = null;
+            }
             autoCloseDeliveredOrders();
 
             // Загрузка с миграцией: старый формат (всё в matrix) → новый (matrix + matrixMarks)
@@ -2549,7 +2558,12 @@
                     </div>`;
             }
 
-            // Перебираем ВСЕ магазины (без глобального пропуска)
+            // Если есть сохранённый заказ — показываем его сразу
+            if (savedOrderResults && savedOrderResults.length > 0) {
+                return renderSavedOrder();
+            }
+
+            // === НОВЫЙ РАСЧЁТ ЗАКАЗА ===
             const allStores = [...stores];
             const skippedTodayInfo = []; // Для информирования о пропущенных
 
@@ -2850,8 +2864,7 @@
                             ${minD < Infinity ? `<div class="bg-amber-100 text-amber-800 rounded-md px-3 py-1.5"><div class="text-[10px] opacity-70">БЛИЖ. ДОСТАВКА</div><div class="text-sm font-bold">${nextDelivStr}</div></div>` : ''}
                         </div>
                         <div class="flex gap-2">
-                            <button onclick="saveOrderSnapshot()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-violet-600 rounded-lg hover:bg-violet-700">${icons.save} Сохранить заказ</button>
-                            <button onclick="showOrderHistory()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-violet-700 bg-violet-50 border border-violet-200 rounded-lg hover:bg-violet-100">${icons.calendar} История</button>
+                            <button onclick="saveCurrentOrder()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-violet-600 rounded-lg hover:bg-violet-700">${icons.save} Сохранить заказ</button>
                             <button onclick="placeOrders()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700">${icons.order} Сформировать заказ</button>
                             <button onclick="exportOrder()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">${icons.export} Экспорт</button>
                         </div>
@@ -3467,20 +3480,18 @@
             const d = new Date(); XLSX.writeFile(wb, `заказ_рыба_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}.xlsx`);
         }
 
-        // === СОХРАНЕНИЕ СНИМКА ЗАКАЗА ===
-        function saveOrderSnapshot() {
+        // === СОХРАНЕНИЕ ЗАКАЗА (один, автоудаление через 14 дней) ===
+        function saveCurrentOrder() {
             if (!savedOrderResults || savedOrderResults.length === 0) {
-                alert('Нет данных для сохранения. Сначала откройте вкладку Заказ и дождитесь расчёта.');
+                alert('Нет данных для сохранения.');
                 return;
             }
-
-            // Собираем данные о поставщиках для группировки
-            const supplierGroups = {};
-            let totalOrderItems = 0;
-            let totalSum = 0;
-            savedOrderResults.forEach(r => {
+            var supplierGroups = {};
+            var totalOrderItems = 0, totalSum = 0;
+            savedOrderResults.forEach(function(r) {
                 if (!r.supplierOrders) return;
-                Object.entries(r.supplierOrders).forEach(([sup, so]) => {
+                Object.keys(r.supplierOrders).forEach(function(sup) {
+                    var so = r.supplierOrders[sup];
                     if (!so || so.order <= 0) return;
                     if (!supplierGroups[sup]) supplierGroups[sup] = { count: 0, sum: 0 };
                     supplierGroups[sup].count++;
@@ -3489,9 +3500,7 @@
                     totalSum += so.sum;
                 });
             });
-
-            const snapshot = {
-                id: Date.now() + Math.random(),
+            var data = {
                 createdAt: new Date().toISOString(),
                 date: new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
                 items: savedOrderResults,
@@ -3499,214 +3508,166 @@
                 supplierGroups: supplierGroups,
                 totalOrderItems: totalOrderItems,
                 totalSum: totalSum,
-                orderEdits: { ...orderEdits }
+                orderEdits: Object.assign({}, orderEdits)
             };
-
-            orderSnapshots.unshift(snapshot);
-            // Удаляем снимки старше 14 дней и храним максимум 50
-            var twoWeeks = 14 * 86400000;
-            orderSnapshots = orderSnapshots.filter(function(s) { return (Date.now() - new Date(s.createdAt).getTime()) < twoWeeks; });
-            if (orderSnapshots.length > 50) orderSnapshots = orderSnapshots.slice(0, 50);
-            save(KEYS.ORDER_SNAPSHOTS, orderSnapshots);
-
-            const supList = Object.keys(supplierGroups).map(s => s + ' (' + supplierGroups[s].count + ' поз.)').join(', ');
-            alert('Заказ сохранён!\n\n' +
-                'Дата: ' + snapshot.date + '\n' +
-                'К позиций к заказу: ' + totalOrderItems + '\n' +
-                'Сумма: ' + totalSum.toFixed(0) + ' ₽\n' +
-                'Поставщики: ' + supList);
+            save(KEYS.SAVED_ORDER, data);
+            savedOrderDate = data.date;
+            render();
         }
 
-        // === ИСТОРИЯ СОХРАНЁННЫХ ЗАКАЗОВ ===
-        function showOrderHistory() {
-            const existing = document.getElementById('orderHistoryModal');
-            if (existing) existing.remove();
+        function clearSavedOrder() {
+            savedOrderResults = null;
+            savedOrderStats = null;
+            orderEdits = {};
+            savedOrderDate = null;
+            SharedUtils.save(KEYS.SAVED_ORDER, null);
+            render();
+        }
 
-            if (orderSnapshots.length === 0) {
-                alert('Нет сохранённых заказов.\nНажмите "Сохранить заказ" во вкладке "Заказ", чтобы создать снимок.');
-                return;
+        function renderSavedOrder() {
+            var filtered = savedOrderResults;
+            if (searchResults) {
+                var s = searchResults.toLowerCase();
+                filtered = filtered.filter(function(r) {
+                    return (r.nomenclature && r.nomenclature.toLowerCase().indexOf(s) >= 0) ||
+                           (r.code && r.code.indexOf(s) >= 0) ||
+                           (r.group && r.group.toLowerCase().indexOf(s) >= 0);
+                });
             }
+            if (filterTT) filtered = filtered.filter(function(r) { return r.tt === filterTT; });
+            if (filterGroup) filtered = filtered.filter(function(r) { return r.group === filterGroup; });
+            if (filterStatus === 'orders') filtered = filtered.filter(function(r) { return r.order > 0; });
 
-            const modal = document.createElement('div');
-            modal.id = 'orderHistoryModal';
-            modal.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-50';
-            modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
-
-            const cardsHTML = orderSnapshots.map((snap, idx) => {
-                const supEntries = Object.entries(snap.supplierGroups || {});
-                const supHTML = supEntries.map(function(entry) {
-                    var s = entry[0], d = entry[1];
-                    return '<div style="display:flex;justify-content:space-between;padding:2px 0"><span style="color:#374151;font-size:11px">' + esc(s) + '</span><span style="color:#6b7280;font-size:10px">' + d.count + ' поз. / ' + d.sum.toFixed(0) + ' ₽</span></div>';
-                }).join('');
-                return '<div style="background:white;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;margin-bottom:8px">' +
-                    '<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:linear-gradient(135deg,#f5f3ff,#ede9fe);border-bottom:1px solid #ddd6fe">' +
-                        '<div>' +
-                            '<div style="font-weight:700;font-size:13px;color:#1f2937">' + snap.date + '</div>' +
-                            '<div style="font-size:11px;color:#6b7280;margin-top:2px">' + (snap.totalOrderItems || 0) + ' поз. к заказу • ' + (snap.totalSum || 0).toFixed(0) + ' ₽</div>' +
-                        '</div>' +
-                        '<div style="display:flex;gap:6px">' +
-                            '<button onclick="exportSnapshot(' + snap.id + ')" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;font-size:11px;font-weight:500;color:#2563eb;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;cursor:pointer">Экспорт</button>' +
-                            '<button onclick="viewSnapshotDetail(' + snap.id + ')" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;font-size:11px;font-weight:500;color:#7c3aed;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;cursor:pointer">Открыть</button>' +
-                            '<button onclick="deleteSnapshot(' + snap.id + ')" style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;color:#ef4444;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;cursor:pointer;font-size:14px">&times;</button>' +
-                        '</div>' +
-                    '</div>' +
-                    '<div style="padding:8px 16px">' + supHTML + '</div>' +
-                '</div>';
-            }).join('');
-
-            modal.innerHTML = '<div style="background:white;border-radius:16px;border:1px solid #e5e7eb;width:95%;max-width:520px;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 25px 50px rgba(0,0,0,0.15);font-family:system-ui,sans-serif" onclick="event.stopPropagation()">' +
-                '<div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid #e5e7eb">' +
-                    '<div style="font-size:16px;font-weight:700;color:#1f2937">История заказов</div>' +
-                    '<div style="display:flex;align-items:center;gap:8px">' +
-                        '<span style="font-size:11px;color:#9ca3af">' + orderSnapshots.length + ' сохранено</span>' +
-                        '<button onclick="document.getElementById(\'orderHistoryModal\').remove()" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;border:none;background:#f3f4f6;border-radius:8px;cursor:pointer;color:#6b7280;font-size:18px">&times;</button>' +
-                    '</div>' +
-                '</div>' +
-                '<div style="flex:1;overflow-y:auto;padding:12px 16px">' + cardsHTML + '</div>' +
-            '</div>';
-
-            document.body.appendChild(modal);
-        }
-
-        function deleteSnapshot(snapId) {
-            if (!confirm('Удалить этот сохранённый заказ?')) return;
-            orderSnapshots = orderSnapshots.filter(function(s) { return s.id !== snapId; });
-            save(KEYS.ORDER_SNAPSHOTS, orderSnapshots);
-            var modal = document.getElementById('orderHistoryModal');
-            if (modal) modal.remove();
-            if (orderSnapshots.length > 0) {
-                showOrderHistory();
-            }
-        }
-
-        function viewSnapshotDetail(snapId) {
-            var modal = document.getElementById('orderHistoryModal');
-            if (modal) modal.remove();
-
-            var snap = orderSnapshots.find(function(s) { return s.id === snapId; });
-            if (!snap || !snap.items || snap.items.length === 0) { alert('Снимок не найден'); return; }
-
-            // Группировка по ТТ → Группе товара → товару
             var groupedTT = {};
-            snap.items.forEach(function(r) {
+            filtered.forEach(function(r) {
                 if (!groupedTT[r.tt]) groupedTT[r.tt] = {};
-                var gr = r.group || 'Без группы';
+                var gr = r.group || '\u0411\u0435\u0437 \u0433\u0440\u0443\u043F\u043F\u044B';
                 if (!groupedTT[r.tt][gr]) groupedTT[r.tt][gr] = [];
                 groupedTT[r.tt][gr].push(r);
             });
-
-            var detailModal = document.createElement('div');
-            detailModal.id = 'orderHistoryModal';
-            detailModal.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-50';
-            detailModal.onclick = function(e) { if (e.target === detailModal) detailModal.remove(); };
-
-            var tableRows = '';
-            Object.keys(groupedTT).sort().forEach(function(tt) {
+            Object.keys(groupedTT).forEach(function(tt) {
                 var groups = groupedTT[tt];
-                Object.keys(groups).sort(function(a,b) { return a.localeCompare(b, 'ru'); }).forEach(function(gr) {
-                    var items = groups[gr];
-                    items.forEach(function(r) {
-                        var supInfo = '';
-                        if (r.supplierOrders) {
-                            Object.keys(r.supplierOrders).forEach(function(sup) {
-                                var so = r.supplierOrders[sup];
-                                if (so && so.order > 0) {
-                                    supInfo += '<span style="display:inline-block;background:#dcfce7;color:#166534;padding:1px 6px;border-radius:4px;font-size:10px;margin:1px">' + esc(sup) + ': ' + so.order + ' кг / ' + so.sum.toFixed(0) + ' ₽</span> ';
-                                }
-                            });
-                        }
-                        var bg = r.order > 0 ? '#f0fdf4' : (r.hasConflict ? '#fffbeb' : '#ffffff');
-                        tableRows += '<tr style="background:' + bg + '">' +
-                            '<td style="padding:4px 8px;border:1px solid #e5e7eb;font-size:11px;color:#374151;max-width:200px;white-space:normal;word-wrap:break-word">' + esc(r.nomenclature || '') + '</td>' +
-                            '<td style="padding:4px 8px;border:1px solid #e5e7eb;font-size:11px;text-align:center;color:#6b7280">' + (r.code || '') + '</td>' +
-                            '<td style="padding:4px 8px;border:1px solid #e5e7eb;font-size:11px;text-align:center;color:#6b7280">' + tt + '</td>' +
-                            '<td style="padding:4px 8px;border:1px solid #e5e7eb;font-size:11px;text-align:center;color:#6b7280">' + (r.sales || 0).toFixed(2) + '</td>' +
-                            '<td style="padding:4px 8px;border:1px solid #e5e7eb;font-size:11px;text-align:center;font-weight:600;color:' + (r.order > 0 ? '#166534' : '#9ca3af') + '">' + r.order.toFixed(1) + '</td>' +
-                            '<td style="padding:4px 8px;border:1px solid #e5e7eb;font-size:11px;text-align:center">' + (r.sum || 0).toFixed(0) + ' ₽</td>' +
-                            '<td style="padding:4px 8px;border:1px solid #e5e7eb;font-size:11px;max-width:220px;white-space:normal;word-wrap:break-word">' + supInfo + '</td>' +
-                        '</tr>';
-                    });
+                var sortedGroups = Object.entries(groups).sort(function(a, b) { return a[0].localeCompare(b[0], 'ru'); });
+                groupedTT[tt] = Object.fromEntries(sortedGroups);
+            });
+
+            var stats = {
+                total: filtered.length,
+                toOrder: filtered.filter(function(r) { return r.order > 0; }).length,
+                sum: filtered.reduce(function(s, r) { return s + r.sum; }, 0)
+            };
+            var allGroups = getAllGroups();
+
+            var allOrderSuppliers = new Set();
+            filtered.forEach(function(r) {
+                if (r.supplierOrders) Object.keys(r.supplierOrders).forEach(function(sup) {
+                    if (r.supplierOrders[sup] && r.supplierOrders[sup].order > 0) allOrderSuppliers.add(sup);
                 });
             });
-
-            var allSuppliers = [];
-            Object.keys(snap.supplierGroups || {}).forEach(function(s) {
-                allSuppliers.push(s + ': ' + snap.supplierGroups[s].count + ' поз. / ' + snap.supplierGroups[s].sum.toFixed(0) + ' ₽');
+            var allScheduledSuppliers = new Set();
+            Object.keys(deliverySchedule).forEach(function(sup) {
+                var hasActive = Object.values(deliverySchedule[sup]).some(function(days) {
+                    return days && days.some(function(d) { return d; });
+                });
+                if (hasActive) allScheduledSuppliers.add(sup);
             });
+            var supplierColumns = Array.from(allOrderSuppliers).concat(
+                Array.from(allScheduledSuppliers).filter(function(s) { return !allOrderSuppliers.has(s); })
+            ).sort();
+            var colCount = 7 + supplierColumns.length;
 
-            detailModal.innerHTML = '<div style="background:white;border-radius:16px;border:1px solid #e5e7eb;width:95%;max-width:900px;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 25px 50px rgba(0,0,0,0.15);font-family:system-ui,sans-serif" onclick="event.stopPropagation()">' +
-                '<div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid #e5e7eb;background:#f9fafb">' +
-                    '<div>' +
-                        '<div style="font-size:15px;font-weight:700;color:#1f2937">Заказ от ' + snap.date + '</div>' +
-                        '<div style="font-size:11px;color:#6b7280;margin-top:2px">' + (snap.totalOrderItems || 0) + ' поз. • ' + (snap.totalSum || 0).toFixed(0) + ' ₽ • Поставщики: ' + allSuppliers.join(' | ') + '</div>' +
-                    '</div>' +
-                    '<div style="display:flex;gap:6px">' +
-                        '<button onclick="exportSnapshot(' + snap.id + ')" style="display:inline-flex;align-items:center;gap:4px;padding:5px 12px;font-size:11px;font-weight:500;color:#2563eb;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;cursor:pointer">Экспорт Excel</button>' +
-                        '<button onclick="document.getElementById(\'orderHistoryModal\').remove()" style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;border:none;background:#f3f4f6;border-radius:8px;cursor:pointer;color:#6b7280;font-size:18px">&times;</button>' +
+            var supplierGroupsHTML = '';
+            var saved = load(KEYS.SAVED_ORDER, null);
+            if (saved && saved.supplierGroups) {
+                Object.keys(saved.supplierGroups).forEach(function(sup) {
+                    var d = saved.supplierGroups[sup];
+                    supplierGroupsHTML += '<span class="text-xs bg-white border border-gray-200 rounded px-2 py-0.5">' +
+                        esc(sup) + ': ' + d.count + ' \u043F\u043E\u0437. / ' + d.sum.toFixed(0) + ' \u20BD</span> ';
+                });
+            }
+
+            return '<div class="space-y-3">' +
+                '<div class="bg-violet-50 border border-violet-200 text-violet-800 rounded-lg px-4 py-2 text-sm">' +
+                    icons.save + ' \u0421\u043E\u0445\u0440\u0430\u043D\u0451\u043D\u043D\u044B\u0439 \u0437\u0430\u043A\u0430\u0437 \u043E\u0442 <b>' + (savedOrderDate || '\u2014') + '</b>' +
+                    '<div class="flex flex-wrap gap-1 mt-1">' + supplierGroupsHTML + '</div>' +
+                '</div>' +
+                '<div class="bg-white rounded-lg border border-gray-200 p-3">' +
+                    '<div class="flex justify-between items-center flex-wrap gap-3">' +
+                        '<div class="flex gap-3 items-center flex-wrap">' +
+                            '<div class="bg-sky-100 text-sky-800 rounded-md px-3 py-1.5"><div class="text-[10px] opacity-70">\u041F\u041E\u0417\u0418\u0426\u0418\u0419</div><div class="text-lg font-bold">' + stats.total + '</div></div>' +
+                            '<div class="bg-emerald-100 text-emerald-800 rounded-md px-3 py-1.5"><div class="text-[10px] opacity-70">\u041A \u0417\u0410\u041A\u0410\u0417\u0423</div><div class="text-lg font-bold">' + stats.toOrder + '</div></div>' +
+                            '<div class="bg-violet-100 text-violet-800 rounded-md px-3 py-1.5"><div class="text-[10px] opacity-70">\u0421\u0423\u041C\u041C\u0410</div><div class="text-lg font-bold">' + stats.sum.toFixed(0) + ' \u20BD</div></div>' +
+                        '</div>' +
+                        '<div class="flex gap-2">' +
+                            '<button onclick="placeOrders()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700">' + icons.order + ' \u0421\u0444\u043E\u0440\u043C\u0438\u0440\u043E\u0432\u0430\u0442\u044C \u0437\u0430\u043A\u0430\u0437</button>' +
+                            '<button onclick="exportOrder()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">' + icons.export + ' \u042D\u043A\u0441\u043F\u043E\u0440\u0442</button>' +
+                            '<button onclick="clearSavedOrder()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-600 bg-gray-100 border border-gray-200 rounded-lg hover:bg-gray-200">' + icons.refresh + ' \u041D\u043E\u0432\u044B\u0439 \u0440\u0430\u0441\u0447\u0451\u0442</button>' +
+                        '</div>' +
                     '</div>' +
                 '</div>' +
-                '<div style="flex:1;overflow:auto;padding:12px">' +
-                    '<table style="width:100%;border-collapse:collapse;font-size:11px">' +
-                        '<thead><tr style="background:#f3f4f6;position:sticky;top:0;z-index:1">' +
-                            '<th style="padding:6px 8px;border:1px solid #d1d5db;font-size:11px;font-weight:600;color:#374151;text-align:left;min-width:180px">Наименование</th>' +
-                            '<th style="padding:6px 8px;border:1px solid #d1d5db;font-size:11px;font-weight:600;color:#374151;text-align:center;min-width:55px">Код</th>' +
-                            '<th style="padding:6px 8px;border:1px solid #d1d5db;font-size:11px;font-weight:600;color:#374151;text-align:center;min-width:70px">ТТ</th>' +
-                            '<th style="padding:6px 8px;border:1px solid #d1d5db;font-size:11px;font-weight:600;color:#374151;text-align:center;min-width:60px">Продажи</th>' +
-                            '<th style="padding:6px 8px;border:1px solid #d1d5db;font-size:11px;font-weight:600;color:#374151;text-align:center;min-width:60px">Заказ, кг</th>' +
-                            '<th style="padding:6px 8px;border:1px solid #d1d5db;font-size:11px;font-weight:600;color:#374151;text-align:center;min-width:70px">Сумма</th>' +
-                            '<th style="padding:6px 8px;border:1px solid #d1d5db;font-size:11px;font-weight:600;color:#374151;text-align:left;min-width:220px">Поставщики</th>' +
-                        '</tr></thead>' +
-                        '<tbody>' + tableRows + '</tbody>' +
-                    '</table>' +
+                '<div class="bg-white rounded-lg border border-gray-200 p-3">' +
+                    '<div class="flex flex-wrap gap-2 items-center">' +
+                        '<input id="orderSearchInput" type="text" placeholder="\u041F\u043E\u0438\u0441\u043A..." value="' + esc(searchResults) + '" oninput="searchResults=this.value;render();var el=document.getElementById(\'orderSearchInput\');if(el)el.focus()" class="input w-40">' +
+                        '<select onchange="filterGroup=this.value;render()" class="input bg-white"><option value="">\u0412\u0441\u0435 \u043A\u0430\u0442\u0435\u0433\u043E\u0440\u0438\u0438</option>' + allGroups.map(function(g) { return '<option value="' + g + '" ' + (filterGroup === g ? 'selected' : '') + '>' + g + '</option>'; }).join('') + '</select>' +
+                        '<select onchange="filterTT=this.value;render()" class="input bg-white"><option value="">\u0412\u0441\u0435 \u0422\u0422</option>' + stores.map(function(s) { return '<option value="' + s.tt + '" ' + (filterTT === s.tt ? 'selected' : '') + '>' + s.tt + '</option>'; }).join('') + '</select>' +
+                        '<select onchange="filterStatus=this.value;render()" class="input bg-white"><option value="">\u0412\u0441\u0435 \u0441\u0442\u0430\u0442\u0443\u0441\u044B</option><option value="orders" ' + (filterStatus === 'orders' ? 'selected' : '') + '>\u0421 \u0437\u0430\u043A\u0430\u0437\u043E\u043C</option></select>' +
+                    '</div>' +
                 '</div>' +
-            '</div>';
-
-            document.body.appendChild(detailModal);
-        }
-
-        function exportSnapshot(snapId) {
-            var snap = orderSnapshots.find(function(s) { return s.id === snapId; });
-            if (!snap || !snap.items || snap.items.length === 0) { alert('Снимок не найден'); return; }
-
-            var rows = [['ТТ', 'Код', 'Наименование', 'Группа', 'Продажи, кг', 'Среднее/день', 'Остаток, кг', 'Заказ, кг', 'Сумма, ₽', 'Статус']];
-
-            snap.items.forEach(function(r) {
-                var avgDay = (r.weekendAvg > 0 || r.weekdayAvg > 0)
-                    ? ((r.weekdayCount * r.weekdayAvg + r.weekendCount * r.weekendAvg) / Math.max(1, r.weekdayCount + r.weekendCount))
-                    : r.avgSalesPerDay;
-
-                if (r.supplierOrders) {
-                    Object.keys(r.supplierOrders).forEach(function(sup) {
-                        var so = r.supplierOrders[sup];
-                        if (!so || so.order <= 0) return;
-                        rows.push([
-                            r.tt || '', r.code, r.nomenclature || '', r.group || '',
-                            (r.sales || 0).toFixed(2),
-                            avgDay > 0 ? avgDay.toFixed(3) : '—',
-                            (r.currentStock || 0).toFixed(2),
-                            so.order,
-                            (so.sum || 0).toFixed(2),
-                            sup + ': заказ'
-                        ]);
-                    });
-                } else {
-                    rows.push([
-                        r.tt || '', r.code, r.nomenclature || '', r.group || '',
-                        (r.sales || 0).toFixed(2),
-                        avgDay > 0 ? avgDay.toFixed(3) : '—',
-                        (r.currentStock || 0).toFixed(2),
-                        r.order,
-                        (r.sum || 0).toFixed(2),
-                        r.status || ''
-                    ]);
-                }
-            });
-
-            var headers = rows.shift();
-            var ws = SharedUtils.createStyledSheet(rows, headers, [0, 1, 2, 3]);
-            var wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, 'Заказ ' + (snap.date || '').replace(/[\/:]/g, '-'));
-            XLSX.writeFile(wb, 'заказ_история_' + (snap.date || '').replace(/[\/:]/g, '-').replace(/,/g, '').replace(/\s/g, '_') + '.xlsx');
+                '<div class="bg-white rounded-lg border border-gray-200 p-3">' +
+                    '<div class="table-container"><table class="table-modern"><thead><tr>' +
+                        '<th class="text-left sticky left-0 bg-gray-50 z-20" style="min-width:160px">\u041D\u0430\u0438\u043C\u0435\u043D\u043E\u0432\u0430\u043D\u0438\u0435</th>' +
+                        '<th class="text-center" style="min-width:55px">\u041A\u043E\u0434</th>' +
+                        '<th class="text-center" style="min-width:70px">\u0413\u0440\u0443\u043F\u043F\u0430</th>' +
+                        '<th class="text-center" style="min-width:55px">\u041F\u0440\u043E\u0434\u0430\u0436\u0438</th>' +
+                        '<th class="text-center" style="min-width:60px">\u0421\u0440./\u0434\u0435\u043D\u044C</th>' +
+                        '<th class="text-center" style="min-width:55px">\u041E\u0441\u0442\u0430\u0442\u043E\u043A</th>' +
+                        supplierColumns.map(function(sup) {
+                            return '<th class="text-center bg-emerald-50" style="min-width:100px" title="' + esc(sup) + '">' + esc(sup) + '<br><span class="text-[10px] font-normal opacity-70">\u0437\u0430\u043A\u0430\u0437 / \u0441\u0443\u043C\u043C\u0430</span></th>';
+                        }).join('') +
+                        '<th class="text-left" style="min-width:180px">\u0421\u0442\u0430\u0442\u0443\u0441</th>' +
+                    '</tr></thead><tbody>' +
+                        Object.entries(groupedTT).map(function(entry) {
+                            var tt = entry[0], groups = entry[1];
+                            return '<tr class="bg-sky-50 cursor-pointer hover:bg-sky-100" onclick="collapsedTT[\'' + esc(tt) + '\']=!collapsedTT[\'' + esc(tt) + '\'];render()">' +
+                                '<td colspan="' + colCount + '" class="text-left font-semibold text-sky-800"><span class="inline-flex items-center gap-1">' +
+                                (collapsedTT[tt] ? icons.chevronRight : icons.chevronDown) + icons.mapPin + esc(tt) +
+                                '<span class="font-normal text-sky-600">(' + Object.values(groups).reduce(function(s, items) { return s + items.length; }, 0) + ' \u043F\u043E\u0437.)</span></span></td></tr>' +
+                                (collapsedTT[tt] ? '' : Object.entries(groups).map(function(gentry) {
+                                    var gr = gentry[0], items = gentry[1];
+                                    return '<tr class="group-header cursor-pointer" onclick="collapsedG[\'order_' + esc(tt) + '_' + esc(gr) + '\']=!collapsedG[\'order_' + esc(tt) + '_' + esc(gr) + '\'];render()">' +
+                                        '<td colspan="' + colCount + '" class="text-left py-1 px-2"><div class="flex items-center gap-2">' +
+                                        (collapsedG['order_' + tt + '_' + gr] ? icons.chevronRight : icons.chevronDown) +
+                                        '<span class="font-semibold text-indigo-800">' + esc(gr) + '</span>' +
+                                        '<span class="text-[10px] bg-indigo-200 text-indigo-800 px-1 rounded">' + items.length + '</span></div></td></tr>' +
+                                        (collapsedG['order_' + tt + '_' + gr] ? '' : items.map(function(r) {
+                                            var rowClass = r.hasConflict ? 'bg-amber-50' : (r.order > 0 ? 'bg-emerald-50' : '');
+                                            var cellBg = r.hasConflict ? 'bg-amber-100' : (r.order > 0 ? 'bg-emerald-100' : '');
+                                            var supplierCells = supplierColumns.map(function(sup) {
+                                                var so = (r.supplierOrders || {})[sup];
+                                                var orderVal = so ? so.order : 0;
+                                                var supPrice = (supplierPrices[r.code] && supplierPrices[r.code][sup]) || r.inPrice || 0;
+                                                var sumVal = orderVal * supPrice;
+                                                if (orderVal > 0) {
+                                                    return '<td class="text-center ' + cellBg + '"><div class="font-bold text-sm">' + orderVal.toFixed(1) + '</div><div class="text-[10px] text-gray-500">' + sumVal.toFixed(0) + ' \u20BD</div></td>';
+                                                }
+                                                return '<td class="text-center"><span class="text-gray-300">\u2014</span></td>';
+                                            }).join('');
+                                            return '<tr class="' + rowClass + ' hover:bg-gray-100">' +
+                                                '<td class="sticky left-0 bg-white text-left cell-wrap">' + esc(r.nomenclature || '') + '</td>' +
+                                                '<td class="text-center font-mono text-xs text-gray-600">' + (r.code || '') + '</td>' +
+                                                '<td class="text-center text-xs text-gray-600">' + esc(r.group || '') + '</td>' +
+                                                '<td class="text-center">' + (r.sales || 0).toFixed(2) + '</td>' +
+                                                '<td class="text-center font-medium text-gray-500">' +
+                                                    ((r.weekendAvg > 0 || r.weekdayAvg > 0) ?
+                                                        ((r.weekdayCount * r.weekdayAvg + r.weekendCount * r.weekendAvg) / Math.max(1, r.weekdayCount + r.weekendCount)).toFixed(3) :
+                                                        (r.avgSalesPerDay > 0 ? r.avgSalesPerDay.toFixed(3) : '\u2014')) + '</td>' +
+                                                '<td class="text-center">' + (r.currentStock || 0).toFixed(2) + '</td>' +
+                                                supplierCells +
+                                                '<td class="text-left text-xs ' + (r.hasConflict ? 'text-amber-700 font-medium' : r.order > 0 ? 'text-emerald-700' : 'text-gray-500') + '">' + esc(r.status || '') + '</td></tr>';
+                                        }).join(''));
+                                }).join(''));
+                        }).join('') +
+                    '</tbody></table></div></div></div>';
         }
 
         // === ПОПАП СУММ ЗАКАЗА ПО МАГАЗИНАМ ===
