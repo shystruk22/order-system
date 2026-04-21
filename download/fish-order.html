@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Заказ рыбы</title>
-    <!-- Version: 3.13 -->
+    <!-- Version: 3.14 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -813,33 +813,31 @@
         // === ПОСТАВЩИКИ (Suppliers Tab) ===
         function ensureSupplierAssortment() {
             // Добавить новые товары из matrix в supplierAssortment
-            // И автоматически подтягивать поставщиков из ассортимента
+            // Поставщики подтягиваются ТОЛЬКО если они УЖЕ есть в deliverySchedule (графике доставок рыбы)
+            // Это предотвращает попадание поставщиков из Универсального расчёта
             const matrixCodes = Object.keys(matrix);
-            const emptyWeek = [false, false, false, false, false, false, false];
+            const knownFishSuppliers = Object.keys(deliverySchedule);
             let newSuppliersAdded = false;
 
             matrixCodes.forEach(code => {
                 if (!supplierAssortment[code]) {
                     supplierAssortment[code] = [];
                 }
-                // Подтягиваем поставщика из ассортимента
+                // Подтягиваем поставщика из ассортимента ТОЛЬКО если это рыбный поставщик
                 const supplier = (matrix[code] && matrix[code].supplier) || '';
-                if (supplier) {
+                if (supplier && knownFishSuppliers.includes(supplier)) {
                     if (!supplierAssortment[code].includes(supplier)) {
                         supplierAssortment[code].push(supplier);
                     }
-                    // Автоматически добавляем поставщика в deliverySchedule если его нет
-                    if (!deliverySchedule[supplier]) {
-                        deliverySchedule[supplier] = {};
-                        newSuppliersAdded = true;
-                    }
-                    // Добавляем все магазины в график для нового поставщика
+                    // Добавляем все магазины в график для поставщика
+                    const emptyWeek = [false, false, false, false, false, false, false];
                     if (stores && stores.length > 0) {
                         stores.forEach(s => {
                             if (!deliverySchedule[supplier][s.tt]) {
                                 deliverySchedule[supplier][s.tt] = [...emptyWeek];
                             }
                         });
+                        newSuppliersAdded = true;
                     }
                     // Заполняем supplierPrices из inPrice
                     const inPrice = matrix[code].inPrice || 0;
@@ -852,13 +850,21 @@
                 }
             });
 
+            // Очистить supplierAssortment от поставщиков которых НЕТ в deliverySchedule
+            matrixCodes.forEach(code => {
+                if (supplierAssortment[code]) {
+                    supplierAssortment[code] = supplierAssortment[code].filter(s => knownFishSuppliers.includes(s));
+                    if (supplierAssortment[code].length === 0) delete supplierAssortment[code];
+                }
+            });
+
             if (newSuppliersAdded) {
                 save(KEYS.SCHEDULE, deliverySchedule);
-                // Обновляем selectedScheduleSupplier если текущий не найден
-                const existing = Object.keys(deliverySchedule);
-                if (!selectedScheduleSupplier || !deliverySchedule[selectedScheduleSupplier]) {
-                    selectedScheduleSupplier = existing.length > 0 ? existing[0] : '';
-                }
+            }
+            // Обновляем selectedScheduleSupplier если текущий не найден
+            const existing = Object.keys(deliverySchedule);
+            if (!selectedScheduleSupplier || !deliverySchedule[selectedScheduleSupplier]) {
+                selectedScheduleSupplier = existing.length > 0 ? existing[0] : '';
             }
         }
 
@@ -2660,22 +2666,25 @@
 
                     const quant = p.quant || 1;
                     const inPrice = p.inPrice || 0;
-                    let rawOrder = estimatedSales - effectiveStock - inTransitQty;
+                    const shelf = p.shelf || 0;
+                    // Заказ = прогноз продаж + полка (мин. остаток) — текущий остаток — в пути
+                    let rawOrder = estimatedSales + shelf - effectiveStock - inTransitQty;
 
                     // Логика заказа:
-                    // 1) Продажи=0 И остаток>0 → НЕ заказываем (есть запас, товар не продаётся)
-                    // 2) Продажи>0 → обычный расчёт
+                    // 1) Продажи=0 И остаток >= полка → НЕ заказываем (есть запас, товар не продаётся)
+                    // 2) Продажи>0 → обычный расчёт (с учётом полки)
                     // 3) Остаток=0 (любые продажи) И товар в матрице → мин. заказ 0.5 кг
-                    // 4) Остаток=0 И продаж=0 И в матрице → мин. заказ 0.5 кг
+                    // 4) Остаток < полки → заказать до полки даже если продаж нет
 
                     const hasSales = totalSales > 0;
                     const hasStock = effectiveStock > 0;
+                    const belowShelf = shelf > 0 && effectiveStock < shelf;
 
                     let order = 0;
                     let orderReason = '';
 
                     if (hasSales) {
-                        // Есть продажи — обычный расчёт
+                        // Есть продажи — обычный расчёт (полка уже в rawOrder)
                         order = rawOrder > 0 ? Math.ceil(rawOrder / quant) * quant : 0;
                         if (order > 0) {
                             orderReason = `заказ ${order} кг`;
@@ -2688,8 +2697,17 @@
                         // Нет остатков — мин. заказ 0.5 кг (товар в матрице, значит нужен)
                         order = 0.5;
                         orderReason = `мин. заказ 0.5 кг (нет остатков)`;
+                    } else if (belowShelf) {
+                        // Продаж нет, но остаток ниже полки — дозаказ до полки
+                        order = Math.ceil((shelf - effectiveStock) / quant) * quant;
+                        if (order > 0) {
+                            orderReason = `до полки (${shelf} кг), заказ ${order} кг`;
+                        } else {
+                            order = quant;
+                            orderReason = `до полки (${shelf} кг), заказ ${order} кг`;
+                        }
                     } else {
-                        // Продаж нет, остаток есть — НЕ заказываем
+                        // Продаж нет, остаток >= полки — НЕ заказываем
                         order = 0;
                         orderReason = `остаток ${effectiveStock.toFixed(1)} кг, продаж нет`;
                     }
@@ -2710,8 +2728,11 @@
                             supOrder = rawOrder > 0 ? Math.ceil(rawOrder / quant) * quant : 0;
                         } else if (!hasStock) {
                             supOrder = 0.5;
+                        } else if (belowShelf) {
+                            supOrder = Math.ceil((shelf - effectiveStock) / quant) * quant;
+                            if (supOrder <= 0) supOrder = quant;
                         }
-                        // else: продаж нет, остаток есть → supOrder = 0
+                        // else: продаж нет, остаток >= полки → supOrder = 0
 
                         supOrder = Math.round(supOrder * 100) / 100;
                         if (orderEdits[editKey] !== undefined) supOrder = orderEdits[editKey];
@@ -2935,12 +2956,17 @@
                                                 <td class="text-center">${r.deliveredQty > 0 ? r.currentStock.toFixed(2) + ' <span class="text-emerald-600 font-medium">(+' + r.deliveredQty + ')</span>' : r.currentStock.toFixed(2)}</td>
                                                 ${supplierColumns.map(sup => {
                                                     const so = (r.supplierOrders || {})[sup];
+                                                    const deliversTomorrow = so && so.daysUntil === 1;
                                                     const editKey = r.tt + '_' + r.code + '_' + sup;
                                                     const editedVal = orderEdits[editKey];
                                                     const hasManualEdit = editedVal !== undefined;
                                                     const orderVal = hasManualEdit ? editedVal : (so ? so.order : 0);
                                                     const supPrice = (supplierPrices[r.code] && supplierPrices[r.code][sup]) || r.inPrice || 0;
                                                     const sumVal = orderVal * supPrice;
+                                                    // Серая колонка: поставщик не доставляет завтра в эту ТТ
+                                                    if (!deliversTomorrow) {
+                                                        return '<td class="text-center bg-gray-200 opacity-50 cursor-not-allowed" title="Нет доставки завтра от ' + esc(sup) + '"><span class="text-gray-400 text-xs">—</span></td>';
+                                                    }
                                                     if (orderVal > 0) {
                                                         const editBg = hasManualEdit ? 'bg-amber-100 ring-1 ring-amber-300' : '';
                                                         const editTitle = hasManualEdit ? ' title="Ручная правка"' : '';
@@ -3004,7 +3030,8 @@
             }
 
             const effectiveStock = r.currentStock + (r.deliveredQty || 0);
-            const rawNeed = (r.estimatedSales || 0) - effectiveStock - (r.inTransitQty || 0);
+            const shelfVal = r.shelf || 0;
+            const rawNeed = (r.estimatedSales || 0) + shelfVal - effectiveStock - (r.inTransitQty || 0);
 
             const tooltip = document.createElement('div');
             tooltip.className = 'calc-tooltip';
@@ -3030,7 +3057,9 @@
                     ${r.deliveredQty > 0 ? `<span style="color:#9ca3af">+ Доставлено:</span><span style="font-weight:600;color:#6ee7b7">+${r.deliveredQty} кг</span>` : ''}
                     <span style="color:#9ca3af">Эффект. остаток:</span><span style="font-weight:600">${effectiveStock.toFixed(2)} кг</span>
                     ${r.inTransitQty > 0 ? `<span style="color:#9ca3af">− В пути:</span><span style="font-weight:600;color:#60a5fa">−${r.inTransitQty} кг</span>` : ''}
+                    ${shelfVal > 0 ? `<span style="color:#9ca3af">+ Полка:</span><span style="font-weight:600;color:#c084fc">+${shelfVal} кг</span>` : ''}
                     <span style="color:#9ca3af">Потребность:</span><span style="font-weight:600;color:#f87171">${rawNeed > 0 ? rawNeed.toFixed(2) + ' кг' : '0 (хватает)'}</span>
+                    ${shelfVal > 0 ? `<span style="color:#9ca3af;font-size:10px">Формула: продажи ${((r.estimatedSales || 0)).toFixed(2)} + полка ${shelfVal} − остаток ${effectiveStock.toFixed(2)}</span><span></span>` : ''}
                 </div>
                 <div style="border-top:1px solid #374151;margin:8px 0;padding-top:8px;font-weight:600;color:#d1d5db;font-size:11px;letter-spacing:0.5px">ИТОГО</div>
                 <div style="display:grid;grid-template-columns:auto 1fr;gap:2px 12px;align-items:center">
@@ -3644,9 +3673,13 @@
                                             var cellBg = r.hasConflict ? 'bg-amber-100' : (r.order > 0 ? 'bg-emerald-100' : '');
                                             var supplierCells = supplierColumns.map(function(sup) {
                                                 var so = (r.supplierOrders || {})[sup];
+                                                var deliversTomorrow = so && so.daysUntil === 1;
                                                 var orderVal = so ? so.order : 0;
                                                 var supPrice = (supplierPrices[r.code] && supplierPrices[r.code][sup]) || r.inPrice || 0;
                                                 var sumVal = orderVal * supPrice;
+                                                if (!deliversTomorrow) {
+                                                    return '<td class="text-center bg-gray-200 opacity-50" title="\u041D\u0435\u0442 \u0434\u043E\u0441\u0442\u0430\u0432\u043A\u0438 \u0437\u0430\u0432\u0442\u0440\u0430"><span class="text-gray-400 text-xs">\u2014</span></td>';
+                                                }
                                                 if (orderVal > 0) {
                                                     return '<td class="text-center ' + cellBg + '"><div class="font-bold text-sm">' + orderVal.toFixed(1) + '</div><div class="text-[10px] text-gray-500">' + sumVal.toFixed(0) + ' \u20BD</div></td>';
                                                 }
