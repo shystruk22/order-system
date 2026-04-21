@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Заказ рыбы</title>
-    <!-- Version: 3.11 -->
+    <!-- Version: 3.12 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -94,6 +94,7 @@
         let weekendDays = {};      // {"tt_code": countOfWeekendDays}
         let weekdayDays = {};      // {"tt_code": countOfWeekdayDays}
         let stockConsumptionData = {}; // {"tt_code": {weekendSales, weekendDays, weekdaySales, weekdayDays}} — из файла остатков (постоянное)
+        let orderSnapshots = [];   // Сохранённые снимки заказов: [{id, date, items, stats, orderEditsCopy}]
 
         function resetSavedOrders() { savedOrderResults = null; savedOrderStats = null; orderEdits = {}; weekendSales = {}; weekdaySales = {}; weekendDays = {}; weekdayDays = {}; /* stockConsumptionData НЕ очищаем — постоянные данные из остатков */ }
 
@@ -107,7 +108,8 @@
             INTRANSIT: 'fish_intransit_v1',
             SUPPLIER_ASSORTMENT: 'fish_supplier_assortment_v1',
             SUPPLIER_PRICES: 'fish_supplier_prices_v1',
-            STOCK_CONSUMPTION: 'fish_stock_consumption_v1'
+            STOCK_CONSUMPTION: 'fish_stock_consumption_v1',
+            ORDER_SNAPSHOTS: 'fish_order_snapshots_v1'
         };
 
         // Поля каталога товаров (не ДА/НЕТ)
@@ -404,6 +406,7 @@
             supplierAssortment = load(KEYS.SUPPLIER_ASSORTMENT, {});
             supplierPrices = load(KEYS.SUPPLIER_PRICES, {});
             stockConsumptionData = load(KEYS.STOCK_CONSUMPTION, {});
+            orderSnapshots = load(KEYS.ORDER_SNAPSHOTS, []);
             autoCloseDeliveredOrders();
 
             // Загрузка с миграцией: старый формат (всё в matrix) → новый (matrix + matrixMarks)
@@ -2845,6 +2848,8 @@
                             ${minD < Infinity ? `<div class="bg-amber-100 text-amber-800 rounded-md px-3 py-1.5"><div class="text-[10px] opacity-70">БЛИЖ. ДОСТАВКА</div><div class="text-sm font-bold">${nextDelivStr}</div></div>` : ''}
                         </div>
                         <div class="flex gap-2">
+                            <button onclick="saveOrderSnapshot()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-violet-600 rounded-lg hover:bg-violet-700">${icons.save} Сохранить заказ</button>
+                            <button onclick="showOrderHistory()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-violet-700 bg-violet-50 border border-violet-200 rounded-lg hover:bg-violet-100">${icons.calendar} История</button>
                             <button onclick="placeOrders()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700">${icons.order} Сформировать заказ</button>
                             <button onclick="exportOrder()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">${icons.export} Экспорт</button>
                         </div>
@@ -3458,6 +3463,246 @@
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, 'Заказ рыбы');
             const d = new Date(); XLSX.writeFile(wb, `заказ_рыба_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}.xlsx`);
+        }
+
+        // === СОХРАНЕНИЕ СНИМКА ЗАКАЗА ===
+        function saveOrderSnapshot() {
+            if (!savedOrderResults || savedOrderResults.length === 0) {
+                alert('Нет данных для сохранения. Сначала откройте вкладку Заказ и дождитесь расчёта.');
+                return;
+            }
+
+            // Собираем данные о поставщиках для группировки
+            const supplierGroups = {};
+            let totalOrderItems = 0;
+            let totalSum = 0;
+            savedOrderResults.forEach(r => {
+                if (!r.supplierOrders) return;
+                Object.entries(r.supplierOrders).forEach(([sup, so]) => {
+                    if (!so || so.order <= 0) return;
+                    if (!supplierGroups[sup]) supplierGroups[sup] = { count: 0, sum: 0 };
+                    supplierGroups[sup].count++;
+                    supplierGroups[sup].sum += so.sum;
+                    totalOrderItems++;
+                    totalSum += so.sum;
+                });
+            });
+
+            const snapshot = {
+                id: Date.now() + Math.random(),
+                createdAt: new Date().toISOString(),
+                date: new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+                items: savedOrderResults,
+                stats: savedOrderStats,
+                supplierGroups: supplierGroups,
+                totalOrderItems: totalOrderItems,
+                totalSum: totalSum,
+                orderEdits: { ...orderEdits }
+            };
+
+            orderSnapshots.unshift(snapshot);
+            // Храним максимум 50 снимков
+            if (orderSnapshots.length > 50) orderSnapshots = orderSnapshots.slice(0, 50);
+            save(KEYS.ORDER_SNAPSHOTS, orderSnapshots);
+
+            const supList = Object.keys(supplierGroups).map(s => s + ' (' + supplierGroups[s].count + ' поз.)').join(', ');
+            alert('Заказ сохранён!\n\n' +
+                'Дата: ' + snapshot.date + '\n' +
+                'К позиций к заказу: ' + totalOrderItems + '\n' +
+                'Сумма: ' + totalSum.toFixed(0) + ' ₽\n' +
+                'Поставщики: ' + supList);
+        }
+
+        // === ИСТОРИЯ СОХРАНЁННЫХ ЗАКАЗОВ ===
+        function showOrderHistory() {
+            const existing = document.getElementById('orderHistoryModal');
+            if (existing) existing.remove();
+
+            if (orderSnapshots.length === 0) {
+                alert('Нет сохранённых заказов.\nНажмите "Сохранить заказ" во вкладке "Заказ", чтобы создать снимок.');
+                return;
+            }
+
+            const modal = document.createElement('div');
+            modal.id = 'orderHistoryModal';
+            modal.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-50';
+            modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
+
+            const cardsHTML = orderSnapshots.map((snap, idx) => {
+                const supEntries = Object.entries(snap.supplierGroups || {});
+                const supHTML = supEntries.map(function(entry) {
+                    var s = entry[0], d = entry[1];
+                    return '<div style="display:flex;justify-content:space-between;padding:2px 0"><span style="color:#374151;font-size:11px">' + esc(s) + '</span><span style="color:#6b7280;font-size:10px">' + d.count + ' поз. / ' + d.sum.toFixed(0) + ' ₽</span></div>';
+                }).join('');
+                return '<div style="background:white;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;margin-bottom:8px">' +
+                    '<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:linear-gradient(135deg,#f5f3ff,#ede9fe);border-bottom:1px solid #ddd6fe">' +
+                        '<div>' +
+                            '<div style="font-weight:700;font-size:13px;color:#1f2937">' + snap.date + '</div>' +
+                            '<div style="font-size:11px;color:#6b7280;margin-top:2px">' + (snap.totalOrderItems || 0) + ' поз. к заказу • ' + (snap.totalSum || 0).toFixed(0) + ' ₽</div>' +
+                        '</div>' +
+                        '<div style="display:flex;gap:6px">' +
+                            '<button onclick="exportSnapshot(' + snap.id + ')" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;font-size:11px;font-weight:500;color:#2563eb;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;cursor:pointer">Экспорт</button>' +
+                            '<button onclick="viewSnapshotDetail(' + snap.id + ')" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;font-size:11px;font-weight:500;color:#7c3aed;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;cursor:pointer">Открыть</button>' +
+                            '<button onclick="deleteSnapshot(' + snap.id + ')" style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;color:#ef4444;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;cursor:pointer;font-size:14px">&times;</button>' +
+                        '</div>' +
+                    '</div>' +
+                    '<div style="padding:8px 16px">' + supHTML + '</div>' +
+                '</div>';
+            }).join('');
+
+            modal.innerHTML = '<div style="background:white;border-radius:16px;border:1px solid #e5e7eb;width:95%;max-width:520px;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 25px 50px rgba(0,0,0,0.15);font-family:system-ui,sans-serif" onclick="event.stopPropagation()">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid #e5e7eb">' +
+                    '<div style="font-size:16px;font-weight:700;color:#1f2937">История заказов</div>' +
+                    '<div style="display:flex;align-items:center;gap:8px">' +
+                        '<span style="font-size:11px;color:#9ca3af">' + orderSnapshots.length + ' сохранено</span>' +
+                        '<button onclick="document.getElementById(\'orderHistoryModal\').remove()" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;border:none;background:#f3f4f6;border-radius:8px;cursor:pointer;color:#6b7280;font-size:18px">&times;</button>' +
+                    '</div>' +
+                '</div>' +
+                '<div style="flex:1;overflow-y:auto;padding:12px 16px">' + cardsHTML + '</div>' +
+            '</div>';
+
+            document.body.appendChild(modal);
+        }
+
+        function deleteSnapshot(snapId) {
+            if (!confirm('Удалить этот сохранённый заказ?')) return;
+            orderSnapshots = orderSnapshots.filter(function(s) { return s.id !== snapId; });
+            save(KEYS.ORDER_SNAPSHOTS, orderSnapshots);
+            var modal = document.getElementById('orderHistoryModal');
+            if (modal) modal.remove();
+            if (orderSnapshots.length > 0) {
+                showOrderHistory();
+            }
+        }
+
+        function viewSnapshotDetail(snapId) {
+            var modal = document.getElementById('orderHistoryModal');
+            if (modal) modal.remove();
+
+            var snap = orderSnapshots.find(function(s) { return s.id === snapId; });
+            if (!snap || !snap.items || snap.items.length === 0) { alert('Снимок не найден'); return; }
+
+            // Группировка по ТТ → Группе товара → товару
+            var groupedTT = {};
+            snap.items.forEach(function(r) {
+                if (!groupedTT[r.tt]) groupedTT[r.tt] = {};
+                var gr = r.group || 'Без группы';
+                if (!groupedTT[r.tt][gr]) groupedTT[r.tt][gr] = [];
+                groupedTT[r.tt][gr].push(r);
+            });
+
+            var detailModal = document.createElement('div');
+            detailModal.id = 'orderHistoryModal';
+            detailModal.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-50';
+            detailModal.onclick = function(e) { if (e.target === detailModal) detailModal.remove(); };
+
+            var tableRows = '';
+            Object.keys(groupedTT).sort().forEach(function(tt) {
+                var groups = groupedTT[tt];
+                Object.keys(groups).sort(function(a,b) { return a.localeCompare(b, 'ru'); }).forEach(function(gr) {
+                    var items = groups[gr];
+                    items.forEach(function(r) {
+                        var supInfo = '';
+                        if (r.supplierOrders) {
+                            Object.keys(r.supplierOrders).forEach(function(sup) {
+                                var so = r.supplierOrders[sup];
+                                if (so && so.order > 0) {
+                                    supInfo += '<span style="display:inline-block;background:#dcfce7;color:#166534;padding:1px 6px;border-radius:4px;font-size:10px;margin:1px">' + esc(sup) + ': ' + so.order + ' кг / ' + so.sum.toFixed(0) + ' ₽</span> ';
+                                }
+                            });
+                        }
+                        var bg = r.order > 0 ? '#f0fdf4' : (r.hasConflict ? '#fffbeb' : '#ffffff');
+                        tableRows += '<tr style="background:' + bg + '">' +
+                            '<td style="padding:4px 8px;border:1px solid #e5e7eb;font-size:11px;color:#374151;max-width:200px;white-space:normal;word-wrap:break-word">' + esc(r.nomenclature || '') + '</td>' +
+                            '<td style="padding:4px 8px;border:1px solid #e5e7eb;font-size:11px;text-align:center;color:#6b7280">' + (r.code || '') + '</td>' +
+                            '<td style="padding:4px 8px;border:1px solid #e5e7eb;font-size:11px;text-align:center;color:#6b7280">' + tt + '</td>' +
+                            '<td style="padding:4px 8px;border:1px solid #e5e7eb;font-size:11px;text-align:center;color:#6b7280">' + (r.sales || 0).toFixed(2) + '</td>' +
+                            '<td style="padding:4px 8px;border:1px solid #e5e7eb;font-size:11px;text-align:center;font-weight:600;color:' + (r.order > 0 ? '#166534' : '#9ca3af') + '">' + r.order.toFixed(1) + '</td>' +
+                            '<td style="padding:4px 8px;border:1px solid #e5e7eb;font-size:11px;text-align:center">' + (r.sum || 0).toFixed(0) + ' ₽</td>' +
+                            '<td style="padding:4px 8px;border:1px solid #e5e7eb;font-size:11px;max-width:220px;white-space:normal;word-wrap:break-word">' + supInfo + '</td>' +
+                        '</tr>';
+                    });
+                });
+            });
+
+            var allSuppliers = [];
+            Object.keys(snap.supplierGroups || {}).forEach(function(s) {
+                allSuppliers.push(s + ': ' + snap.supplierGroups[s].count + ' поз. / ' + snap.supplierGroups[s].sum.toFixed(0) + ' ₽');
+            });
+
+            detailModal.innerHTML = '<div style="background:white;border-radius:16px;border:1px solid #e5e7eb;width:95%;max-width:900px;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 25px 50px rgba(0,0,0,0.15);font-family:system-ui,sans-serif" onclick="event.stopPropagation()">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid #e5e7eb;background:#f9fafb">' +
+                    '<div>' +
+                        '<div style="font-size:15px;font-weight:700;color:#1f2937">Заказ от ' + snap.date + '</div>' +
+                        '<div style="font-size:11px;color:#6b7280;margin-top:2px">' + (snap.totalOrderItems || 0) + ' поз. • ' + (snap.totalSum || 0).toFixed(0) + ' ₽ • Поставщики: ' + allSuppliers.join(' | ') + '</div>' +
+                    '</div>' +
+                    '<div style="display:flex;gap:6px">' +
+                        '<button onclick="exportSnapshot(' + snap.id + ')" style="display:inline-flex;align-items:center;gap:4px;padding:5px 12px;font-size:11px;font-weight:500;color:#2563eb;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;cursor:pointer">Экспорт Excel</button>' +
+                        '<button onclick="document.getElementById(\'orderHistoryModal\').remove()" style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;border:none;background:#f3f4f6;border-radius:8px;cursor:pointer;color:#6b7280;font-size:18px">&times;</button>' +
+                    '</div>' +
+                '</div>' +
+                '<div style="flex:1;overflow:auto;padding:12px">' +
+                    '<table style="width:100%;border-collapse:collapse;font-size:11px">' +
+                        '<thead><tr style="background:#f3f4f6;position:sticky;top:0;z-index:1">' +
+                            '<th style="padding:6px 8px;border:1px solid #d1d5db;font-size:11px;font-weight:600;color:#374151;text-align:left;min-width:180px">Наименование</th>' +
+                            '<th style="padding:6px 8px;border:1px solid #d1d5db;font-size:11px;font-weight:600;color:#374151;text-align:center;min-width:55px">Код</th>' +
+                            '<th style="padding:6px 8px;border:1px solid #d1d5db;font-size:11px;font-weight:600;color:#374151;text-align:center;min-width:70px">ТТ</th>' +
+                            '<th style="padding:6px 8px;border:1px solid #d1d5db;font-size:11px;font-weight:600;color:#374151;text-align:center;min-width:60px">Продажи</th>' +
+                            '<th style="padding:6px 8px;border:1px solid #d1d5db;font-size:11px;font-weight:600;color:#374151;text-align:center;min-width:60px">Заказ, кг</th>' +
+                            '<th style="padding:6px 8px;border:1px solid #d1d5db;font-size:11px;font-weight:600;color:#374151;text-align:center;min-width:70px">Сумма</th>' +
+                            '<th style="padding:6px 8px;border:1px solid #d1d5db;font-size:11px;font-weight:600;color:#374151;text-align:left;min-width:220px">Поставщики</th>' +
+                        '</tr></thead>' +
+                        '<tbody>' + tableRows + '</tbody>' +
+                    '</table>' +
+                '</div>' +
+            '</div>';
+
+            document.body.appendChild(detailModal);
+        }
+
+        function exportSnapshot(snapId) {
+            var snap = orderSnapshots.find(function(s) { return s.id === snapId; });
+            if (!snap || !snap.items || snap.items.length === 0) { alert('Снимок не найден'); return; }
+
+            var rows = [['ТТ', 'Код', 'Наименование', 'Группа', 'Продажи, кг', 'Среднее/день', 'Остаток, кг', 'Заказ, кг', 'Сумма, ₽', 'Статус']];
+
+            snap.items.forEach(function(r) {
+                var avgDay = (r.weekendAvg > 0 || r.weekdayAvg > 0)
+                    ? ((r.weekdayCount * r.weekdayAvg + r.weekendCount * r.weekendAvg) / Math.max(1, r.weekdayCount + r.weekendCount))
+                    : r.avgSalesPerDay;
+
+                if (r.supplierOrders) {
+                    Object.keys(r.supplierOrders).forEach(function(sup) {
+                        var so = r.supplierOrders[sup];
+                        if (!so || so.order <= 0) return;
+                        rows.push([
+                            r.tt || '', r.code, r.nomenclature || '', r.group || '',
+                            (r.sales || 0).toFixed(2),
+                            avgDay > 0 ? avgDay.toFixed(3) : '—',
+                            (r.currentStock || 0).toFixed(2),
+                            so.order,
+                            (so.sum || 0).toFixed(2),
+                            sup + ': заказ'
+                        ]);
+                    });
+                } else {
+                    rows.push([
+                        r.tt || '', r.code, r.nomenclature || '', r.group || '',
+                        (r.sales || 0).toFixed(2),
+                        avgDay > 0 ? avgDay.toFixed(3) : '—',
+                        (r.currentStock || 0).toFixed(2),
+                        r.order,
+                        (r.sum || 0).toFixed(2),
+                        r.status || ''
+                    ]);
+                }
+            });
+
+            var headers = rows.shift();
+            var ws = SharedUtils.createStyledSheet(rows, headers, [0, 1, 2, 3]);
+            var wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Заказ ' + (snap.date || '').replace(/[\/:]/g, '-'));
+            XLSX.writeFile(wb, 'заказ_история_' + (snap.date || '').replace(/[\/:]/g, '-').replace(/,/g, '').replace(/\s/g, '_') + '.xlsx');
         }
 
         // === ПОПАП СУММ ЗАКАЗА ПО МАГАЗИНАМ ===
