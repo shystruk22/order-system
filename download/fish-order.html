@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Заказ рыбы</title>
-    <!-- Version: 3.14 -->
+    <!-- Version: 3.15 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -2459,65 +2459,15 @@
                 return;
             }
 
-            // Collect all items with order > 0 from savedOrderResults (multi-supplier)
-            const ordersBySupplierStore = {};
-            savedOrderResults.forEach(r => {
-                if (!r.supplierOrders) return;
-                Object.entries(r.supplierOrders).forEach(([sup, so]) => {
-                    if (!so || so.order <= 0) return;
-                    const store = r.tt;
-                    const groupKey = `${sup}|||${store}`;
-                    if (!ordersBySupplierStore[groupKey]) ordersBySupplierStore[groupKey] = [];
-                    ordersBySupplierStore[groupKey].push({
-                        code: r.code,
-                        nomenclature: r.nomenclature,
-                        qty: so.order,
-                        sum: so.sum,
-                        supplier: sup,
-                        store
-                    });
-                });
-            });
-
-            const orderCount = Object.keys(ordersBySupplierStore).length;
-            if (orderCount === 0) {
-                alert('Нет товаров к заказу');
-                return;
+            // Если уже есть сохранённый заказ — спрашиваем про перезапись
+            if (savedOrderDate) {
+                if (!confirm('Перезаписать сохранённый заказ от ' + savedOrderDate + '?')) {
+                    return; // Пользователь нажал "Нет" — продолжаем работать
+                }
             }
 
-            if (!confirm(`Сформировать ${orderCount} заказ(ов)?`)) return;
-
-            // Create in-transit records
-            Object.entries(ordersBySupplierStore).forEach(([key, items]) => {
-                const [supplier, store] = key.split('|||');
-                const expectedDate = getNextDeliveryDate(supplier, store);
-                inTransitOrders.push({
-                    id: Date.now() + Math.random(),
-                    createdAt: new Date().toISOString().split('T')[0],
-                    supplier, store,
-                    expectedDate: expectedDate ? expectedDate.toISOString().split('T')[0] : '',
-                    items: items.map(i => ({
-                        code: i.code, name: i.nomenclature, qty: i.qty, sum: i.sum
-                    })),
-                    status: 'in_transit'
-                });
-            });
-
-            save(KEYS.INTRANSIT, inTransitOrders);
-            // Clear orderEdits for placed items
-            Object.keys(ordersBySupplierStore).forEach(key => {
-                const [supplier, store] = key.split('|||');
-                savedOrderResults.forEach(r => {
-                    if (r.tt === store) {
-                        const editKey = `${r.tt}_${r.code}_${supplier}`;
-                        delete orderEdits[editKey];
-                    }
-                });
-            });
-            savedOrderResults = null;
-            savedOrderStats = null;
-            render();
-            alert('Заказы сформированы!');
+            // Сохраняем текущий заказ как снимок (БЕЗ создания записей «в пути»)
+            saveCurrentOrder();
         }
 
         // Определить, доставляется ли сегодня в магазин от конкретного поставщика
@@ -2564,10 +2514,8 @@
                     </div>`;
             }
 
-            // Если есть сохранённый заказ — показываем его сразу
-            if (savedOrderResults && savedOrderResults.length > 0) {
-                return renderSavedOrder();
-            }
+            // Всегда показываем редактируемый расчёт заказа
+            // (сохранённый заказ загружается как orderEdits и применяется в расчёте)
 
             // === НОВЫЙ РАСЧЁТ ЗАКАЗА ===
             const allStores = [...stores];
@@ -2885,7 +2833,6 @@
                             ${minD < Infinity ? `<div class="bg-amber-100 text-amber-800 rounded-md px-3 py-1.5"><div class="text-[10px] opacity-70">БЛИЖ. ДОСТАВКА</div><div class="text-sm font-bold">${nextDelivStr}</div></div>` : ''}
                         </div>
                         <div class="flex gap-2">
-                            <button onclick="saveCurrentOrder()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-violet-600 rounded-lg hover:bg-violet-700">${icons.save} Сохранить заказ</button>
                             <button onclick="placeOrders()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700">${icons.order} Сформировать заказ</button>
                             <button onclick="exportOrder()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">${icons.export} Экспорт</button>
                         </div>
