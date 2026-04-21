@@ -407,6 +407,8 @@
             supplierPrices = load(KEYS.SUPPLIER_PRICES, {});
             stockConsumptionData = load(KEYS.STOCK_CONSUMPTION, {});
             orderSnapshots = load(KEYS.ORDER_SNAPSHOTS, []);
+            orderSnapshots = orderSnapshots.filter(function(s) { return (Date.now() - new Date(s.createdAt).getTime()) < 14 * 86400000; });
+            if (orderSnapshots.length > 0) save(KEYS.ORDER_SNAPSHOTS, orderSnapshots);
             autoCloseDeliveredOrders();
 
             // Загрузка с миграцией: старый формат (всё в matrix) → новый (matrix + matrixMarks)
@@ -3501,7 +3503,9 @@
             };
 
             orderSnapshots.unshift(snapshot);
-            // Храним максимум 50 снимков
+            // Удаляем снимки старше 14 дней и храним максимум 50
+            var twoWeeks = 14 * 86400000;
+            orderSnapshots = orderSnapshots.filter(function(s) { return (Date.now() - new Date(s.createdAt).getTime()) < twoWeeks; });
             if (orderSnapshots.length > 50) orderSnapshots = orderSnapshots.slice(0, 50);
             save(KEYS.ORDER_SNAPSHOTS, orderSnapshots);
 
