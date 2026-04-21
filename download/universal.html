@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Универсальный расчёт</title>
-    <!-- Version: 1.9 -->
+    <!-- Version: 2.0 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -89,8 +89,12 @@
         let savedOrderStats = null;   // Сохранённая статистика заказа
         let orderEdits = {};          // Ручные правки заказа: {"tt_code": value}
         let newMarkupEdits = {};      // Временные «новые наценки» для вкладки Цены: {"code": value}
+        let savedOrderDate = null;    // Дата сохранённого заказа
+        let ndsRate = 20;             // Стандартная ставка НДС %
+        let ndflRate = 6;             // Ставка НДФЛ %
+        let onlineFeeRate = 1;        // 1% за онлайн-обслуживание
 
-        function resetSavedOrders() { savedOrderResults = null; savedOrderStats = null; orderEdits = {}; }
+        function resetSavedOrders() { savedOrderResults = null; savedOrderStats = null; orderEdits = {}; savedOrderDate = null; }
 
         const KEYS = {
             ASSORTMENT: SharedUtils.STORAGE_KEYS.UNIV_PRODUCTS,
@@ -101,7 +105,8 @@
             SUPPLIERS: SharedUtils.STORAGE_KEYS.UNIV_SUPPLIERS,
             CURRENT_SUPPLIER: SharedUtils.STORAGE_KEYS.UNIV_CURRENT_SUPPLIER,
             DEFAULT_MARKUP: SharedUtils.STORAGE_KEYS.UNIV_DEFAULT_MARKUP,
-            GROUP_MARKUPS: SharedUtils.STORAGE_KEYS.UNIV_GROUP_MARKUPS
+            GROUP_MARKUPS: SharedUtils.STORAGE_KEYS.UNIV_GROUP_MARKUPS,
+            SAVED_ORDER: 'univ_saved_order_v1'
         };
 
         // Поля каталога товаров (не ДА/НЕТ)
@@ -412,6 +417,18 @@
             currentSupplier = load(KEYS.CURRENT_SUPPLIER, '');
             defaultMarkup = load(KEYS.DEFAULT_MARKUP, 25);
             groupMarkups = load(KEYS.GROUP_MARKUPS, {});
+
+            // Загрузка сохранённого заказа (автоудаление после 14 дней)
+            var saved = load(KEYS.SAVED_ORDER, null);
+            if (saved && saved.createdAt && (Date.now() - new Date(saved.createdAt).getTime()) < 14 * 86400000) {
+                savedOrderResults = saved.items;
+                savedOrderStats = saved.stats;
+                orderEdits = saved.orderEdits || {};
+                savedOrderDate = saved.date;
+            } else {
+                if (saved) SharedUtils.save(KEYS.SAVED_ORDER, null);
+                savedOrderResults = null;
+            }
 
             // Загрузка с миграцией: старый формат (всё в matrix) → новый (matrix + matrixMarks)
             const savedAssort = load(KEYS.ASSORTMENT, null);
@@ -1309,6 +1326,7 @@
         function renderPrices() {
             const allGroups = getAllGroups();
             let totalRevenue = 0, totalProfit = 0, totalPurchase = 0;
+            let totalNdsPayable = 0, totalNdfl = 0, totalOnlineFee = 0, totalNetIncome = 0;
             
             sales.forEach(s => {
                 const nc = s.code ? normCode(s.code) : null;
@@ -1317,11 +1335,22 @@
                 if (product) {
                     const inPrice = product.inPrice || 0;
                     const shelfPrice = product.shelfPrice > 0 ? product.shelfPrice : inPrice * (1 + (product.markup ?? groupMarkups[product.group || ''] ?? defaultMarkup) / 100);
-                    totalPurchase += s.quantity * inPrice;
-                    totalRevenue += s.quantity * shelfPrice;
-                    totalProfit += s.quantity * (shelfPrice - inPrice);
+                    const qty = s.quantity;
+                    totalPurchase += qty * inPrice;
+                    totalRevenue += qty * shelfPrice;
+                    const profit = shelfPrice - inPrice;
+                    totalProfit += qty * profit;
+                    // НДС
+                    const ndsIn = inPrice * ndsRate / (100 + ndsRate);
+                    const ndsOut = shelfPrice * ndsRate / (100 + ndsRate);
+                    totalNdsPayable += qty * (ndsOut - ndsIn);
+                    // НДФЛ
+                    totalNdfl += qty * profit * ndflRate / 100;
+                    // 1% онлайн
+                    totalOnlineFee += qty * shelfPrice * onlineFeeRate / 100;
                 }
             });
+            totalNetIncome = totalProfit - totalNdsPayable - totalNdfl - totalOnlineFee;
 
             const individualMarkups = Object.values(matrix).filter(p => p.markup !== undefined && p.markup !== null).length;
             
@@ -1338,13 +1367,13 @@
                     </div>
                     
                     <div class="bg-white rounded-lg border border-gray-200 p-4">
-                        <h3 class="text-sm font-semibold text-gray-800 mb-3 flex items-center gap-2">${icons.dollar}Настройки наценок</h3>
-                        <div class="flex gap-3">
-                            <div class="flex-1 flex items-center justify-between bg-gray-50 px-3 py-2 rounded-lg border">
-                                <label class="text-sm text-gray-600">По умолчанию:</label>
+                        <h3 class="text-sm font-semibold text-gray-800 mb-3 flex items-center gap-2">${icons.dollar}Настройки</h3>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div class="flex items-center justify-between bg-gray-50 px-3 py-2 rounded-lg border">
+                                <label class="text-xs text-gray-600">Наценка %</label>
                                 <div class="flex items-center gap-1">
-                                    <input type="number" value="${defaultMarkup}" onchange="defaultMarkup=parseFloat(this.value)||25;save(KEYS.DEFAULT_MARKUP,defaultMarkup);render()" class="input w-16 text-center text-sm font-bold text-blue-700" step="0.1">
-                                    <span class="text-sm text-gray-500">%</span>
+                                    <input type="number" value="${defaultMarkup}" onchange="defaultMarkup=parseFloat(this.value)||25;save(KEYS.DEFAULT_MARKUP,defaultMarkup);render()" class="input w-14 text-center text-sm font-bold text-blue-700" step="0.1">
+                                    <span class="text-xs text-gray-400">%</span>
                                 </div>
                             </div>
                             <div class="bg-blue-50 px-3 py-2 rounded-lg border border-blue-200 text-center">
@@ -1352,6 +1381,53 @@
                                 <div class="text-lg font-bold text-blue-700">${individualMarkups}</div>
                             </div>
                         </div>
+                        <div class="grid grid-cols-3 gap-2 mt-2">
+                            <div class="flex items-center justify-between bg-yellow-50 px-2 py-1.5 rounded-lg border border-yellow-200">
+                                <label class="text-[10px] text-gray-600">НДС %</label>
+                                <div class="flex items-center gap-1">
+                                    <input type="number" value="${ndsRate}" onchange="ndsRate=parseFloat(this.value)||0;render()" class="input w-12 text-center text-xs font-bold text-yellow-700" step="0.1">
+                                    <span class="text-[10px] text-gray-400">%</span>
+                                </div>
+                            </div>
+                            <div class="flex items-center justify-between bg-orange-50 px-2 py-1.5 rounded-lg border border-orange-200">
+                                <label class="text-[10px] text-gray-600">НДФЛ %</label>
+                                <div class="flex items-center gap-1">
+                                    <input type="number" value="${ndflRate}" onchange="ndflRate=parseFloat(this.value)||0;render()" class="input w-12 text-center text-xs font-bold text-orange-700" step="0.1">
+                                    <span class="text-[10px] text-gray-400">%</span>
+                                </div>
+                            </div>
+                            <div class="flex items-center justify-between bg-purple-50 px-2 py-1.5 rounded-lg border border-purple-200">
+                                <label class="text-[10px] text-gray-600">Онлайн %</label>
+                                <div class="flex items-center gap-1">
+                                    <input type="number" value="${onlineFeeRate}" onchange="onlineFeeRate=parseFloat(this.value)||0;render()" class="input w-12 text-center text-xs font-bold text-purple-700" step="0.1">
+                                    <span class="text-[10px] text-gray-400">%</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Итоговые карточки: НДС, НДФЛ, Онлайн, Чистый доход -->
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-center">
+                        <div class="text-[10px] text-yellow-700 font-medium">НДС к уплате</div>
+                        <div class="text-lg font-bold ${totalNdsPayable > 0 ? 'text-yellow-800' : 'text-green-700'}">${totalNdsPayable.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')} ₽</div>
+                        <div class="text-[10px] text-yellow-600">Полка ${ndsRate}% − Вход ${ndsRate}%</div>
+                    </div>
+                    <div class="bg-orange-50 border border-orange-200 rounded-lg p-3 text-center">
+                        <div class="text-[10px] text-orange-700 font-medium">НДФЛ</div>
+                        <div class="text-lg font-bold text-orange-800">${totalNdfl.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')} ₽</div>
+                        <div class="text-[10px] text-orange-600">${ndflRate}% от прибыли</div>
+                    </div>
+                    <div class="bg-purple-50 border border-purple-200 rounded-lg p-3 text-center">
+                        <div class="text-[10px] text-purple-700 font-medium">Онлайн-обслуживание</div>
+                        <div class="text-lg font-bold text-purple-800">${totalOnlineFee.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')} ₽</div>
+                        <div class="text-[10px] text-purple-600">${onlineFeeRate}% от выручки</div>
+                    </div>
+                    <div class="bg-emerald-50 border border-emerald-300 rounded-lg p-3 text-center">
+                        <div class="text-[10px] text-emerald-700 font-semibold">ЧИСТЫЙ ДОХОД</div>
+                        <div class="text-lg font-bold ${totalNetIncome >= 0 ? 'text-emerald-700' : 'text-red-600'}">${totalNetIncome.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')} ₽</div>
+                        <div class="text-[10px] text-emerald-600">${totalRevenue > 0 ? ((totalNetIncome / totalRevenue) * 100).toFixed(1) : 0}% от выручки</div>
                     </div>
                 </div>
                 
@@ -1380,9 +1456,12 @@
                         </div>
                     </div>
                     <div class="mb-2 px-2 py-1.5 bg-sky-50 rounded-md border border-sky-200 text-[11px] text-sky-700">
-                        <b>Как читать таблицу:</b> Первые колонки — текущие данные из ассортимента (наценка/маржа/доход рассчитаны автоматически). 
-                        Колонки <span class="text-blue-700 font-semibold">«Новая наценка»</span> — введите процент, чтобы увидеть, как изменятся цена, маржа и доход.
-                        Цена на полке меняется <b>только</b> через вкладку «Ассортимент».
+                        <b>Как читать таблицу:</b> Первые колонки — текущие данные из ассортимента. 
+                        <span class="text-yellow-700 font-semibold">НДС</span> = разница между НДС с полки и НДС со входа (к уплате в бюджет). 
+                        <span class="text-orange-700 font-semibold">НДФЛ</span> = налог на прибыль. 
+                        <span class="text-purple-700 font-semibold">Онлайн</span> = 1% от выручки. 
+                        <span class="text-emerald-700 font-semibold">Чистый доход</span> = Прибыль − НДС − НДФЛ − Онлайн.
+                        Колонки <span class="text-blue-700 font-semibold">«Новая наценка»</span> — введите процент, чтобы увидеть прогноз.
                     </div>
                     <div class="table-container">
                         <table class="table-modern">
@@ -1393,13 +1472,14 @@
                                     <th class="text-center">Код</th>
                                     <th class="text-center">Вход.<br>цена</th>
                                     <th class="text-center bg-green-100">Цена<br>на полке</th>
-                                    <th class="text-center bg-orange-100">Наценка<br>%</th>
-                                    <th class="text-center">Маржа<br>%</th>
                                     <th class="text-center">Доход<br>₽</th>
+                                    <th class="text-center bg-yellow-100">НДС<br>к уплате</th>
+                                    <th class="text-center bg-orange-100">НДФЛ</th>
+                                    <th class="text-center bg-purple-100">Онлайн<br>1%</th>
+                                    <th class="text-center bg-emerald-100">Чистый<br>доход ₽</th>
                                     <th class="text-center bg-blue-100">Новая<br>наценка %</th>
                                     <th class="text-center bg-blue-50">Новая<br>цена</th>
-                                    <th class="text-center bg-blue-50">Новая<br>маржа %</th>
-                                    <th class="text-center bg-blue-50">Новый<br>доход ₽</th>
+                                    <th class="text-center bg-blue-50">Новый<br>чист. доход</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -1416,7 +1496,7 @@
                                     });
                                     return Object.entries(grouped).sort((a,b) => a[0].localeCompare(b[0], 'ru')).map(([gr, items]) => `
                                         <tr class="group-header cursor-pointer" onclick="collapsedG['prices_${esc(gr)}']=!collapsedG['prices_${esc(gr)}'];renderPricesDebounced()">
-                                            <td colspan="12" class="text-left py-1 px-2">
+                                            <td colspan="13" class="text-left py-1 px-2">
                                                 <div class="flex items-center gap-2">
                                                     ${collapsedG['prices_' + gr] ? icons.chevronRight : icons.chevronDown}
                                                     <span class="font-semibold">${gr}</span>
@@ -1428,25 +1508,33 @@
                                             const inPrice = p.inPrice || 0;
                                             const markup = p.markup ?? groupMarkups[p.group || ''] ?? defaultMarkup;
                                             const shelfPrice = p.shelfPrice > 0 ? p.shelfPrice : Math.round(inPrice * (1 + markup / 100));
-                                            // Текущие расчётные показатели
-                                            const effectiveMarkup = inPrice > 0 ? Math.round(((shelfPrice - inPrice) / inPrice) * 100) : markup;
-                                            const margin = shelfPrice > 0 ? (((shelfPrice - inPrice) / shelfPrice) * 100).toFixed(1) : '0.0';
                                             const profit = shelfPrice - inPrice;
-                                            const hasIndividual = p.markup !== undefined && p.markup !== null;
-                                            // Новая наценка из временного хранилища
+                                            // НДС расчёт
+                                            const ndsIn = ndsRate > 0 ? inPrice * ndsRate / (100 + ndsRate) : 0;
+                                            const ndsOut = ndsRate > 0 ? shelfPrice * ndsRate / (100 + ndsRate) : 0;
+                                            const ndsPayable = ndsOut - ndsIn;
+                                            // НДФЛ
+                                            const ndfl = ndflRate > 0 ? profit * ndflRate / 100 : 0;
+                                            // Онлайн 1%
+                                            const onlineFee = onlineFeeRate > 0 ? shelfPrice * onlineFeeRate / 100 : 0;
+                                            // Чистый доход
+                                            const netIncome = profit - ndsPayable - ndfl - onlineFee;
+                                            // Новая наценка
                                             const newMarkupKey = 'newMarkup_' + p.code;
                                             const newMarkupVal = newMarkupEdits[newMarkupKey];
                                             const hasNewMarkup = newMarkupVal !== undefined && newMarkupVal !== '';
                                             const appliedNewMarkup = hasNewMarkup ? (parseFloat(newMarkupVal) || 0) : null;
-                                            let newPrice = '-', newMargin = '-', newProfit = '-';
+                                            let newPrice = '-', newNetIncome = '-';
                                             if (hasNewMarkup && inPrice > 0) {
                                                 newPrice = Math.round(inPrice * (1 + appliedNewMarkup / 100));
-                                                newMargin = newPrice > 0 ? (((newPrice - inPrice) / newPrice) * 100).toFixed(1) : '0.0';
-                                                newProfit = newPrice - inPrice;
+                                                const newProfit = newPrice - inPrice;
+                                                const newNdsIn = ndsRate > 0 ? inPrice * ndsRate / (100 + ndsRate) : 0;
+                                                const newNdsOut = ndsRate > 0 ? newPrice * ndsRate / (100 + ndsRate) : 0;
+                                                const newNdsPay = newNdsOut - newNdsIn;
+                                                const newNdfl = ndflRate > 0 ? newProfit * ndflRate / 100 : 0;
+                                                const newOnline = onlineFeeRate > 0 ? newPrice * onlineFeeRate / 100 : 0;
+                                                newNetIncome = newProfit - newNdsPay - newNdfl - newOnline;
                                             }
-                                            const newPriceClass = hasNewMarkup ? (newPrice > shelfPrice ? 'text-emerald-700' : newPrice < shelfPrice ? 'text-red-600' : 'text-gray-700') : 'text-gray-400';
-                                            const newMarginClass = hasNewMarkup ? (appliedNewMarkup > effectiveMarkup ? 'text-emerald-700' : appliedNewMarkup < effectiveMarkup ? 'text-red-600' : 'text-gray-700') : 'text-gray-400';
-                                            const newProfitClass = hasNewMarkup ? (newProfit > profit ? 'text-emerald-700' : newProfit < profit ? 'text-red-600' : 'text-gray-700') : 'text-gray-400';
                                             return `
                                                 <tr class="hover:bg-gray-50">
                                                     <td class="text-left text-[10px] text-gray-500">${p.group || ''}</td>
@@ -1454,13 +1542,14 @@
                                                     <td class="text-center font-mono text-[10px] text-gray-500">${p.code}</td>
                                                     <td class="text-center">${inPrice.toLocaleString('ru-RU')} ₽</td>
                                                     <td class="text-center font-semibold bg-green-50">${shelfPrice.toLocaleString('ru-RU')} ₽</td>
-                                                    <td class="text-center bg-orange-50 font-semibold text-orange-700">${effectiveMarkup}%</td>
-                                                    <td class="text-center font-medium text-gray-700">${margin}%</td>
                                                     <td class="text-center font-medium ${profit > 0 ? 'text-emerald-600' : 'text-gray-500'}">${profit.toLocaleString('ru-RU')} ₽</td>
-                                                    <td class="text-center bg-blue-50"><input type="number" value="${hasNewMarkup ? newMarkupVal : ''}" oninput="handleNewMarkupInput(this)" data-code="${esc(p.code)}" placeholder="—" class="input w-16 text-center text-xs font-bold text-blue-700"></td>
-                                                    <td class="text-center font-semibold ${newPriceClass}">${hasNewMarkup ? newPrice.toLocaleString('ru-RU') + ' ₽' : '—'}</td>
-                                                    <td class="text-center font-medium ${newMarginClass}">${hasNewMarkup ? newMargin + '%' : '—'}</td>
-                                                    <td class="text-center font-medium ${newProfitClass}">${hasNewMarkup ? newProfit.toLocaleString('ru-RU') + ' ₽' : '—'}</td>
+                                                    <td class="text-center text-xs font-medium ${ndsPayable > 0 ? 'text-yellow-700 bg-yellow-50' : 'text-gray-400'}">${ndsPayable > 0 ? ndsPayable.toFixed(2) + ' ₽' : '—'}</td>
+                                                    <td class="text-center text-xs font-medium text-orange-700 bg-orange-50">${ndfl > 0 ? ndfl.toFixed(2) + ' ₽' : '—'}</td>
+                                                    <td class="text-center text-xs font-medium text-purple-700 bg-purple-50">${onlineFee > 0 ? onlineFee.toFixed(2) + ' ₽' : '—'}</td>
+                                                    <td class="text-center font-semibold ${netIncome >= 0 ? 'text-emerald-700 bg-emerald-50' : 'text-red-600 bg-red-50'}">${netIncome.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')} ₽</td>
+                                                    <td class="text-center bg-blue-50"><input type="number" value="${hasNewMarkup ? newMarkupVal : ''}" oninput="handleNewMarkupInput(this)" data-code="${esc(p.code)}" placeholder="—" class="input w-14 text-center text-xs font-bold text-blue-700"></td>
+                                                    <td class="text-center font-semibold ${hasNewMarkup ? (newPrice > shelfPrice ? 'text-emerald-700' : newPrice < shelfPrice ? 'text-red-600' : 'text-gray-700') : 'text-gray-400'}">${hasNewMarkup ? newPrice.toLocaleString('ru-RU') + ' ₽' : '—'}</td>
+                                                    <td class="text-center font-semibold ${hasNewMarkup ? (newNetIncome >= netIncome ? 'text-emerald-700' : 'text-red-600') : 'text-gray-400'}">${hasNewMarkup && typeof newNetIncome === 'number' ? newNetIncome.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ' ₽' : '—'}</td>
                                                 </tr>`;
                                         }).join('')}
                                     `).join('');
@@ -1512,57 +1601,76 @@
             const profit = shelfPrice - inPrice;
 
             const cells = row.querySelectorAll('td');
-            // cells[8] = новая наценка (input), cells[9] = новая цена, cells[10] = новая маржа, cells[11] = новый доход
+            // cells[10] = новая наценка (input), cells[11] = новая цена, cells[12] = новый чист. доход
             if (val === '' || !inPrice) {
-                cells[9].innerHTML = '—';
-                cells[9].className = 'text-center font-semibold text-gray-400';
-                cells[10].innerHTML = '—';
-                cells[10].className = 'text-center font-medium text-gray-400';
                 cells[11].innerHTML = '—';
-                cells[11].className = 'text-center font-medium text-gray-400';
+                cells[11].className = 'text-center font-semibold text-gray-400';
+                cells[12].innerHTML = '—';
+                cells[12].className = 'text-center font-semibold text-gray-400';
                 return;
             }
 
             const appliedNewMarkup = parseFloat(val) || 0;
             const newPrice = Math.round(inPrice * (1 + appliedNewMarkup / 100));
-            const newMargin = newPrice > 0 ? (((newPrice - inPrice) / newPrice) * 100).toFixed(1) : '0.0';
             const newProfit = newPrice - inPrice;
+            const currentProfit = shelfPrice - inPrice;
+
+            // Расчёт нового чистого дохода с НДС, НДФЛ, Онлайн
+            const curNdsIn = ndsRate > 0 ? inPrice * ndsRate / (100 + ndsRate) : 0;
+            const curNdsOut = ndsRate > 0 ? shelfPrice * ndsRate / (100 + ndsRate) : 0;
+            const curNdsPay = curNdsOut - curNdsIn;
+            const curNdfl = ndflRate > 0 ? currentProfit * ndflRate / 100 : 0;
+            const curOnline = onlineFeeRate > 0 ? shelfPrice * onlineFeeRate / 100 : 0;
+            const curNet = currentProfit - curNdsPay - curNdfl - curOnline;
+
+            const newNdsIn = ndsRate > 0 ? inPrice * ndsRate / (100 + ndsRate) : 0;
+            const newNdsOut = ndsRate > 0 ? newPrice * ndsRate / (100 + ndsRate) : 0;
+            const newNdsPay = newNdsOut - newNdsIn;
+            const newNdfl = ndflRate > 0 ? newProfit * ndflRate / 100 : 0;
+            const newOnline = onlineFeeRate > 0 ? newPrice * onlineFeeRate / 100 : 0;
+            const newNet = newProfit - newNdsPay - newNdfl - newOnline;
 
             const priceClass = newPrice > shelfPrice ? 'text-emerald-700' : newPrice < shelfPrice ? 'text-red-600' : 'text-gray-700';
-            const marginClass = appliedNewMarkup > effectiveMarkup ? 'text-emerald-700' : appliedNewMarkup < effectiveMarkup ? 'text-red-600' : 'text-gray-700';
-            const profitClass = newProfit > profit ? 'text-emerald-700' : newProfit < profit ? 'text-red-600' : 'text-gray-700';
+            const netClass = newNet >= curNet ? 'text-emerald-700' : 'text-red-600';
 
-            cells[9].innerHTML = newPrice.toLocaleString('ru-RU') + ' ₽';
-            cells[9].className = 'text-center font-semibold ' + priceClass;
-            cells[10].innerHTML = newMargin + '%';
-            cells[10].className = 'text-center font-medium ' + marginClass;
-            cells[11].innerHTML = newProfit.toLocaleString('ru-RU') + ' ₽';
-            cells[11].className = 'text-center font-medium ' + profitClass;
+            cells[11].innerHTML = newPrice.toLocaleString('ru-RU') + ' ₽';
+            cells[11].className = 'text-center font-semibold ' + priceClass;
+            cells[12].innerHTML = newNet.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ' ₽';
+            cells[12].className = 'text-center font-semibold ' + netClass;
         }
 
         function exportPrices() {
-            const headers = ['Группа', 'Наименование', 'Код', 'Вход. цена', 'Цена на полке', 'Наценка %', 'Маржа %', 'Доход ₽', 'Новая наценка %', 'Новая цена', 'Новая маржа %', 'Новый доход ₽'];
+            const headers = ['Группа', 'Наименование', 'Код', 'Вход. цена', 'Цена на полке', 'Доход ₽', 'НДС к уплате', 'НДФЛ', 'Онлайн 1%', 'Чистый доход ₽', 'Новая наценка %', 'Новая цена', 'Новый чист. доход ₽'];
             const data = [];
             Object.entries(matrix).forEach(([code, p]) => {
                 const inPrice = p.inPrice || 0;
                 const markup = p.markup ?? groupMarkups[p.group || ''] ?? defaultMarkup;
                 const shelfPrice = p.shelfPrice > 0 ? p.shelfPrice : Math.round(inPrice * (1 + markup / 100));
-                const effectiveMarkup = inPrice > 0 ? Math.round(((shelfPrice - inPrice) / inPrice) * 100) : markup;
-                const margin = shelfPrice > 0 ? (((shelfPrice - inPrice) / shelfPrice) * 100).toFixed(1) : '0.0';
                 const profit = shelfPrice - inPrice;
+                const ndsIn = ndsRate > 0 ? inPrice * ndsRate / (100 + ndsRate) : 0;
+                const ndsOut = ndsRate > 0 ? shelfPrice * ndsRate / (100 + ndsRate) : 0;
+                const ndsPayable = ndsOut - ndsIn;
+                const ndfl = ndflRate > 0 ? profit * ndflRate / 100 : 0;
+                const onlineFee = onlineFeeRate > 0 ? shelfPrice * onlineFeeRate / 100 : 0;
+                const netIncome = profit - ndsPayable - ndfl - onlineFee;
                 // Новая наценка
                 const newMarkupKey = 'newMarkup_' + code;
                 const newMarkupVal = newMarkupEdits[newMarkupKey];
                 const hasNewMarkup = newMarkupVal !== undefined && newMarkupVal !== '' && inPrice > 0;
-                let newPrice = '', newMargin = '', newProfit = '', newMarkupStr = '';
+                let newPrice = '', newNetIncome = '', newMarkupStr = '';
                 if (hasNewMarkup) {
                     const nm = parseFloat(newMarkupVal) || 0;
                     newPrice = Math.round(inPrice * (1 + nm / 100));
-                    newMargin = newPrice > 0 ? (((newPrice - inPrice) / newPrice) * 100).toFixed(1) : '0.0';
-                    newProfit = newPrice - inPrice;
+                    const newProfit = newPrice - inPrice;
+                    const nNdsIn = ndsRate > 0 ? inPrice * ndsRate / (100 + ndsRate) : 0;
+                    const nNdsOut = ndsRate > 0 ? newPrice * ndsRate / (100 + ndsRate) : 0;
+                    const nNdsPay = nNdsOut - nNdsIn;
+                    const nNdfl = ndflRate > 0 ? newProfit * ndflRate / 100 : 0;
+                    const nOnline = onlineFeeRate > 0 ? newPrice * onlineFeeRate / 100 : 0;
+                    newNetIncome = (newProfit - nNdsPay - nNdfl - nOnline).toFixed(2);
                     newMarkupStr = nm + '%';
                 }
-                data.push([p.group || '', p.nomenclature || '', code, inPrice, shelfPrice, effectiveMarkup + '%', margin + '%', profit, newMarkupStr, newPrice !== '' ? newPrice : '', newMargin !== '' ? newMargin + '%' : '', newProfit !== '' ? newProfit : '']);
+                data.push([p.group || '', p.nomenclature || '', code, inPrice, shelfPrice, profit.toFixed(2), ndsPayable.toFixed(2), ndfl.toFixed(2), onlineFee.toFixed(2), netIncome.toFixed(2), newMarkupStr, newPrice !== '' ? newPrice : '', newNetIncome !== '' ? newNetIncome : '']);
             });
             const ws = SharedUtils.createStyledSheet(data, headers, [0, 1]);
             const wb = XLSX.utils.book_new();
@@ -1842,6 +1950,9 @@
                             <div class="bg-violet-100 text-violet-800 rounded-md px-3 py-1.5 cursor-pointer hover:bg-violet-200 transition-colors" onclick="showOrderSumsByStore(this)" title="Нажмите для сумм по магазинам"><div class="text-[10px] opacity-70">СУММА</div><div class="text-lg font-bold">${stats.sum.toFixed(0)} ₽</div></div>
                         </div>
                         <div class="flex gap-2">
+                            ${savedOrderDate ? '<div class="bg-violet-50 border border-violet-200 text-violet-800 rounded-md px-3 py-1.5 text-xs">Сохранён: <b>' + esc(savedOrderDate) + '</b></div>' : ''}
+                            <button onclick="placeOrders()" class="btn px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-md hover:bg-emerald-700">${icons.order} Сформировать заказ</button>
+                            <button onclick="clearSavedOrder()" class="btn px-3 py-2 text-sm font-medium text-gray-600 bg-gray-100 border border-gray-200 rounded-md hover:bg-gray-200">${icons.refresh} Сбросить</button>
                             <button onclick="exportOrder()" class="btn px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700">${icons.export} Экспорт</button>
                         </div>
                     </div>
@@ -1934,12 +2045,11 @@
                 if (statusTd) {
                     const packaging = p ? p.packaging || 'ШТ' : 'ШТ';
                     const unitLabel = packaging === 'КГ' ? 'кг' : 'шт';
-                    // Определяем тип: мин.заказ или обычный
                     const key = `${tt}_${code}`;
                     const stockMapLocal = new Map();
                     stocks.forEach(s => stockMapLocal.set(`${s.tt}_${s.code}`, s));
                     const stockData = stockMapLocal.get(key);
-                    const totalSales = 0; // приблизительно
+                    const totalSales = 0;
                     const isMinOrder = !stockData || (stockData.currentStock === 0 && totalSales === 0);
                     if (newOrder > 0) {
                         statusTd.textContent = isMinOrder ? `мин. заказ ${newOrder} ${unitLabel}` : `заказ ${newOrder} ${unitLabel}`;
@@ -1948,6 +2058,50 @@
                     }
                 }
             }
+        }
+
+        // === Сохранение заказа ===
+        function placeOrders() {
+            if (!savedOrderResults || savedOrderResults.length === 0) {
+                alert('Нет данных для заказа. Сначала откройте вкладку Заказ.');
+                return;
+            }
+            if (savedOrderDate) {
+                if (!confirm('Перезаписать сохранённый заказ от ' + savedOrderDate + '?')) return;
+            }
+            var supplierGroups = {};
+            var totalOrderItems = 0, totalSum = 0;
+            savedOrderResults.forEach(function(r) {
+                if (r.order <= 0) return;
+                var sup = (matrix[r.code] || {}).supplier || '—';
+                if (!supplierGroups[sup]) supplierGroups[sup] = { count: 0, sum: 0 };
+                supplierGroups[sup].count++;
+                supplierGroups[sup].sum += r.sum;
+                totalOrderItems++;
+                totalSum += r.sum;
+            });
+            var data = {
+                createdAt: new Date().toISOString(),
+                date: new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+                items: savedOrderResults,
+                stats: savedOrderStats,
+                supplierGroups: supplierGroups,
+                totalOrderItems: totalOrderItems,
+                totalSum: totalSum,
+                orderEdits: Object.assign({}, orderEdits)
+            };
+            save(KEYS.SAVED_ORDER, data);
+            savedOrderDate = data.date;
+            render();
+        }
+
+        function clearSavedOrder() {
+            savedOrderResults = null;
+            savedOrderStats = null;
+            orderEdits = {};
+            savedOrderDate = null;
+            SharedUtils.save(KEYS.SAVED_ORDER, null);
+            render();
         }
 
         function showCalcDetail(el, r) {
