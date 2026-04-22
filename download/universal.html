@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Универсальный расчёт</title>
-    <!-- Version: 2.0 -->
+    <!-- Version: 2.1 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -93,8 +93,10 @@
         let ndsRate = 20;             // Стандартная ставка НДС %
         let ndflRate = 6;             // Ставка НДФЛ %
         let onlineFeeRate = 1;        // 1% за онлайн-обслуживание
+        let savedOrdersList = [];     // Список всех сохранённых заказов
+        let viewingOrderIdx = null;   // Индекс просматриваемого заказа из списка
 
-        function resetSavedOrders() { savedOrderResults = null; savedOrderStats = null; orderEdits = {}; savedOrderDate = null; }
+        function resetSavedOrders() { savedOrderResults = null; savedOrderStats = null; orderEdits = {}; savedOrderDate = null; viewingOrderIdx = null; }
 
         const KEYS = {
             ASSORTMENT: SharedUtils.STORAGE_KEYS.UNIV_PRODUCTS,
@@ -106,7 +108,8 @@
             CURRENT_SUPPLIER: SharedUtils.STORAGE_KEYS.UNIV_CURRENT_SUPPLIER,
             DEFAULT_MARKUP: SharedUtils.STORAGE_KEYS.UNIV_DEFAULT_MARKUP,
             GROUP_MARKUPS: SharedUtils.STORAGE_KEYS.UNIV_GROUP_MARKUPS,
-            SAVED_ORDER: 'univ_saved_order_v1'
+            SAVED_ORDER: 'univ_saved_order_v1',
+            SAVED_ORDERS_LIST: 'univ_saved_orders_list_v1'
         };
 
         // Поля каталога товаров (не ДА/НЕТ)
@@ -418,16 +421,28 @@
             defaultMarkup = load(KEYS.DEFAULT_MARKUP, 25);
             groupMarkups = load(KEYS.GROUP_MARKUPS, {});
 
-            // Загрузка сохранённого заказа (автоудаление после 14 дней)
-            var saved = load(KEYS.SAVED_ORDER, null);
-            if (saved && saved.createdAt && (Date.now() - new Date(saved.createdAt).getTime()) < 14 * 86400000) {
-                savedOrderResults = saved.items;
-                savedOrderStats = saved.stats;
-                orderEdits = saved.orderEdits || {};
-                savedOrderDate = saved.date;
+            // Загрузка списка сохранённых заказов (автоудаление после 14 дней)
+            cleanupOldOrders();
+            savedOrdersList = load(KEYS.SAVED_ORDERS_LIST, []);
+            // Миграция: если есть старый одиночный заказ — переносим в список
+            var oldSaved = load(KEYS.SAVED_ORDER, null);
+            if (oldSaved && oldSaved.createdAt && (Date.now() - new Date(oldSaved.createdAt).getTime()) < 14 * 86400000) {
+                savedOrdersList.push({
+                    id: Date.now(),
+                    name: 'Заказ (мигрированный)',
+                    createdAt: oldSaved.createdAt,
+                    date: oldSaved.date,
+                    items: oldSaved.items,
+                    stats: oldSaved.stats,
+                    supplierGroups: oldSaved.supplierGroups || {},
+                    totalOrderItems: oldSaved.totalOrderItems || 0,
+                    totalSum: oldSaved.totalSum || 0,
+                    orderEdits: oldSaved.orderEdits || {}
+                });
+                save(KEYS.SAVED_ORDERS_LIST, savedOrdersList);
+                SharedUtils.save(KEYS.SAVED_ORDER, null);
             } else {
-                if (saved) SharedUtils.save(KEYS.SAVED_ORDER, null);
-                savedOrderResults = null;
+                if (oldSaved) SharedUtils.save(KEYS.SAVED_ORDER, null);
             }
 
             // Загрузка с миграцией: старый формат (всё в matrix) → новый (matrix + matrixMarks)
@@ -1950,7 +1965,8 @@
                             <div class="bg-violet-100 text-violet-800 rounded-md px-3 py-1.5 cursor-pointer hover:bg-violet-200 transition-colors" onclick="showOrderSumsByStore(this)" title="Нажмите для сумм по магазинам"><div class="text-[10px] opacity-70">СУММА</div><div class="text-lg font-bold">${stats.sum.toFixed(0)} ₽</div></div>
                         </div>
                         <div class="flex gap-2">
-                            ${savedOrderDate ? '<div class="bg-violet-50 border border-violet-200 text-violet-800 rounded-md px-3 py-1.5 text-xs">Сохранён: <b>' + esc(savedOrderDate) + '</b></div>' : ''}
+                            ${savedOrdersList.length > 0 ? '<button onclick="showSavedOrdersList()" class="btn px-3 py-2 text-sm font-medium text-violet-700 bg-violet-50 border border-violet-200 rounded-md hover:bg-violet-100">' + icons.order + ' Мои заказы (' + savedOrdersList.length + ')</button>' : ''}
+                            ${viewingOrderIdx !== null && savedOrdersList[viewingOrderIdx] ? '<div class="bg-violet-50 border border-violet-200 text-violet-800 rounded-md px-3 py-1.5 text-xs">Просмотр: <b>' + esc(savedOrdersList[viewingOrderIdx].name) + '</b> от ' + esc(savedOrdersList[viewingOrderIdx].date) + '</div>' : ''}
                             <button onclick="placeOrders()" class="btn px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-md hover:bg-emerald-700">${icons.order} Сформировать заказ</button>
                             <button onclick="clearSavedOrder()" class="btn px-3 py-2 text-sm font-medium text-gray-600 bg-gray-100 border border-gray-200 rounded-md hover:bg-gray-200">${icons.refresh} Сбросить</button>
                             <button onclick="exportOrder()" class="btn px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700">${icons.export} Экспорт</button>
@@ -2060,15 +2076,27 @@
             }
         }
 
-        // === Сохранение заказа ===
+        // === Сохранение заказа (множественное) ===
+        function cleanupOldOrders() {
+            var list = load(KEYS.SAVED_ORDERS_LIST, []);
+            var changed = false;
+            list = list.filter(function(o) {
+                if (!o.createdAt) return false;
+                var age = Date.now() - new Date(o.createdAt).getTime();
+                if (age >= 14 * 86400000) { changed = true; return false; }
+                return true;
+            });
+            if (changed) SharedUtils.save(KEYS.SAVED_ORDERS_LIST, list);
+            return list;
+        }
+
         function placeOrders() {
             if (!savedOrderResults || savedOrderResults.length === 0) {
                 alert('Нет данных для заказа. Сначала откройте вкладку Заказ.');
                 return;
             }
-            if (savedOrderDate) {
-                if (!confirm('Перезаписать сохранённый заказ от ' + savedOrderDate + '?')) return;
-            }
+
+            // Формируем сводку по поставщикам
             var supplierGroups = {};
             var totalOrderItems = 0, totalSum = 0;
             savedOrderResults.forEach(function(r) {
@@ -2080,28 +2108,179 @@
                 totalOrderItems++;
                 totalSum += r.sum;
             });
-            var data = {
-                createdAt: new Date().toISOString(),
-                date: new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
-                items: savedOrderResults,
-                stats: savedOrderStats,
-                supplierGroups: supplierGroups,
-                totalOrderItems: totalOrderItems,
-                totalSum: totalSum,
-                orderEdits: Object.assign({}, orderEdits)
-            };
-            save(KEYS.SAVED_ORDER, data);
-            savedOrderDate = data.date;
+
+            // Формируем имя из поставщиков
+            var supNames = Object.keys(supplierGroups);
+            var defaultName = supNames.length > 0 ? supNames.join(', ') : 'Заказ';
+            if (defaultName.length > 50) defaultName = defaultName.substring(0, 47) + '...';
+
+            // Спрашиваем название заказа
+            var orderName = prompt('Название заказа:', defaultName);
+            if (orderName === null) return; // Отмена
+            if (!orderName.trim()) orderName = 'Заказ';
+            orderName = orderName.trim();
+
+            // Проверяем — может это перезапись просматриваемого заказа?
+            if (viewingOrderIdx !== null && savedOrdersList[viewingOrderIdx]) {
+                if (!confirm('Перезаписать заказ "' + esc(savedOrdersList[viewingOrderIdx].name) + '" от ' + savedOrdersList[viewingOrderIdx].date + '?\nДля нового нажмите "Отмена" и задайте другое название.')) return;
+                // Перезапись
+                savedOrdersList[viewingOrderIdx] = {
+                    id: savedOrdersList[viewingOrderIdx].id,
+                    name: orderName,
+                    createdAt: new Date().toISOString(),
+                    date: new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+                    items: savedOrderResults,
+                    stats: savedOrderStats,
+                    supplierGroups: supplierGroups,
+                    totalOrderItems: totalOrderItems,
+                    totalSum: totalSum,
+                    orderEdits: Object.assign({}, orderEdits)
+                };
+            } else {
+                // Новый заказ
+                savedOrdersList.push({
+                    id: Date.now(),
+                    name: orderName,
+                    createdAt: new Date().toISOString(),
+                    date: new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+                    items: savedOrderResults,
+                    stats: savedOrderStats,
+                    supplierGroups: supplierGroups,
+                    totalOrderItems: totalOrderItems,
+                    totalSum: totalSum,
+                    orderEdits: Object.assign({}, orderEdits)
+                });
+            }
+
+            save(KEYS.SAVED_ORDERS_LIST, savedOrdersList);
+            savedOrderDate = new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+            viewingOrderIdx = null;
+            alert('Заказ "' + orderName + '" сохранён!\n' + totalOrderItems + ' поз. на сумму ' + totalSum.toFixed(0) + ' ₽');
             render();
         }
 
         function clearSavedOrder() {
-            savedOrderResults = null;
-            savedOrderStats = null;
-            orderEdits = {};
-            savedOrderDate = null;
-            SharedUtils.save(KEYS.SAVED_ORDER, null);
+            if (viewingOrderIdx !== null && savedOrdersList[viewingOrderIdx]) {
+                if (!confirm('Удалить сохранённый заказ "' + esc(savedOrdersList[viewingOrderIdx].name) + '"?')) return;
+                savedOrdersList.splice(viewingOrderIdx, 1);
+                save(KEYS.SAVED_ORDERS_LIST, savedOrdersList);
+            }
+            resetSavedOrders();
             render();
+        }
+
+        // === Просмотр сохранённых заказов (список) ===
+        function showSavedOrdersList() {
+            var existing = document.getElementById('savedOrdersModal');
+            if (existing) existing.remove();
+
+            var list = savedOrdersList;
+            if (list.length === 0) {
+                alert('Нет сохранённых заказов.');
+                return;
+            }
+
+            var modal = document.createElement('div');
+            modal.id = 'savedOrdersModal';
+            modal.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-50';
+            modal.innerHTML = `
+                <div class="bg-white rounded-lg border border-gray-200 p-6 w-full max-w-2xl shadow-lg max-h-[90vh] flex flex-col" onclick="event.stopPropagation()">
+                    <div class="flex justify-between items-center mb-4 shrink-0">
+                        <h3 class="text-lg font-semibold text-gray-900">${icons.order} Сохранённые заказы (${list.length})</h3>
+                        <button onclick="document.getElementById('savedOrdersModal').remove()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+                    </div>
+                    <div class="flex-1 overflow-y-auto border rounded-lg divide-y">
+                        ${list.map(function(o, idx) {
+                            var daysLeft = Math.max(0, 14 - Math.floor((Date.now() - new Date(o.createdAt).getTime()) / 86400000));
+                            var supKeys = Object.keys(o.supplierGroups || {});
+                            var supInfo = supKeys.length > 0 ? supKeys.map(function(s) { return s + ' (' + (o.supplierGroups[s].count || 0) + ' поз.)'; }).join(', ') : '—';
+                            return `
+                            <div class="p-4 hover:bg-emerald-50 transition-colors">
+                                <div class="flex justify-between items-start gap-3">
+                                    <div class="flex-1 min-w-0">
+                                        <div class="font-semibold text-gray-900 text-base truncate">${esc(o.name)}</div>
+                                        <div class="text-xs text-gray-500 mt-0.5">${esc(o.date)}</div>
+                                        <div class="text-xs text-gray-400 mt-1">${esc(supInfo)}</div>
+                                    </div>
+                                    <div class="flex flex-col items-end gap-1 shrink-0">
+                                        <div class="bg-emerald-100 text-emerald-800 rounded px-2 py-0.5 text-xs font-medium">${(o.totalOrderItems || 0)} поз.</div>
+                                        <div class="text-sm font-bold text-gray-700">${(o.totalSum || 0).toFixed(0)} ₽</div>
+                                        <div class="text-[10px] text-gray-400">ост. ${daysLeft} дн.</div>
+                                    </div>
+                                </div>
+                                <div class="flex gap-2 mt-2">
+                                    <button onclick="viewSavedOrder(${idx});document.getElementById('savedOrdersModal').remove()" class="btn px-3 py-1 text-xs font-medium text-white bg-sky-600 rounded hover:bg-sky-700">${icons.search} Просмотр</button>
+                                    <button onclick="loadSavedOrderToEdit(${idx});document.getElementById('savedOrdersModal').remove()" class="btn px-3 py-1 text-xs font-medium text-gray-700 bg-gray-100 border border-gray-200 rounded hover:bg-gray-200">${icons.refresh} Редактировать</button>
+                                    <button onclick="exportSavedOrder(${idx})" class="btn px-3 py-1 text-xs font-medium text-white bg-blue-600 rounded hover:bg-blue-700">${icons.export} Excel</button>
+                                    <button onclick="deleteSavedOrder(${idx})" class="btn px-3 py-1 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded hover:bg-red-100">${icons.trash} Удалить</button>
+                                </div>
+                            </div>`;
+                        }).join('')}
+                    </div>
+                    <div class="mt-3 text-xs text-gray-400 text-center shrink-0">
+                        Заказы хранятся 14 дней, затем удаляются автоматически
+                    </div>
+                </div>
+            `;
+            modal.addEventListener('click', function() { modal.remove(); });
+            document.body.appendChild(modal);
+        }
+
+        function viewSavedOrder(idx) {
+            var o = savedOrdersList[idx];
+            if (!o) { alert('Заказ не найден'); return; }
+            viewingOrderIdx = idx;
+            savedOrderResults = o.items;
+            savedOrderStats = o.stats;
+            orderEdits = o.orderEdits || {};
+            savedOrderDate = o.date;
+            tab = 'order';
+            render();
+        }
+
+        function loadSavedOrderToEdit(idx) {
+            var o = savedOrdersList[idx];
+            if (!o) { alert('Заказ не найден'); return; }
+            viewingOrderIdx = idx;
+            savedOrderResults = o.items;
+            savedOrderStats = o.stats;
+            orderEdits = o.orderEdits || {};
+            savedOrderDate = o.date;
+            tab = 'order';
+            render();
+            alert('Заказ "' + o.name + '" загружен для редактирования.\nИзмените quantities и нажмите "Сформировать заказ" для перезаписи.');
+        }
+
+        function deleteSavedOrder(idx) {
+            var o = savedOrdersList[idx];
+            if (!o) return;
+            if (!confirm('Удалить заказ "' + esc(o.name) + '" от ' + esc(o.date) + '?')) return;
+            savedOrdersList.splice(idx, 1);
+            save(KEYS.SAVED_ORDERS_LIST, savedOrdersList);
+            if (viewingOrderIdx === idx) {
+                resetSavedOrders();
+            } else if (viewingOrderIdx !== null && viewingOrderIdx > idx) {
+                viewingOrderIdx--;
+            }
+            // Обновляем модалку если открыта
+            var modal = document.getElementById('savedOrdersModal');
+            if (modal) { modal.remove(); showSavedOrdersList(); }
+            else render();
+        }
+
+        function exportSavedOrder(idx) {
+            var o = savedOrdersList[idx];
+            if (!o || !o.items) { alert('Заказ не найден'); return; }
+            var rows = [['№ Маг.', 'ТТ', 'Код', 'Наименование', 'Группа', 'Продажи', 'Дней', 'Ср./день', 'Остаток', 'Заказ', 'Сумма', 'Статус']];
+            o.items.forEach(function(r) {
+                rows.push([r.storeNumber || '', r.tt || '', r.code || '', r.nomenclature || '', r.group || '', (r.sales || 0).toFixed(0), r.daysPresent || 0, (r.avgSalesPerDay || 0).toFixed(3), (r.currentStock || 0).toFixed(2), r.order || 0, (r.sum || 0).toFixed(2), r.status || '']);
+            });
+            var headers = rows.shift();
+            var ws = SharedUtils.createStyledSheet(rows, headers, [0, 1, 2, 3, 11]);
+            var wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Заказ');
+            var safeName = (o.name || 'заказ').replace(/[^a-zA-Zа-яА-Я0-9 _-]/g, '_').substring(0, 30);
+            XLSX.writeFile(wb, safeName + '_' + (o.date || '').replace(/[.:]/g, '-') + '.xlsx');
         }
 
         function showCalcDetail(el, r) {
