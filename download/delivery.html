@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>График доставок</title>
+    <!-- Version: 1.0 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+    <script src="shared-utils.js"></script>
+    <script src="config.js"></script>
+    <style>
+        * { font-family: system-ui, -apple-system, sans-serif; box-sizing: border-box; }
+        .btn { transition: all 0.2s; cursor: pointer; }
+        .btn:hover { opacity: 0.9; }
+        input:focus, select:focus, textarea:focus { outline: none; }
+        .input { padding: 0.35rem 0.4rem; border: 1px solid #d1d5db; border-radius: 0.375rem; font-size: 0.75rem; background: white; }
+        .input:focus { border-color: #0ea5e9; }
+        .table-container { overflow: auto; max-height: 75vh; border-radius: 0.5rem; border: 1px solid #e5e7eb; }
+        .table-modern { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
+        .table-modern thead { position: sticky; top: 0; z-index: 30; }
+        .table-modern th { padding: 0.46rem 0.5rem; text-align: center; font-weight: 600; color: #374151; background: #f3f4f6; border: 1px solid #d1d5db; white-space: nowrap; font-size: 0.7rem; }
+        .table-modern td { padding: 0.35rem 0.4rem; border: 1px solid #e5e7eb; text-align: center; }
+        .store-header { height: auto; max-width: 80px; white-space: normal; word-wrap: break-word; word-break: break-word; font-size: 9px; line-height: 1.2; padding: 2px 3px; text-align: center; }
+    </style>
+</head>
+<body class="min-h-screen bg-gray-100">
+    <div class="bg-white border-b border-gray-200">
+        <div class="px-3 py-2">
+            <div class="flex items-center gap-2">
+                <a href="index.html" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors">
+                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+                    <span>Назад</span>
+                </a>
+                <div class="flex items-center gap-2 px-2">
+                    <div class="p-1.5 bg-amber-100 rounded-lg text-amber-600">
+                        <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="3" width="15" height="13" rx="2" ry="2"/><path d="M16 8h4a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-4"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+                    </div>
+                    <h1 class="text-base font-semibold text-gray-900">График доставок</h1>
+                </div>
+                <div class="flex gap-0.5 ml-2 bg-gray-100 rounded-lg p-0.5" id="tabs"></div>
+                <div class="ml-auto flex gap-2">
+                    <span class="bg-blue-100 text-blue-800 rounded-lg px-2 py-1 text-xs" id="statsSuppliers">0 пост.</span>
+                    <span class="bg-purple-100 text-purple-800 rounded-lg px-2 py-1 text-xs" id="statsStores">0 ТТ</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- Баннер предупреждений -->
+    <div id="alertBanner" class="hidden"></div>
+    <div class="px-3 py-3" id="content"></div>
+
+    <script>
+        let tab = 'schedule';
+        let stores = [];
+        let deliverySchedule = {}; // {supplier: {tt: [bool x7]}}
+        let selectedScheduleSupplier = '';
+        let inTransitOrders = [];  // [{id, createdAt, supplier, expectedDate, items: [{code,name,qty,sum}], status, orderName, orderSource}]
+        let collapsedInTransit = {};
+        let searchTransit = '';
+        let filterTransitStatus = '';
+        const DAY_NAMES = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+
+        const KEYS = {
+            STORES: SharedUtils.STORAGE_KEYS.STORES,
+            DELIVERY_SCHEDULE: 'delivery_schedule_v1',
+            INTRANSIT: 'delivery_intransit_v1'
+        };
+
+        const icons = {
+            calendar: '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>',
+            truck: '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="3" width="15" height="13" rx="2" ry="2"/><path d="M16 8h4a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-4"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>',
+            plus: '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+            trash: '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
+            check: '<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>',
+            search: '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
+            download: '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
+            export: '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M16 10l4-4-4-4"/><line x1="20" y1="6" x2="12" y2="6"/><path d="M20 6h-8v12"/></svg>',
+            refresh: '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="23 4 23 10 17 10"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>',
+            package: '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M16.5 9.4l-9-5.19M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>'
+        };
+
+        const esc = (s) => {
+            if (!s) return '';
+            return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+        };
+        const load = (key, def) => SharedUtils.load(key, def);
+        const save = (key, data) => SharedUtils.save(key, data);
+
+        function init() {
+            stores = load(KEYS.STORES, []);
+            deliverySchedule = load(KEYS.DELIVERY_SCHEDULE, {});
+            inTransitOrders = load(KEYS.INTRANSIT, []);
+
+            // Слушаем изменения магазинов из других вкладок
+            window.addEventListener('storage', (e) => {
+                if (e.key === KEYS.STORES) { stores = load(KEYS.STORES, []); render(); }
+            });
+
+            // Слушаем заказы из universal.html
+            window.addEventListener('storage', (e) => {
+                if (e.key === 'univ_saved_orders_list_v1') syncFromUniversal();
+                if (e.key === 'delivery_intransit_v1') { inTransitOrders = load(KEYS.INTRANSIT, []); render(); }
+            });
+
+            syncFromUniversal();
+            autoCloseOrders();
+            render();
+        }
+
+        // Подтянуть новые заказы из universal.html
+        function syncFromUniversal() {
+            var univOrders = load('univ_saved_orders_list_v1', []);
+            if (!Array.isArray(univOrders) || univOrders.length === 0) return;
+
+            var changed = false;
+            univOrders.forEach(function(o) {
+                // Проверяем не было ли уже такого заказа (по id или по orderSource + createdAt)
+                var alreadyExists = inTransitOrders.find(function(existing) {
+                    return existing.universalId === o.id || (existing.orderSource === 'universal' && existing.createdAt === o.createdAt);
+                });
+                if (alreadyExists) return;
+
+                // Собираем позиции с заказом > 0
+                var orderItems = (o.items || []).filter(function(r) { return r.order > 0; }).map(function(r) {
+                    return { code: r.code || '', name: r.nomenclature || '', qty: r.order || 0, sum: r.sum || 0 };
+                });
+                if (orderItems.length === 0) return;
+
+                var totalSum = orderItems.reduce(function(s, i) { return s + i.sum; }, 0);
+                var totalQty = orderItems.reduce(function(s, i) { return s + i.qty; }, 0);
+
+                // Если указана дата доставки — используем её, иначе автоматически определяем
+                var expectedDate = o.expectedDate || '';
+
+                // Определяем поставщиков из заказа
+                var supplierList = Object.keys(o.supplierGroups || {});
+                var mainSupplier = supplierList.length > 0 ? supplierList[0] : '—';
+
+                inTransitOrders.push({
+                    id: Date.now() + Math.random(),
+                    universalId: o.id,
+                    createdAt: o.date || '',
+                    supplier: mainSupplier,
+                    suppliers: supplierList,
+                    expectedDate: expectedDate,
+                    items: orderItems,
+                    status: 'in_transit',
+                    orderName: o.name || 'Заказ',
+                    orderSource: 'universal',
+                    totalOrderItems: o.totalOrderItems || orderItems.length,
+                    totalSum: totalSum,
+                    totalQty: totalQty
+                });
+                changed = true;
+            });
+
+            if (changed) {
+                save(KEYS.INTRANSIT, inTransitOrders);
+                render();
+            }
+        }
+
+        // Автозакрытие просроченных заказов
+        function autoCloseOrders() {
+            var changed = false;
+            inTransitOrders.forEach(function(o) {
+                if (o.status === 'in_transit' && o.expectedDate) {
+                    var exp = new Date(o.expectedDate);
+                    exp.setHours(23,59,59,999);
+                    if (new Date() > exp) {
+                        o.status = 'delivered';
+                        changed = true;
+                    }
+                }
+            });
+            if (changed) save(KEYS.INTRANSIT, inTransitOrders);
+        }
+
+        function loadStores() {
+            stores = load(KEYS.STORES, []);
+        }
+
+        function ensureScheduleStores() {
+            loadStores();
+            if (stores.length === 0) return;
+            var changed = false;
+            Object.keys(deliverySchedule).forEach(function(sup) {
+                stores.forEach(function(s) {
+                    if (!deliverySchedule[sup][s.tt]) {
+                        deliverySchedule[sup][s.tt] = [false,false,false,false,false,false,false];
+                        changed = true;
+                    }
+                });
+                // Удаляем ТТ которых больше нет
+                Object.keys(deliverySchedule[sup]).forEach(function(tt) {
+                    if (!stores.find(function(s) { return s.tt === tt; })) {
+                        delete deliverySchedule[sup][tt];
+                        changed = true;
+                    }
+                });
+            });
+            if (changed) save(KEYS.DELIVERY_SCHEDULE, deliverySchedule);
+        }
+
+        function addSupplier() {
+            var name = prompt('Введите название поставщика:');
+            if (!name || !name.trim()) return;
+            name = name.trim();
+            if (deliverySchedule[name]) { alert('Поставщик "' + name + '" уже есть'); return; }
+            deliverySchedule[name] = {};
+            stores.forEach(function(s) {
+                deliverySchedule[name][s.tt] = [false,false,false,false,false,false,false];
+            });
+            selectedScheduleSupplier = name;
+            save(KEYS.DELIVERY_SCHEDULE, deliverySchedule);
+            render();
+        }
+
+        function deleteSupplier(name) {
+            if (!confirm('Удалить поставщика "' + name + '" и его график?')) return;
+            delete deliverySchedule[name];
+            if (selectedScheduleSupplier === name) {
+                var keys = Object.keys(deliverySchedule);
+                selectedScheduleSupplier = keys.length > 0 ? keys[0] : '';
+            }
+            save(KEYS.DELIVERY_SCHEDULE, deliverySchedule);
+            render();
+        }
+
+        function renameSupplier(oldName) {
+            var newName = prompt('Новое название поставщика:', oldName);
+            if (!newName || !newName.trim() || newName.trim() === oldName) return;
+            newName = newName.trim();
+            if (deliverySchedule[newName]) { alert('Поставщик "' + newName + '" уже есть'); return; }
+            deliverySchedule[newName] = deliverySchedule[oldName];
+            delete deliverySchedule[oldName];
+            // Обновляем ссылки в заказах
+            inTransitOrders.forEach(function(o) {
+                if (o.supplier === oldName) o.supplier = newName;
+                if (o.suppliers) {
+                    var idx = o.suppliers.indexOf(oldName);
+                    if (idx >= 0) o.suppliers[idx] = newName;
+                }
+            });
+            if (selectedScheduleSupplier === oldName) selectedScheduleSupplier = newName;
+            save(KEYS.DELIVERY_SCHEDULE, deliverySchedule);
+            save(KEYS.INTRANSIT, inTransitOrders);
+            render();
+        }
+
+        function toggleDeliveryDay(supplier, tt, dayIdx) {
+            if (!deliverySchedule[supplier] || !deliverySchedule[supplier][tt]) return;
+            deliverySchedule[supplier][tt][dayIdx] = !deliverySchedule[supplier][tt][dayIdx];
+            save(KEYS.DELIVERY_SCHEDULE, deliverySchedule);
+            render();
+        }
+
+        // === РЕНДЕР ===
+        function render() {
+            renderTabs();
+            renderContent();
+            renderAlerts();
+            updateStats();
+        }
+
+        function updateStats() {
+            document.getElementById('statsSuppliers').textContent = Object.keys(deliverySchedule).length + ' пост.';
+            document.getElementById('statsStores').textContent = stores.length + ' ТТ';
+        }
+
+        function renderTabs() {
+            var tabs = [
+                { id: 'schedule', label: 'График', icon: icons.calendar },
+                { id: 'intransit', label: 'В пути', icon: icons.truck },
+            ];
+            // Показываем количество заказов в пути
+            var transitCount = (inTransitOrders || []).filter(function(o) { return o.status === 'in_transit'; }).length;
+            if (transitCount > 0) {
+                tabs[1].label = 'В пути (' + transitCount + ')';
+            }
+            document.getElementById('tabs').innerHTML = tabs.map(function(t) {
+                return '<button onclick="tab=\'' + t.id + '\';render()" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ' + (tab === t.id ? 'bg-amber-600 text-white shadow-sm' : 'text-gray-600 hover:bg-white hover:text-gray-900') + '">' + t.icon + '<span>' + t.label + '</span></button>';
+            }).join('');
+        }
+
+        function renderContent() {
+            var el = document.getElementById('content');
+            switch(tab) {
+                case 'schedule': el.innerHTML = renderSchedule(); break;
+                case 'intransit': el.innerHTML = renderIntransit(); break;
+            }
+        }
+
+        // === Баннер предупреждений ===
+        function renderAlerts() {
+            var banner = document.getElementById('alertBanner');
+            var alerts = [];
+
+            inTransitOrders.forEach(function(o) {
+                if (o.status !== 'in_transit' || !o.expectedDate) return;
+                var exp = new Date(o.expectedDate);
+                exp.setHours(0,0,0,0);
+                var today = new Date();
+                today.setHours(0,0,0,0);
+                var diff = Math.ceil((exp - today) / 86400000);
+                if (diff < 0) {
+                    alerts.push('<span class="text-red-700 font-medium">' + esc(o.supplier) + '</span>: доставка просрочена на <b>' + Math.abs(diff) + ' дн.</b> (' + (o.totalQty || 0) + ' поз., ' + (o.totalSum || 0).toFixed(0) + ' руб.)');
+                } else if (diff === 0) {
+                    alerts.push('<span class="text-amber-700 font-medium">' + esc(o.supplier) + '</span>: доставка <b>сегодня</b> (' + (o.totalQty || 0) + ' поз., ' + (o.totalSum || 0).toFixed(0) + ' руб.)');
+                } else if (diff === 1) {
+                    alerts.push('<span class="text-sky-700 font-medium">' + esc(o.supplier) + '</span>: доставка <b>завтра</b> (' + (o.totalQty || 0) + ' поз., ' + (o.totalSum || 0).toFixed(0) + ' руб.)');
+                }
+            });
+
+            if (alerts.length === 0) {
+                banner.className = 'hidden';
+                return;
+            }
+            banner.className = 'mx-3 mt-2 bg-amber-50 border border-amber-200 rounded-lg p-2 text-xs';
+            banner.innerHTML = '<div class="flex items-start gap-2"><span class="text-amber-500 shrink-0">' + icons.truck + '</span><div class="space-y-0.5">' + alerts.join('<hr class="border-amber-200">') + '</div></div>';
+        }
+
+        // === ГРАФИК ДОСТАВОК ===
+        function renderSchedule() {
+            ensureScheduleStores();
+            var supplierNames = Object.keys(deliverySchedule);
+            var hasStores = stores && stores.length > 0;
+
+            if (!hasStores) {
+                return '<div class="bg-white rounded-lg border border-gray-200 p-6"><div class="text-center"><div class="p-3 bg-amber-50 rounded-lg text-amber-500 inline-flex mb-3">' + icons.calendar + '</div><p class="text-gray-500 text-sm">Сначала добавьте магазины на странице "Магазины"</p><a href="stores.html" class="mt-3 inline-flex items-center gap-1 text-sm text-blue-600 hover:underline">Открыть Магазины →</a></div></div>';
+            }
+
+            if (supplierNames.length === 0) {
+                return '<div class="bg-white rounded-lg border border-gray-200 p-6"><div class="text-center"><div class="p-3 bg-sky-50 rounded-lg text-sky-500 inline-flex mb-3">' + icons.calendar + '</div><h3 class="text-gray-700 font-medium mb-1">График доставок</h3><p class="text-gray-400 text-sm mb-4">Настройте дни доставки по поставщикам и магазинам</p><button onclick="addSupplier()" class="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-sky-600 rounded-lg hover:bg-sky-700">' + icons.plus + ' Добавить поставщика</button></div></div>';
+            }
+
+            if (!selectedScheduleSupplier || !deliverySchedule[selectedScheduleSupplier]) {
+                selectedScheduleSupplier = supplierNames[0];
+            }
+
+            var current = selectedScheduleSupplier;
+            var supplierData = deliverySchedule[current] || {};
+
+            // Боковая панель поставщиков
+            var sidebar = supplierNames.map(function(name) {
+                var isActive = name === current;
+                // Считаем сколько заказов в пути у этого поставщика
+                var transitForSup = inTransitOrders.filter(function(o) { return o.supplier === name && o.status === 'in_transit'; }).length;
+                var badge = transitForSup > 0 ? '<span class="ml-1 bg-blue-500 text-white text-[9px] px-1.5 rounded-full">' + transitForSup + '</span>' : '';
+                return '<button onclick="selectedScheduleSupplier=\'' + esc(name) + '\';render()" class="w-full text-left px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ' + (isActive ? 'bg-amber-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-100 border border-gray-200') + '" title="' + esc(name) + '">' + esc(name) + badge + '</button>';
+            }).join('');
+
+            // Таблица доставки
+            var totalsByDay = [0,0,0,0,0,0,0];
+            var totalActiveCells = 0;
+
+            var storeRows = stores.map(function(s) {
+                var days = supplierData[s.tt] || [false,false,false,false,false,false,false];
+                var cells = days.map(function(checked, di) {
+                    if (checked) { totalsByDay[di]++; totalActiveCells++; }
+                    var isWeekend = di >= 5;
+                    var cbClass = checked
+                        ? 'w-5 h-5 rounded bg-emerald-500 text-white border-0 cursor-pointer flex items-center justify-center transition-colors'
+                        : 'w-5 h-5 rounded bg-white border-2 border-gray-300 cursor-pointer flex items-center justify-center transition-colors';
+                    var inner = checked
+                        ? '<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>'
+                        : '';
+                    // Показываем ближайшие доставки
+                    var isToday = false;
+                    var today = new Date();
+                    today.setHours(0,0,0,0);
+                    var dow = today.getDay();
+                    var arrIdx = dow === 0 ? 6 : dow - 1;
+                    if (di === arrIdx && checked) isToday = true;
+
+                    var bgExtra = '';
+                    if (isToday) bgExtra = 'ring-2 ring-amber-400 ring-offset-1';
+
+                    return '<td class="px-0.5 py-0.5 ' + (isWeekend ? 'bg-red-50' : '') + '"><div class="flex justify-center"><button class="' + cbClass + ' ' + bgExtra + '" onclick="toggleDeliveryDay(\'' + esc(current) + '\',\'' + esc(s.tt) + '\',' + di + ')">' + inner + '</button></div></td>';
+                }).join('');
+                var activeCount = days.filter(Boolean).length;
+                return '<tr class="hover:bg-gray-50"><td class="text-left px-2 py-1 font-medium text-gray-700 text-xs whitespace-nowrap max-w-[200px] truncate" title="' + esc(s.tt) + '">' + esc(s.tt) + '</td>' + cells + '<td class="px-1.5 py-1 text-xs font-medium" style="color:' + (activeCount > 0 ? '#374151' : '#9ca3af') + '">' + (activeCount > 0 ? activeCount + ' дн.' : '—') + '</td></tr>';
+            }).join('');
+
+            var totalCells = DAY_NAMES.map(function(d, i) {
+                var isWeekend = i >= 5;
+                var cnt = totalsByDay[i];
+                return '<td class="px-0.5 py-1 text-xs font-bold ' + (isWeekend ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-700') + '">' + (cnt > 0 ? cnt : '') + '</td>';
+            }).join('');
+
+            var totalRow = '<tr class="bg-gray-50 font-bold"><td class="text-left px-2 py-1 text-xs font-bold text-gray-800 sticky left-0 bg-gray-50 z-10">Итого</td>' + totalCells + '<td class="px-1.5 py-1 text-xs font-bold text-gray-800 bg-gray-100">' + (totalActiveCells > 0 ? totalActiveCells + ' дн.' : '—') + '</td></tr>';
+
+            return '<div class="space-y-3">' +
+                '<div class="bg-white rounded-lg border border-gray-200 p-3">' +
+                    '<div class="flex justify-between items-center flex-wrap gap-3">' +
+                        '<div class="flex gap-3 items-center flex-wrap">' +
+                            '<span class="text-sm font-semibold text-gray-700">' + icons.calendar + ' График доставок</span>' +
+                            '<span class="text-xs text-gray-400">' + supplierNames.length + ' поставщик(ов) • ' + stores.length + ' магазин(ов)</span>' +
+                        '</div>' +
+                        '<div class="flex gap-2">' +
+                            '<button onclick="importSuppliersFromUniversal()" class="btn px-3 py-1.5 text-xs font-medium text-violet-700 bg-violet-50 border border-violet-200 rounded-lg hover:bg-violet-100">' + icons.download + ' Подтянуть из универсального</button>' +
+                            '<button onclick="addSupplier()" class="btn px-3 py-1.5 text-sm font-medium text-white bg-sky-600 rounded-lg hover:bg-sky-700">' + icons.plus + ' Добавить поставщика</button>' +
+                        '</div>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="flex gap-3">' +
+                    '<div class="w-44 flex-shrink-0 space-y-1">' +
+                        '<div class="text-[10px] font-semibold text-gray-400 uppercase px-1 mb-1.5">Поставщики</div>' +
+                        sidebar +
+                    '</div>' +
+                    '<div class="flex-1 min-w-0">' +
+                        '<div class="flex items-center justify-between mb-2">' +
+                            '<h3 class="text-sm font-semibold text-gray-800 cursor-pointer hover:text-amber-600" onclick="renameSupplier(\'' + esc(current) + '\')" title="Нажмите для переименования">' + icons.truck + ' ' + esc(current) + '</h3>' +
+                            '<button onclick="deleteSupplier(\'' + esc(current) + '\')" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 bg-red-50 rounded-lg hover:bg-red-100">' + icons.trash + ' Удалить</button>' +
+                        '</div>' +
+                        '<div class="bg-white rounded-lg border border-gray-200 overflow-hidden">' +
+                            '<div class="overflow-x-auto">' +
+                                '<table class="w-full border-collapse text-center">' +
+                                    '<thead><tr class="bg-gray-50"><th class="text-left px-2 py-1 text-[10px] font-semibold text-gray-500 border-b sticky left-0 bg-gray-50 z-10">Магазин</th>' + DAY_NAMES.map(function(d, i) { return '<th class="px-0.5 py-1 text-[10px] font-semibold border-b w-8 ' + (i >= 5 ? 'text-red-500 bg-red-50' : 'text-gray-500') + '">' + d + '</th>'; }).join('') + '<th class="px-1.5 py-1 text-[10px] font-semibold text-gray-400 border-b">Итого</th></tr></thead>' +
+                                    '<tbody>' + storeRows + totalRow + '</tbody>' +
+                                '</table>' +
+                            '</div>' +
+                        '</div>' +
+                    '</div>' +
+                '</div>' +
+            '</div>';
+        }
+
+        // Подтянуть поставщиков из universal.html
+        function importSuppliersFromUniversal() {
+            var univProducts = load(SharedUtils.STORAGE_KEYS.UNIV_PRODUCTS, {});
+            var supplierSet = {};
+            Object.values(univProducts).forEach(function(p) {
+                if (p.supplier && p.supplier.trim()) {
+                    supplierSet[p.supplier.trim()] = true;
+                }
+            });
+
+            var supplierNames = Object.keys(supplierSet);
+            if (supplierNames.length === 0) {
+                alert('В универсальном расчёте нет товаров с указанным поставщиком.\nСначала назначьте поставщиков в разделе "Ассортимент".');
+                return;
+            }
+
+            var added = 0;
+            supplierNames.forEach(function(name) {
+                if (!deliverySchedule[name]) {
+                    deliverySchedule[name] = {};
+                    stores.forEach(function(s) {
+                        deliverySchedule[name][s.tt] = [false,false,false,false,false,false,false];
+                    });
+                    added++;
+                }
+            });
+
+            if (added > 0) {
+                if (!selectedScheduleSupplier) selectedScheduleSupplier = supplierNames[0];
+                save(KEYS.DELIVERY_SCHEDULE, deliverySchedule);
+                alert('Добавлено поставщиков: ' + added + '\n' + supplierNames.join(', '));
+            } else {
+                alert('Все поставщики из универсального расчёта уже есть в графике.');
+            }
+            render();
+        }
+
+        // === В ПУТИ ===
+        function renderIntransit() {
+            var allOrders = inTransitOrders || [];
+            var inTransit = allOrders.filter(function(o) { return o.status === 'in_transit'; });
+            var delivered = allOrders.filter(function(o) { return o.status === 'delivered'; });
+
+            // Фильтрация
+            var filteredInTransit = inTransit;
+            if (searchTransit) {
+                var s = searchTransit.toLowerCase();
+                filteredInTransit = filteredInTransit.filter(function(o) {
+                    return (o.supplier || '').toLowerCase().includes(s) || (o.orderName || '').toLowerCase().includes(s);
+                });
+            }
+            if (filterTransitStatus === 'overdue') {
+                filteredInTransit = filteredInTransit.filter(function(o) {
+                    if (!o.expectedDate) return false;
+                    return new Date(o.expectedDate) < new Date();
+                });
+            } else if (filterTransitStatus === 'today') {
+                filteredInTransit = filteredInTransit.filter(function(o) {
+                    if (!o.expectedDate) return false;
+                    var exp = new Date(o.expectedDate); exp.setHours(0,0,0,0);
+                    var today = new Date(); today.setHours(0,0,0,0);
+                    return exp.getTime() === today.getTime();
+                });
+            }
+
+            var totalInTransitItems = inTransit.reduce(function(s, o) { return s + (o.items || []).reduce(function(s2, i) { return s2 + (i.qty || 0); }, 0); }, 0);
+            var totalInTransitSum = inTransit.reduce(function(s, o) { return s + (o.items || []).reduce(function(s2, i) { return s2 + (i.sum || 0); }, 0); }, 0);
+
+            // Ближайшая доставка
+            var nextDeliveryStr = '—';
+            var minDays = Infinity;
+            inTransit.forEach(function(o) {
+                if (o.expectedDate) {
+                    var exp = new Date(o.expectedDate);
+                    exp.setHours(0,0,0,0);
+                    var today = new Date();
+                    today.setHours(0,0,0,0);
+                    var diff = Math.ceil((exp - today) / 86400000);
+                    if (diff >= 0 && diff < minDays) {
+                        minDays = diff;
+                        nextDeliveryStr = o.expectedDate + (diff === 0 ? ' (сегодня)' : diff === 1 ? ' (завтра)' : ' (через ' + diff + ' дн.)');
+                    }
+                }
+            });
+
+            var ordersHTML = filteredInTransit.length === 0 && delivered.length === 0
+                ? '<div class="text-center py-12"><div class="p-3 bg-gray-100 rounded-lg text-gray-400 inline-flex mb-3">' + icons.truck + '</div><p class="text-gray-500 text-sm">Нет заказов в пути</p><p class="text-gray-400 text-xs mt-1">Заказы автоматически появляются при сохранении заказа в "Универсальном расчёте"</p></div>'
+                : filteredInTransit.map(function(o) {
+                    var itemsTotal = (o.items || []).reduce(function(s, i) { return s + (i.qty || 0); }, 0);
+                    var itemsSum = (o.items || []).reduce(function(s, i) { return s + (i.sum || 0); }, 0);
+                    var daysRemaining = '';
+                    if (o.expectedDate) {
+                        var exp = new Date(o.expectedDate);
+                        exp.setHours(0,0,0,0);
+                        var today = new Date();
+                        today.setHours(0,0,0,0);
+                        var diff = Math.ceil((exp - today) / 86400000);
+                        if (diff < 0) daysRemaining = '<span class="text-red-600 font-medium">Просрочено на ' + Math.abs(diff) + ' дн.</span>';
+                        else if (diff === 0) daysRemaining = '<span class="text-amber-600 font-medium">Сегодня</span>';
+                        else daysRemaining = '<span class="text-sky-600">через ' + diff + ' дн.</span>';
+                    }
+                    var collapsed = collapsedInTransit[o.id];
+                    return '<div class="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">' +
+                        '<div class="flex items-center justify-between px-4 py-3 bg-blue-50 border-b border-blue-100 cursor-pointer" onclick="collapsedInTransit[' + o.id + ']=!collapsedInTransit[' + o.id + '];render()">' +
+                            '<div class="flex items-center gap-3">' +
+                                '<span class="bg-blue-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">В пути</span>' +
+                                '<div>' +
+                                    '<div class="text-sm font-semibold text-gray-800">' + esc(o.orderName || '') + '</div>' +
+                                    '<div class="text-[10px] text-gray-500">Поставщик: ' + esc(o.supplier || '—') + ' • Создан: ' + esc(o.createdAt || '—') + (o.expectedDate ? ' • Доставка: ' + o.expectedDate : '') + ' ' + daysRemaining + '</div>' +
+                                '</div>' +
+                            '</div>' +
+                            '<div class="flex items-center gap-2">' +
+                                '<span class="text-xs text-gray-500">' + itemsTotal + ' поз. • ' + itemsSum.toFixed(0) + ' ₽</span>' +
+                                '<span class="text-gray-400">' + (collapsed ? '▶' : '▼') + '</span>' +
+                                (o.expectedDate ? '<button onclick="event.stopPropagation();editExpectedDate(' + o.id + ')" class="btn px-2 py-1 text-[10px] text-gray-500 bg-white border border-gray-200 rounded hover:bg-gray-50" title="Изменить дату">📅</button>' : '') +
+                                '<button onclick="event.stopPropagation();markDelivered(' + o.id + ')" class="btn px-3 py-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 rounded-lg hover:bg-emerald-100">' + icons.check + ' Доставлено</button>' +
+                                '<button onclick="event.stopPropagation();deleteInTransitOrder(' + o.id + ')" class="btn px-2 py-1.5 text-xs font-medium text-red-600 bg-red-50 rounded-lg hover:bg-red-100">' + icons.trash + '</button>' +
+                            '</div>' +
+                        '</div>' +
+                        (collapsed ? '' :
+                        '<div class="overflow-x-auto"><table class="w-full border-collapse text-xs"><thead><tr class="bg-gray-50"><th class="text-left px-3 py-1.5 text-gray-500 font-medium border-b">Код</th><th class="text-left px-3 py-1.5 text-gray-500 font-medium border-b">Наименование</th><th class="text-center px-3 py-1.5 text-gray-500 font-medium border-b">Кол-во</th><th class="text-center px-3 py-1.5 text-gray-500 font-medium border-b">Сумма</th></tr></thead><tbody>' +
+                        (o.items || []).map(function(item) { return '<tr class="hover:bg-gray-50"><td class="text-left px-3 py-1 font-mono text-gray-600">' + (item.code || '') + '</td><td class="text-left px-3 py-1 text-gray-700">' + esc(item.name || '') + '</td><td class="text-center px-3 py-1 font-medium">' + (item.qty || 0) + '</td><td class="text-center px-3 py-1 text-gray-600">' + (item.sum || 0).toFixed(2) + ' ₽</td></tr>'; }).join('') +
+                        '</tbody></table></div>') +
+                    '</div>';
+                }).join('') + (delivered.length > 0 ?
+                    '<div class="mt-3"><div class="text-xs font-medium text-gray-500 mb-2 px-1">Доставленные (' + delivered.length + ')</div>' +
+                    delivered.map(function(o) {
+                        var itemsTotal = (o.items || []).reduce(function(s, i) { return s + (i.qty || 0); }, 0);
+                        var itemsSum = (o.items || []).reduce(function(s, i) { return s + (i.sum || 0); }, 0);
+                        var collapsed = collapsedInTransit[o.id];
+                        return '<div class="bg-white rounded-lg border border-gray-200 mb-2 opacity-60 hover:opacity-80 transition-opacity">' +
+                            '<div class="flex items-center justify-between px-4 py-2 bg-green-50 border-b border-green-100 cursor-pointer" onclick="collapsedInTransit[' + o.id + ']=!collapsedInTransit[' + o.id + '];render()">' +
+                                '<div class="flex items-center gap-2">' +
+                                    '<span class="bg-green-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">✓ Доставлено</span>' +
+                                    '<div class="text-xs text-gray-600">' + esc(o.orderName || o.supplier || '') + ' • ' + itemsTotal + ' поз. • ' + itemsSum.toFixed(0) + ' ₽</div>' +
+                                '</div>' +
+                                '<div class="flex items-center gap-2">' +
+                                    '<span class="text-[10px] text-gray-400">' + esc(o.createdAt || '') + '</span>' +
+                                    '<span class="text-gray-400 text-xs">' + (collapsed ? '▶' : '▼') + '</span>' +
+                                    '<button onclick="event.stopPropagation();deleteInTransitOrder(' + o.id + ')" class="btn inline-flex items-center justify-center w-7 h-7 text-xs text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg" title="Удалить">' + icons.trash + '</button>' +
+                                '</div>' +
+                            '</div>' +
+                            (collapsed ? '' :
+                            '<div class="overflow-x-auto"><table class="w-full border-collapse text-xs"><thead><tr class="bg-gray-50"><th class="text-left px-3 py-1 text-gray-500 font-medium border-b">Код</th><th class="text-left px-3 py-1 text-gray-500 font-medium border-b">Наименование</th><th class="text-center px-3 py-1 text-gray-500 font-medium border-b">Кол-во</th><th class="text-center px-3 py-1 text-gray-500 font-medium border-b">Сумма</th></tr></thead><tbody>' +
+                            (o.items || []).map(function(item) { return '<tr class="hover:bg-gray-50"><td class="text-left px-3 py-1 font-mono text-gray-600">' + (item.code || '') + '</td><td class="text-left px-3 py-1 text-gray-700">' + esc(item.name || '') + '</td><td class="text-center px-3 py-1 font-medium">' + (item.qty || 0) + '</td><td class="text-center px-3 py-1 text-gray-600">' + (item.sum || 0).toFixed(2) + ' ₽</td></tr>'; }).join('') +
+                            '</tbody></table></div>') +
+                        '</div>';
+                    }).join('') +
+                    '</div>' : '');
+
+            return '<div class="space-y-3">' +
+                '<div class="bg-white rounded-lg border border-gray-200 p-3">' +
+                    '<div class="flex justify-between items-center flex-wrap gap-3">' +
+                        '<div class="flex gap-3 items-center flex-wrap">' +
+                            '<div class="bg-blue-100 text-blue-800 rounded-md px-3 py-1.5"><div class="text-[10px] opacity-70">В ПУТИ</div><div class="text-lg font-bold">' + inTransit.length + '</div></div>' +
+                            '<div class="bg-sky-100 text-sky-800 rounded-md px-3 py-1.5"><div class="text-[10px] opacity-70">ПОЗИЦИЙ</div><div class="text-lg font-bold">' + totalInTransitItems + '</div></div>' +
+                            '<div class="bg-violet-100 text-violet-800 rounded-md px-3 py-1.5"><div class="text-[10px] opacity-70">СУММА</div><div class="text-lg font-bold">' + totalInTransitSum.toFixed(0) + ' ₽</div></div>' +
+                            '<div class="bg-amber-100 text-amber-800 rounded-md px-3 py-1.5"><div class="text-[10px] opacity-70">БЛИЖ. ДОСТАВКА</div><div class="text-sm font-bold">' + nextDeliveryStr + '</div></div>' +
+                        '</div>' +
+                        '<div class="flex gap-2">' +
+                            (delivered.length > 0 ? '<button onclick="clearDeliveredOrders()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-orange-500 rounded-lg hover:bg-orange-600">' + icons.trash + ' Очистить доставленные (' + delivered.length + ')</button>' : '') +
+                            (inTransit.length > 0 ? '<button onclick="exportAllInTransit()" class="btn px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">' + icons.export + ' Экспорт</button>' : '') +
+                        '</div>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="bg-white rounded-lg border border-gray-200 p-3">' +
+                    '<div class="flex flex-wrap gap-2 items-center">' +
+                        '<input type="text" placeholder="Поиск по поставщику..." value="' + esc(searchTransit) + '" oninput="searchTransit=this.value;render()" class="input w-48">' +
+                        '<select onchange="filterTransitStatus=this.value;render()" class="input bg-white">' +
+                            '<option value="">Все статусы</option>' +
+                            '<option value="overdue" ' + (filterTransitStatus === 'overdue' ? 'selected' : '') + '>Просроченные</option>' +
+                            '<option value="today" ' + (filterTransitStatus === 'today' ? 'selected' : '') + '>Доставка сегодня</option>' +
+                        '</select>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="space-y-2">' + ordersHTML + '</div>' +
+            '</div>';
+        }
+
+        function markDelivered(orderId) {
+            var order = inTransitOrders.find(function(o) { return o.id === orderId; });
+            if (!order) return;
+            order.status = 'delivered';
+            save(KEYS.INTRANSIT, inTransitOrders);
+            render();
+        }
+
+        function deleteInTransitOrder(orderId) {
+            if (!confirm('Удалить заказ?')) return;
+            inTransitOrders = inTransitOrders.filter(function(o) { return o.id !== orderId; });
+            save(KEYS.INTRANSIT, inTransitOrders);
+            render();
+        }
+
+        function editExpectedDate(orderId) {
+            var order = inTransitOrders.find(function(o) { return o.id === orderId; });
+            if (!order) return;
+            // Устанавливаем завтра как дефолт
+            var tomorrow = new Date();
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            var defDate = tomorrow.toISOString().split('T')[0];
+            var newDate = prompt('Дата ожидаемой доставки (ГГГГ-ММ-ДД):', order.expectedDate || defDate);
+            if (newDate === null) return;
+            // Валидация
+            var d = new Date(newDate);
+            if (isNaN(d.getTime())) { alert('Неверный формат даты. Используйте ГГГГ-ММ-ДД'); return; }
+            order.expectedDate = d.toISOString().split('T')[0];
+            save(KEYS.INTRANSIT, inTransitOrders);
+            render();
+        }
+
+        function clearDeliveredOrders() {
+            var delivered = inTransitOrders.filter(function(o) { return o.status === 'delivered'; });
+            if (delivered.length === 0) { alert('Нет доставленных заказов'); return; }
+            if (!confirm('Удалить ' + delivered.length + ' доставленных заказов?')) return;
+            inTransitOrders = inTransitOrders.filter(function(o) { return o.status !== 'delivered'; });
+            save(KEYS.INTRANSIT, inTransitOrders);
+            render();
+        }
+
+        function exportAllInTransit() {
+            var allOrders = inTransitOrders || [];
+            if (allOrders.length === 0) { alert('Нет заказов'); return; }
+            var rows = [['Заказ', 'Поставщик', 'Дата заказа', 'Ожидаемая доставка', 'Статус', 'Код', 'Наименование', 'Кол-во', 'Сумма']];
+            allOrders.forEach(function(o) {
+                var status = o.status === 'in_transit' ? 'В пути' : 'Доставлен';
+                (o.items || []).forEach(function(item) {
+                    rows.push([o.orderName || '', o.supplier || '', o.createdAt || '', o.expectedDate || '', status, item.code || '', item.name || '', item.qty || 0, (item.sum || 0).toFixed(2)]);
+                });
+            });
+            var headers = rows.shift();
+            var ws = SharedUtils.createStyledSheet(rows, headers, [0, 1, 3, 4, 6]);
+            var wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Доставки');
+            var d = new Date();
+            XLSX.writeFile(wb, 'dostavki_' + d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0') + '.xlsx');
+        }
+
+        init();
+    </script>
+</body>
+</html>

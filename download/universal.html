@@ -2120,42 +2120,48 @@
             if (!orderName.trim()) orderName = 'Заказ';
             orderName = orderName.trim();
 
+            // Спрашиваем дату ожидаемой доставки
+            var tomorrow = new Date();
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            var defDateStr = tomorrow.toISOString().split('T')[0];
+            var expectedDateStr = prompt('Ожидаемая дата доставки (ГГГГ-ММ-ДД):', defDateStr);
+            var expectedDate = '';
+            if (expectedDateStr !== null && expectedDateStr.trim()) {
+                var d = new Date(expectedDateStr.trim());
+                if (!isNaN(d.getTime())) {
+                    expectedDate = d.toISOString().split('T')[0];
+                } else {
+                    alert('Неверный формат даты — дата доставки не сохранена.\nМожете указать позже в "График доставок".');
+                }
+            }
+
+            var orderData = {
+                name: orderName,
+                createdAt: new Date().toISOString(),
+                date: new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+                items: savedOrderResults,
+                stats: savedOrderStats,
+                supplierGroups: supplierGroups,
+                totalOrderItems: totalOrderItems,
+                totalSum: totalSum,
+                orderEdits: Object.assign({}, orderEdits),
+                expectedDate: expectedDate
+            };
+
             // Проверяем — может это перезапись просматриваемого заказа?
             if (viewingOrderIdx !== null && savedOrdersList[viewingOrderIdx]) {
                 if (!confirm('Перезаписать заказ "' + esc(savedOrdersList[viewingOrderIdx].name) + '" от ' + savedOrdersList[viewingOrderIdx].date + '?\nДля нового нажмите "Отмена" и задайте другое название.')) return;
-                // Перезапись
-                savedOrdersList[viewingOrderIdx] = {
-                    id: savedOrdersList[viewingOrderIdx].id,
-                    name: orderName,
-                    createdAt: new Date().toISOString(),
-                    date: new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
-                    items: savedOrderResults,
-                    stats: savedOrderStats,
-                    supplierGroups: supplierGroups,
-                    totalOrderItems: totalOrderItems,
-                    totalSum: totalSum,
-                    orderEdits: Object.assign({}, orderEdits)
-                };
+                orderData.id = savedOrdersList[viewingOrderIdx].id;
+                savedOrdersList[viewingOrderIdx] = orderData;
             } else {
-                // Новый заказ
-                savedOrdersList.push({
-                    id: Date.now(),
-                    name: orderName,
-                    createdAt: new Date().toISOString(),
-                    date: new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
-                    items: savedOrderResults,
-                    stats: savedOrderStats,
-                    supplierGroups: supplierGroups,
-                    totalOrderItems: totalOrderItems,
-                    totalSum: totalSum,
-                    orderEdits: Object.assign({}, orderEdits)
-                });
+                orderData.id = Date.now();
+                savedOrdersList.push(orderData);
             }
 
             save(KEYS.SAVED_ORDERS_LIST, savedOrdersList);
             savedOrderDate = new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
             viewingOrderIdx = null;
-            alert('Заказ "' + orderName + '" сохранён!\n' + totalOrderItems + ' поз. на сумму ' + totalSum.toFixed(0) + ' ₽');
+            alert('Заказ "' + orderName + '" сохранён!\n' + totalOrderItems + ' поз. на сумму ' + totalSum.toFixed(0) + ' ₽' + (expectedDate ? '\nДоставка: ' + expectedDate : ''));
             render();
         }
 
