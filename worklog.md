@@ -37,3 +37,14 @@ Work Log:
 Stage Summary:
 - Root cause: missing lz-string library prevented decompression of stores data from localStorage
 - File: /home/z/my-project/download/delivery-fix.zip
+---
+Task ID: 2
+Agent: main
+Task: Add Import button and auto-calculated Наценка column in universal.html Prices section
+
+Work Log:
+- Added green Import button with file input next to Export button in Prices section
+- Created importPrices() function that reads Excel with Code, Вход. цена, Наценка columns
+- Added auto-calculated Наценка column (bg-sky-100) showing effective markup %
+- Updated exportPrices() to include Наценка расч. column
+- File: /home/z/my-project/download/universal-prices-update.zip

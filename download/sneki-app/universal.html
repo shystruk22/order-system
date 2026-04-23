@@ -941,8 +941,10 @@
                         <h2 class="text-sm font-semibold text-gray-800 flex items-center gap-2">${icons.dollar}Цены по товарам</h2>
                         <div class="flex gap-2">
                             <input type="text" placeholder="Поиск..." value="${searchPrices}" oninput="searchPrices=this.value;render()" class="input w-40">
-                            <button onclick="exportPrices()" class="btn px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50">${icons.download}</button>
+                            <button onclick="document.getElementById('pricesImportInput').click()" class="btn px-3 py-1.5 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700">${icons.import} Импорт</button>
+                            <button onclick="exportPrices()" class="btn px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">${icons.export} Экспорт</button>
                         </div>
+                        <input type="file" id="pricesImportInput" accept=".xlsx,.xls" class="hidden" onchange="importPrices(event)">
                     </div>
                     <div class="table-container">
                         <table class="table-modern">
@@ -953,6 +955,7 @@
                                     <th class="text-center">Вход. цена</th>
                                     <th class="text-center bg-green-100">Полка ₽</th>
                                     <th class="text-center bg-orange-100">Наценка %</th>
+                                    <th class="text-center bg-sky-100">Наценка</th>
                                     <th class="text-center">Доход ₽</th>
                                     <th class="text-center">Доход %</th>
                                 </tr>
@@ -968,6 +971,7 @@
                                     const profit = shelfPrice - inPrice;
                                     const profitPercent = inPrice > 0 ? ((profit / inPrice) * 100).toFixed(1) : 0;
                                     const hasIndividual = p.markup !== undefined && p.markup !== null;
+                                    const autoMarkup = inPrice > 0 ? ((shelfPrice - inPrice) / inPrice * 100).toFixed(1) : 0;
                                     return `
                                         <tr class="hover:bg-gray-50">
                                             <td class="text-left font-medium text-gray-700">${p.nomenclature || ''}</td>
@@ -975,6 +979,7 @@
                                             <td class="text-center"><input type="number" value="${inPrice}" onchange="updateProduct('${code}', 'inPrice', parseFloat(this.value)||0)" class="input w-20 text-center text-xs"></td>
                                             <td class="text-center font-semibold bg-green-50">${shelfPrice.toLocaleString('ru-RU')} ₽</td>
                                             <td class="text-center bg-orange-50"><input type="number" value="${hasIndividual ? p.markup : ''}" onchange="updateProductMarkup('${code}', this.value)" placeholder="${groupMarkups[p.group || ''] ?? defaultMarkup}" class="input w-14 text-center text-xs font-bold ${hasIndividual ? 'text-blue-700' : ''}"></td>
+                                            <td class="text-center bg-sky-50 font-semibold text-sky-700 text-xs">${autoMarkup}%</td>
                                             <td class="text-center font-medium ${profit > 0 ? 'text-emerald-600' : 'text-gray-500'}">${profit.toLocaleString('ru-RU')} ₽</td>
                                             <td class="text-center font-medium ${profit > 0 ? 'text-emerald-600' : 'text-gray-500'}">${profitPercent}%</td>
                                         </tr>`;
@@ -1002,15 +1007,56 @@
             }
         }
 
+        function importPrices(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                try {
+                    const data = new Uint8Array(ev.target.result);
+                    const wb = XLSX.read(data, { type: 'array' });
+                    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
+                    if (rows.length < 2) { alert('Файл пуст'); return; }
+                    const headers = rows[0].map(h => String(h || '').trim().toLowerCase());
+                    const codeIdx = headers.findIndex(h => h === 'код');
+                    const inPriceIdx = headers.findIndex(h => h.includes('вход'));
+                    const markupIdx = headers.findIndex(h => h.includes('наценка'));
+                    if (codeIdx < 0) { alert('Не найдена колонка "Код" в файле'); return; }
+                    let updated = 0;
+                    for (let i = 1; i < rows.length; i++) {
+                        const r = rows[i];
+                        if (!r[codeIdx]) continue;
+                        const code = String(r[codeIdx]).trim();
+                        const normC = normCode(code);
+                        if (!matrix[normC]) continue;
+                        if (inPriceIdx >= 0 && r[inPriceIdx] !== undefined && r[inPriceIdx] !== '') {
+                            matrix[normC].inPrice = parseFloat(r[inPriceIdx]) || 0;
+                        }
+                        if (markupIdx >= 0 && r[markupIdx] !== undefined && r[markupIdx] !== '') {
+                            const val = parseFloat(r[markupIdx]);
+                            if (!isNaN(val)) matrix[normC].markup = val;
+                        }
+                        updated++;
+                    }
+                    save(KEYS.MATRIX, matrix);
+                    render();
+                    alert(`Обновлено ${updated} товаров`);
+                } catch (err) { alert('Ошибка: ' + err.message); }
+            };
+            reader.readAsArrayBuffer(file);
+            event.target.value = '';
+        }
+
         function exportPrices() {
-            const headers = ['Группа', 'Наименование', 'Код', 'Вход. цена', 'Наценка %', 'Полка', 'Доход ₽', 'Доход %'];
+            const headers = ['Группа', 'Наименование', 'Код', 'Вход. цена', 'Наценка %', 'Наценка расч.', 'Полка', 'Доход ₽', 'Доход %'];
             const data = [];
             Object.entries(matrix).forEach(([code, p]) => {
                 const inPrice = p.inPrice || 0;
                 const markup = p.markup ?? groupMarkups[p.group || ''] ?? defaultMarkup;
                 const shelfPrice = Math.round(inPrice * (1 + markup / 100));
                 const profit = shelfPrice - inPrice;
-                data.push([p.group || '', p.nomenclature || '', code, inPrice, markup, shelfPrice, profit, inPrice > 0 ? ((profit / inPrice) * 100).toFixed(1) + '%' : '0%']);
+                const autoMarkup = inPrice > 0 ? ((shelfPrice - inPrice) / inPrice * 100).toFixed(1) : 0;
+                data.push([p.group || '', p.nomenclature || '', code, inPrice, markup, autoMarkup + '%', shelfPrice, profit, inPrice > 0 ? ((profit / inPrice) * 100).toFixed(1) + '%' : '0%']);
             });
             const ws = SharedUtils.createStyledSheet(data, headers, [0, 1]);
             const wb = XLSX.utils.book_new();
