@@ -921,16 +921,30 @@
                 </div>
                 
                 <div class="bg-white rounded-lg border border-gray-200 p-4">
-                    <h3 class="text-sm font-semibold text-gray-800 mb-3">Наценки по категориям</h3>
+                    <div class="flex justify-between items-center mb-3">
+                        <h3 class="text-sm font-semibold text-gray-800">Наценки по категориям</h3>
+                        <span class="text-[10px] text-gray-400">Среднее по группе — авто, своя наценка — вручную</span>
+                    </div>
                     <div class="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 max-h-[200px] overflow-auto">
                         ${allGroups.map(group => {
-                            const markup = groupMarkups[group] ?? '';
-                            return `<div class="bg-gray-50 rounded px-2 py-2 text-xs border">
+                            const groupItems = Object.values(matrix).filter(p => p.group === group);
+                            const withPrice = groupItems.filter(p => (p.inPrice || 0) > 0 && (p.shelf || 0) > 0);
+                            let avgMarkup = 0;
+                            if (withPrice.length > 0) {
+                                const sum = withPrice.reduce((s, p) => s + (((p.shelf || 0) - (p.inPrice || 0)) / (p.inPrice || 0) * 100), 0);
+                                avgMarkup = (sum / withPrice.length).toFixed(1);
+                            }
+                            const hasCustom = groupMarkups[group] !== undefined;
+                            const displayVal = hasCustom ? groupMarkups[group] : '';
+                            const phVal = withPrice.length > 0 ? avgMarkup : defaultMarkup;
+                            return `<div class="rounded px-2 py-2 text-xs border ${hasCustom ? 'bg-orange-50 border-orange-300' : 'bg-gray-50 border-gray-200'}">
                                 <div class="font-medium text-gray-700 break-words leading-tight" style="min-height: 32px; word-break: break-word;">${group}</div>
+                                <div class="text-[10px] text-gray-400 mt-0.5">${groupItems.length} тов.${withPrice.length > 0 ? ' • ср. ' + avgMarkup + '%' : ''}</div>
                                 <div class="flex items-center gap-1 mt-1">
-                                    <input type="number" value="${markup}" onchange="updateGroupMarkup('${group}', this.value)" placeholder="${defaultMarkup}" class="input w-14 text-center text-xs font-bold py-0.5" step="0.1">
+                                    <input type="number" value="${displayVal}" onchange="updateGroupMarkup('${group}', this.value)" placeholder="${phVal}" class="input w-14 text-center text-xs font-bold py-0.5" step="0.1">
                                     <span class="text-gray-400 text-[10px]">%</span>
                                 </div>
+                                ${hasCustom ? '<div class="text-[9px] text-orange-500 mt-0.5">Применена ко всем товарам</div>' : ''}
                             </div>`;
                         }).join('')}
                     </div>
@@ -992,8 +1006,18 @@
         }
 
         function updateGroupMarkup(group, value) {
-            if (value === '' || value === null) delete groupMarkups[group];
-            else groupMarkups[group] = parseFloat(value) || 0;
+            if (value === '' || value === null) {
+                delete groupMarkups[group];
+            } else {
+                const newMarkup = parseFloat(value) || 0;
+                groupMarkups[group] = newMarkup;
+                Object.entries(matrix).forEach(([code, p]) => {
+                    if (p.group === group) {
+                        p.markup = newMarkup;
+                    }
+                });
+                save(KEYS.MATRIX, matrix);
+            }
             save(KEYS.GROUP_MARKUPS, groupMarkups);
             render();
         }
