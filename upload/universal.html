@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Универсальный расчёт</title>
-    <!-- Version: 1.8 -->
+    <!-- Version: 2.1 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -89,8 +89,14 @@
         let savedOrderStats = null;   // Сохранённая статистика заказа
         let orderEdits = {};          // Ручные правки заказа: {"tt_code": value}
         let newMarkupEdits = {};      // Временные «новые наценки» для вкладки Цены: {"code": value}
+        let savedOrderDate = null;    // Дата сохранённого заказа
+        let ndsRate = 20;             // Стандартная ставка НДС %
+        let ndflRate = 6;             // Ставка НДФЛ %
+        let onlineFeeRate = 1;        // 1% за онлайн-обслуживание
+        let savedOrdersList = [];     // Список всех сохранённых заказов
+        let viewingOrderIdx = null;   // Индекс просматриваемого заказа из списка
 
-        function resetSavedOrders() { savedOrderResults = null; savedOrderStats = null; orderEdits = {}; }
+        function resetSavedOrders() { savedOrderResults = null; savedOrderStats = null; orderEdits = {}; savedOrderDate = null; viewingOrderIdx = null; }
 
         const KEYS = {
             ASSORTMENT: SharedUtils.STORAGE_KEYS.UNIV_PRODUCTS,
@@ -101,7 +107,9 @@
             SUPPLIERS: SharedUtils.STORAGE_KEYS.UNIV_SUPPLIERS,
             CURRENT_SUPPLIER: SharedUtils.STORAGE_KEYS.UNIV_CURRENT_SUPPLIER,
             DEFAULT_MARKUP: SharedUtils.STORAGE_KEYS.UNIV_DEFAULT_MARKUP,
-            GROUP_MARKUPS: SharedUtils.STORAGE_KEYS.UNIV_GROUP_MARKUPS
+            GROUP_MARKUPS: SharedUtils.STORAGE_KEYS.UNIV_GROUP_MARKUPS,
+            SAVED_ORDER: 'univ_saved_order_v1',
+            SAVED_ORDERS_LIST: 'univ_saved_orders_list_v1'
         };
 
         // Поля каталога товаров (не ДА/НЕТ)
@@ -120,6 +128,22 @@
                         SharedUtils.save(SharedUtils.STORAGE_KEYS.MATRIX, data);
                         if (window.SharedData) SharedData.saveMatrixMarks(data, 'universal');
                     } catch(e) {}
+                }
+                // Синхронизация ассортимента с другими файлами
+                if (key === KEYS.ASSORTMENT) {
+                    try {
+                        // Конвертируем object→array для shared_products_v1
+                        const arr = Object.values(data).map(p => ({
+                            code: p.code, nomenclature: p.nomenclature || p.name || '',
+                            group: p.group || '', packaging: p.packaging || 'ШТ',
+                            supplier: p.supplier || '', price: p.price || 0,
+                            inPrice: p.inPrice || p.price || 0, shelfPrice: p.shelfPrice || 0,
+                            shelf: p.shelf || 0, quant: p.quant || 1, volume: p.volume || 0,
+                            markup: p.markup || defaultMarkup
+                        }));
+                        SharedUtils.save(SharedUtils.STORAGE_KEYS.PRODUCTS, arr);
+                        if (window.SharedData) SharedData.saveProducts(arr, 'universal');
+                    } catch(e) { console.error('Assortment sync error:', e); }
                 }
             } catch (e) { console.error('Save error:', e); }
         };
@@ -397,6 +421,30 @@
             defaultMarkup = load(KEYS.DEFAULT_MARKUP, 25);
             groupMarkups = load(KEYS.GROUP_MARKUPS, {});
 
+            // Загрузка списка сохранённых заказов (автоудаление после 14 дней)
+            cleanupOldOrders();
+            savedOrdersList = load(KEYS.SAVED_ORDERS_LIST, []);
+            // Миграция: если есть старый одиночный заказ — переносим в список
+            var oldSaved = load(KEYS.SAVED_ORDER, null);
+            if (oldSaved && oldSaved.createdAt && (Date.now() - new Date(oldSaved.createdAt).getTime()) < 14 * 86400000) {
+                savedOrdersList.push({
+                    id: Date.now(),
+                    name: 'Заказ (мигрированный)',
+                    createdAt: oldSaved.createdAt,
+                    date: oldSaved.date,
+                    items: oldSaved.items,
+                    stats: oldSaved.stats,
+                    supplierGroups: oldSaved.supplierGroups || {},
+                    totalOrderItems: oldSaved.totalOrderItems || 0,
+                    totalSum: oldSaved.totalSum || 0,
+                    orderEdits: oldSaved.orderEdits || {}
+                });
+                save(KEYS.SAVED_ORDERS_LIST, savedOrdersList);
+                SharedUtils.save(KEYS.SAVED_ORDER, null);
+            } else {
+                if (oldSaved) SharedUtils.save(KEYS.SAVED_ORDER, null);
+            }
+
             // Загрузка с миграцией: старый формат (всё в matrix) → новый (matrix + matrixMarks)
             const savedAssort = load(KEYS.ASSORTMENT, null);
             const savedMarks = load(KEYS.MATRIX_MARKS, null);
@@ -435,13 +483,73 @@
             
             window.addEventListener('storage', (e) => {
                 if (e.key === KEYS.STORES) loadStoresFromHTML();
+                if (e.key === SharedUtils.STORAGE_KEYS.PRODUCTS) {
+                    // Другая вкладка изменила ассортимент — перезагрузить
+                    try {
+                        const arr = SharedUtils.load(SharedUtils.STORAGE_KEYS.PRODUCTS, null);
+                        if (Array.isArray(arr) && arr.length > 0) {
+                            const obj = {};
+                            arr.forEach(p => {
+                                if (p.code) obj[normCode(p.code)] = {
+                                    ...p, inPrice: p.inPrice || p.price || 0,
+                                    markup: p.markup || defaultMarkup
+                                };
+                            });
+                            matrix = obj;
+                            save(KEYS.ASSORTMENT, matrix);
+                            resetSavedOrders();
+                            render();
+                        }
+                    } catch(e) {}
+                }
+                if (e.key === SharedUtils.STORAGE_KEYS.MATRIX || e.key === 'db_matrix_marks_v1') {
+                    // Другая вкладка изменила матрицу — перезагрузить
+                    try {
+                        const newMarks = SharedUtils.load(SharedUtils.STORAGE_KEYS.MATRIX, null);
+                        if (newMarks && Object.keys(newMarks).length > 0) {
+                            matrixMarks = newMarks;
+                            save(KEYS.MATRIX_MARKS, matrixMarks);
+                            resetSavedOrders();
+                            render();
+                        }
+                    } catch(e) {}
+                }
             });
 
-            // Синхронизация отметок матрицы через polling (только ДА/НЕТ, без изменения ассортимента)
+            // Синхронизация через polling SharedData
             if (window.SharedData) {
                 SharedData.onChange(({source}) => {
                     if (source !== 'universal') {
                         try {
+                            // Синхронизация ассортимента
+                            const newProducts = SharedData.getProducts();
+                            if (newProducts && Array.isArray(newProducts) && newProducts.length > 0) {
+                                const obj = {};
+                                newProducts.forEach(p => {
+                                    if (p.code) {
+                                        const code = normCode(p.code);
+                                        obj[code] = {
+                                            ...p, inPrice: p.inPrice || p.price || 0,
+                                            markup: p.markup || defaultMarkup
+                                        };
+                                    }
+                                });
+                                let changed = false;
+                                Object.entries(obj).forEach(([code, item]) => {
+                                    if (!matrix[code] || matrix[code].nomenclature !== item.nomenclature ||
+                                        matrix[code].price !== item.price || matrix[code].group !== item.group) {
+                                        changed = true;
+                                    }
+                                });
+                                if (changed || Object.keys(matrix).length !== Object.keys(obj).length) {
+                                    matrix = obj;
+                                    save(KEYS.ASSORTMENT, matrix);
+                                    resetSavedOrders();
+                                    render();
+                                }
+                            }
+
+                            // Синхронизация отметок матрицы (ДА/НЕТ)
                             const newMarks = SharedData.getMatrixMarks();
                             if (newMarks && Object.keys(newMarks).length > 0) {
                                 let changed = false;
@@ -829,7 +937,8 @@
                     </div>
                     <div class="flex gap-2">
                         <button onclick="showAddProductModal()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700">${icons.plus} Добавить</button>
-                        <button onclick="exportAssortment()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">${icons.export} Экспорт</button>
+                        <label class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-violet-700 bg-violet-50 border border-violet-200 rounded-lg hover:bg-violet-100 cursor-pointer">${icons.upload} Импорт<input type="file" accept=".xlsx,.xls,.csv" onchange="importAssortment(this)" class="hidden"></label>
+                        <button onclick="exportAssortment()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">${icons.export} Экспорт в Excel</button>
                     </div>
                 </div>
             </div>`;
@@ -926,7 +1035,10 @@
             if (!product) return;
             product[field] = value;
             save(KEYS.ASSORTMENT, matrix);
-            if (['inPrice', 'markup', 'group'].includes(field)) render();
+            // Синхронизация: price ↔ inPrice (раздел Цены использует inPrice)
+            if (field === 'price') product.inPrice = value;
+            if (field === 'inPrice') product.price = value;
+            if (['price', 'inPrice', 'shelfPrice', 'markup', 'group'].includes(field)) render();
         }
 
         function deleteProduct(code) {
@@ -1057,6 +1169,7 @@
                         </div>
                     </div>
                     <div class="flex gap-2">
+                        <button onclick="saveCurrentMatrix()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-violet-600 rounded-lg hover:bg-violet-700">${icons.save} Сохранить</button>
                         <button onclick="document.getElementById('matrixImportInput').click()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700">${icons.import} Импорт</button>
                         <input type="file" id="matrixImportInput" accept=".xlsx,.xls" onchange="importMatrix(this)" class="hidden">
                         <button onclick="exportMatrix()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">${icons.export} Экспорт</button>
@@ -1129,6 +1242,50 @@
             }
         }
 
+        function saveCurrentMatrix() {
+            const name = prompt('Введите название для сохранения матрицы:', 'Матрица ' + new Date().toLocaleDateString('ru-RU'));
+            if (!name) return;
+
+            const saved = SharedUtils.load(SharedUtils.STORAGE_KEYS.SAVED_MATRICES, []);
+            const existingIdx = saved.findIndex(s => s.name === name);
+
+            // Формируем данные матрицы: ассортимент + отметки вместе
+            const matrixData = {};
+            Object.keys(matrix).forEach(code => {
+                matrixData[code] = { ...matrix[code] };
+                if (matrixMarks[code]) {
+                    Object.entries(matrixMarks[code]).forEach(([tt, val]) => {
+                        matrixData[code][tt] = val;
+                    });
+                }
+            });
+
+            // Считаем количество ДА
+            let daCount = 0;
+            Object.values(matrixMarks).forEach(marks => {
+                Object.values(marks).forEach(v => { if (v === 'ДА') daCount++; });
+            });
+
+            const record = {
+                name,
+                date: new Date().toISOString(),
+                products: Object.keys(matrix).length,
+                inMatrix: Object.keys(matrixMarks).length,
+                daCount,
+                matrixData
+            };
+
+            if (existingIdx >= 0) {
+                if (!confirm('Матрица "' + name + '" уже существует. Перезаписать?')) return;
+                saved[existingIdx] = record;
+            } else {
+                saved.push(record);
+            }
+
+            SharedUtils.save(SharedUtils.STORAGE_KEYS.SAVED_MATRICES, saved);
+            alert('Матрица сохранена: "' + name + '"\n' + Object.keys(matrix).length + ' товаров, ' + daCount + ' отметок ДА');
+        }
+
         function importMatrix(input) {
             resetSavedOrders();
             const file = input.files[0];
@@ -1166,23 +1323,29 @@
         function exportMatrix() {
             if (Object.keys(matrix).length === 0) { alert('Нет данных'); return; }
 
-            // Собираем данные в единый формат
             const storeList = stores.map(s => s.tt);
-            const items = Object.entries(matrix).map(([code, p]) => {
-                const item = { code, nomenclature: p.nomenclature || '' };
+            const headers = ['Группа', 'Наименование', 'Код', ...storeList];
+            const data = Object.entries(matrix).map(([code, p]) => {
+                const row = [p.group || '', p.nomenclature || '', code];
                 storeList.forEach(tt => {
-                    item[tt] = (matrixMarks[code] && matrixMarks[code][tt] === 'ДА') ? 'ДА' : 'НЕТ';
+                    row.push((matrixMarks[code] && matrixMarks[code][tt] === 'ДА') ? 'ДА' : 'НЕТ');
                 });
-                return item;
+                return row;
             });
 
-            SharedUtils.exportMatrixExcel(items, storeList);
+            const ws = SharedUtils.createStyledSheet(data, headers, [0, 1]);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Матрица');
+
+            const d = new Date();
+            XLSX.writeFile(wb, 'матрица_' + d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') + '.xlsx');
         }
 
         // === ЦЕНЫ ===
         function renderPrices() {
             const allGroups = getAllGroups();
             let totalRevenue = 0, totalProfit = 0, totalPurchase = 0;
+            let totalNdsPayable = 0, totalNdfl = 0, totalOnlineFee = 0, totalNetIncome = 0;
             
             sales.forEach(s => {
                 const nc = s.code ? normCode(s.code) : null;
@@ -1191,11 +1354,22 @@
                 if (product) {
                     const inPrice = product.inPrice || 0;
                     const shelfPrice = product.shelfPrice > 0 ? product.shelfPrice : inPrice * (1 + (product.markup ?? groupMarkups[product.group || ''] ?? defaultMarkup) / 100);
-                    totalPurchase += s.quantity * inPrice;
-                    totalRevenue += s.quantity * shelfPrice;
-                    totalProfit += s.quantity * (shelfPrice - inPrice);
+                    const qty = s.quantity;
+                    totalPurchase += qty * inPrice;
+                    totalRevenue += qty * shelfPrice;
+                    const profit = shelfPrice - inPrice;
+                    totalProfit += qty * profit;
+                    // НДС
+                    const ndsIn = inPrice * ndsRate / (100 + ndsRate);
+                    const ndsOut = shelfPrice * ndsRate / (100 + ndsRate);
+                    totalNdsPayable += qty * (ndsOut - ndsIn);
+                    // НДФЛ
+                    totalNdfl += qty * profit * ndflRate / 100;
+                    // 1% онлайн
+                    totalOnlineFee += qty * shelfPrice * onlineFeeRate / 100;
                 }
             });
+            totalNetIncome = totalProfit - totalNdsPayable - totalNdfl - totalOnlineFee;
 
             const individualMarkups = Object.values(matrix).filter(p => p.markup !== undefined && p.markup !== null).length;
             
@@ -1212,13 +1386,13 @@
                     </div>
                     
                     <div class="bg-white rounded-lg border border-gray-200 p-4">
-                        <h3 class="text-sm font-semibold text-gray-800 mb-3 flex items-center gap-2">${icons.dollar}Настройки наценок</h3>
-                        <div class="flex gap-3">
-                            <div class="flex-1 flex items-center justify-between bg-gray-50 px-3 py-2 rounded-lg border">
-                                <label class="text-sm text-gray-600">По умолчанию:</label>
+                        <h3 class="text-sm font-semibold text-gray-800 mb-3 flex items-center gap-2">${icons.dollar}Настройки</h3>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div class="flex items-center justify-between bg-gray-50 px-3 py-2 rounded-lg border">
+                                <label class="text-xs text-gray-600">Наценка %</label>
                                 <div class="flex items-center gap-1">
-                                    <input type="number" value="${defaultMarkup}" onchange="defaultMarkup=parseFloat(this.value)||25;save(KEYS.DEFAULT_MARKUP,defaultMarkup);render()" class="input w-16 text-center text-sm font-bold text-blue-700" step="0.1">
-                                    <span class="text-sm text-gray-500">%</span>
+                                    <input type="number" value="${defaultMarkup}" onchange="defaultMarkup=parseFloat(this.value)||25;save(KEYS.DEFAULT_MARKUP,defaultMarkup);render()" class="input w-14 text-center text-sm font-bold text-blue-700" step="0.1">
+                                    <span class="text-xs text-gray-400">%</span>
                                 </div>
                             </div>
                             <div class="bg-blue-50 px-3 py-2 rounded-lg border border-blue-200 text-center">
@@ -1226,20 +1400,85 @@
                                 <div class="text-lg font-bold text-blue-700">${individualMarkups}</div>
                             </div>
                         </div>
+                        <div class="grid grid-cols-3 gap-2 mt-2">
+                            <div class="flex items-center justify-between bg-yellow-50 px-2 py-1.5 rounded-lg border border-yellow-200">
+                                <label class="text-[10px] text-gray-600">НДС %</label>
+                                <div class="flex items-center gap-1">
+                                    <input type="number" value="${ndsRate}" onchange="ndsRate=parseFloat(this.value)||0;render()" class="input w-12 text-center text-xs font-bold text-yellow-700" step="0.1">
+                                    <span class="text-[10px] text-gray-400">%</span>
+                                </div>
+                            </div>
+                            <div class="flex items-center justify-between bg-orange-50 px-2 py-1.5 rounded-lg border border-orange-200">
+                                <label class="text-[10px] text-gray-600">НДФЛ %</label>
+                                <div class="flex items-center gap-1">
+                                    <input type="number" value="${ndflRate}" onchange="ndflRate=parseFloat(this.value)||0;render()" class="input w-12 text-center text-xs font-bold text-orange-700" step="0.1">
+                                    <span class="text-[10px] text-gray-400">%</span>
+                                </div>
+                            </div>
+                            <div class="flex items-center justify-between bg-purple-50 px-2 py-1.5 rounded-lg border border-purple-200">
+                                <label class="text-[10px] text-gray-600">Онлайн %</label>
+                                <div class="flex items-center gap-1">
+                                    <input type="number" value="${onlineFeeRate}" onchange="onlineFeeRate=parseFloat(this.value)||0;render()" class="input w-12 text-center text-xs font-bold text-purple-700" step="0.1">
+                                    <span class="text-[10px] text-gray-400">%</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Итоговые карточки: НДС, НДФЛ, Онлайн, Чистый доход -->
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-center">
+                        <div class="text-[10px] text-yellow-700 font-medium">НДС к уплате</div>
+                        <div class="text-lg font-bold ${totalNdsPayable > 0 ? 'text-yellow-800' : 'text-green-700'}">${totalNdsPayable.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')} ₽</div>
+                        <div class="text-[10px] text-yellow-600">Полка ${ndsRate}% − Вход ${ndsRate}%</div>
+                    </div>
+                    <div class="bg-orange-50 border border-orange-200 rounded-lg p-3 text-center">
+                        <div class="text-[10px] text-orange-700 font-medium">НДФЛ</div>
+                        <div class="text-lg font-bold text-orange-800">${totalNdfl.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')} ₽</div>
+                        <div class="text-[10px] text-orange-600">${ndflRate}% от прибыли</div>
+                    </div>
+                    <div class="bg-purple-50 border border-purple-200 rounded-lg p-3 text-center">
+                        <div class="text-[10px] text-purple-700 font-medium">Онлайн-обслуживание</div>
+                        <div class="text-lg font-bold text-purple-800">${totalOnlineFee.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')} ₽</div>
+                        <div class="text-[10px] text-purple-600">${onlineFeeRate}% от выручки</div>
+                    </div>
+                    <div class="bg-emerald-50 border border-emerald-300 rounded-lg p-3 text-center">
+                        <div class="text-[10px] text-emerald-700 font-semibold">ЧИСТЫЙ ДОХОД</div>
+                        <div class="text-lg font-bold ${totalNetIncome >= 0 ? 'text-emerald-700' : 'text-red-600'}">${totalNetIncome.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')} ₽</div>
+                        <div class="text-[10px] text-emerald-600">${totalRevenue > 0 ? ((totalNetIncome / totalRevenue) * 100).toFixed(1) : 0}% от выручки</div>
                     </div>
                 </div>
                 
                 <div class="bg-white rounded-lg border border-gray-200 p-4">
-                    <h3 class="text-sm font-semibold text-gray-800 mb-3">Наценки по категориям</h3>
+                    <div class="flex justify-between items-center mb-3">
+                        <h3 class="text-sm font-semibold text-gray-800">Наценки по категориям</h3>
+                        <span class="text-[10px] text-gray-400">Серый = средняя по группе, ввод = применить ко всей категории</span>
+                    </div>
                     <div class="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 max-h-[200px] overflow-auto">
                         ${allGroups.map(group => {
-                            const markup = groupMarkups[group] ?? '';
-                            return `<div class="bg-gray-50 rounded px-2 py-2 text-xs border">
-                                <div class="font-medium text-gray-700 break-words leading-tight" style="min-height: 32px; word-break: break-word;">${group}</div>
+                            const groupItems = Object.values(matrix).filter(p => p.group === group);
+                            const withPrice = groupItems.filter(p => (p.inPrice || 0) > 0 && ((p.shelfPrice || 0) > 0 || (p.shelf || 0) > 0));
+                            let avgMarkup = 0;
+                            if (withPrice.length > 0) {
+                                const sum = withPrice.reduce((s, p) => {
+                                    const sp = p.shelfPrice > 0 ? p.shelfPrice : (p.shelf || 0);
+                                    const ip = p.inPrice || 0;
+                                    return s + (ip > 0 ? ((sp - ip) / ip * 100) : 0);
+                                }, 0);
+                                avgMarkup = (sum / withPrice.length).toFixed(1);
+                            }
+                            const hasCustom = groupMarkups[group] !== undefined;
+                            const displayVal = hasCustom ? groupMarkups[group] : '';
+                            const phVal = withPrice.length > 0 ? avgMarkup : defaultMarkup;
+                            return `<div class="rounded px-2 py-2 text-xs border ${hasCustom ? 'bg-orange-50 border-orange-300' : 'bg-gray-50 border-gray-200'}">
+                                <div class="font-medium text-gray-700 break-words leading-tight" style="min-height: 28px; word-break: break-word;">${group}</div>
+                                <div class="text-[10px] text-gray-400 mt-0.5">${groupItems.length} тов.${withPrice.length > 0 ? ' · ср. ' + avgMarkup + '%' : ''}</div>
                                 <div class="flex items-center gap-1 mt-1">
-                                    <input type="number" value="${markup}" onchange="updateGroupMarkup('${esc(group)}', this.value)" placeholder="${defaultMarkup}" class="input w-14 text-center text-xs font-bold py-0.5" step="0.1">
+                                    <input type="number" value="${displayVal}" onchange="updateGroupMarkup('${esc(group)}', this.value)" placeholder="${phVal}" class="input w-14 text-center text-xs font-bold py-0.5" step="0.1">
                                     <span class="text-gray-400 text-[10px]">%</span>
                                 </div>
+                                ${hasCustom ? '<div class="text-[9px] text-orange-500 mt-0.5">Применена ко всем товарам</div>' : ''}
                             </div>`;
                         }).join('')}
                     </div>
@@ -1250,13 +1489,18 @@
                         <h2 class="text-sm font-semibold text-gray-800 flex items-center gap-2">${icons.dollar}Цены по товарам</h2>
                         <div class="flex gap-2">
                             <input id="pricesSearchInput" type="text" placeholder="Поиск..." value="${searchPrices}" oninput="debounceSearchPrices(this)" class="input w-40">
-                            <button onclick="exportPrices()" class="btn px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50">${icons.download}</button>
+                            <button onclick="document.getElementById('pricesImportInput').click()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700">${icons.import} Импорт</button>
+                            <button onclick="exportPrices()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">${icons.export} Экспорт цен</button>
+                            <input type="file" id="pricesImportInput" accept=".xlsx,.xls" class="hidden" onchange="importPrices(this)">
                         </div>
                     </div>
                     <div class="mb-2 px-2 py-1.5 bg-sky-50 rounded-md border border-sky-200 text-[11px] text-sky-700">
-                        <b>Как читать таблицу:</b> Первые колонки — текущие данные из ассортимента (наценка/маржа/доход рассчитаны автоматически). 
-                        Колонки <span class="text-blue-700 font-semibold">«Новая наценка»</span> — введите процент, чтобы увидеть, как изменятся цена, маржа и доход.
-                        Цена на полке меняется <b>только</b> через вкладку «Ассортимент».
+                        <b>Как читать таблицу:</b> Первые колонки — текущие данные из ассортимента. 
+                        <span class="text-yellow-700 font-semibold">НДС</span> = разница между НДС с полки и НДС со входа (к уплате в бюджет). 
+                        <span class="text-orange-700 font-semibold">НДФЛ</span> = налог на прибыль. 
+                        <span class="text-purple-700 font-semibold">Онлайн</span> = 1% от выручки. 
+                        <span class="text-emerald-700 font-semibold">Чистый доход</span> = Прибыль − НДС − НДФЛ − Онлайн.
+                        Колонки <span class="text-blue-700 font-semibold">«Новая наценка»</span> — введите процент, чтобы увидеть прогноз.
                     </div>
                     <div class="table-container">
                         <table class="table-modern">
@@ -1266,14 +1510,17 @@
                                     <th class="text-left">Наименование</th>
                                     <th class="text-center">Код</th>
                                     <th class="text-center">Вход.<br>цена</th>
+                                    <th class="text-center bg-amber-100">Новый<br>вход ₽</th>
                                     <th class="text-center bg-green-100">Цена<br>на полке</th>
-                                    <th class="text-center bg-orange-100">Наценка<br>%</th>
-                                    <th class="text-center">Маржа<br>%</th>
                                     <th class="text-center">Доход<br>₽</th>
+                                    <th class="text-center bg-yellow-100">НДС<br>к уплате</th>
+                                    <th class="text-center bg-orange-100">НДФЛ</th>
+                                    <th class="text-center bg-purple-100">Онлайн<br>1%</th>
+                                    <th class="text-center bg-emerald-100">Чистый<br>доход ₽</th>
+                                    <th class="text-center bg-sky-100">Наценка<br>%</th>
                                     <th class="text-center bg-blue-100">Новая<br>наценка %</th>
                                     <th class="text-center bg-blue-50">Новая<br>цена</th>
-                                    <th class="text-center bg-blue-50">Новая<br>маржа %</th>
-                                    <th class="text-center bg-blue-50">Новый<br>доход ₽</th>
+                                    <th class="text-center bg-blue-50">Новый<br>чист. доход</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -1290,7 +1537,7 @@
                                     });
                                     return Object.entries(grouped).sort((a,b) => a[0].localeCompare(b[0], 'ru')).map(([gr, items]) => `
                                         <tr class="group-header cursor-pointer" onclick="collapsedG['prices_${esc(gr)}']=!collapsedG['prices_${esc(gr)}'];renderPricesDebounced()">
-                                            <td colspan="12" class="text-left py-1 px-2">
+                                            <td colspan="15" class="text-left py-1 px-2">
                                                 <div class="flex items-center gap-2">
                                                     ${collapsedG['prices_' + gr] ? icons.chevronRight : icons.chevronDown}
                                                     <span class="font-semibold">${gr}</span>
@@ -1302,39 +1549,51 @@
                                             const inPrice = p.inPrice || 0;
                                             const markup = p.markup ?? groupMarkups[p.group || ''] ?? defaultMarkup;
                                             const shelfPrice = p.shelfPrice > 0 ? p.shelfPrice : Math.round(inPrice * (1 + markup / 100));
-                                            // Текущие расчётные показатели
-                                            const effectiveMarkup = inPrice > 0 ? Math.round(((shelfPrice - inPrice) / inPrice) * 100) : markup;
-                                            const margin = shelfPrice > 0 ? (((shelfPrice - inPrice) / shelfPrice) * 100).toFixed(1) : '0.0';
                                             const profit = shelfPrice - inPrice;
-                                            const hasIndividual = p.markup !== undefined && p.markup !== null;
-                                            // Новая наценка из временного хранилища
+                                            // НДС расчёт
+                                            const ndsIn = ndsRate > 0 ? inPrice * ndsRate / (100 + ndsRate) : 0;
+                                            const ndsOut = ndsRate > 0 ? shelfPrice * ndsRate / (100 + ndsRate) : 0;
+                                            const ndsPayable = ndsOut - ndsIn;
+                                            // НДФЛ
+                                            const ndfl = ndflRate > 0 ? profit * ndflRate / 100 : 0;
+                                            // Онлайн 1%
+                                            const onlineFee = onlineFeeRate > 0 ? shelfPrice * onlineFeeRate / 100 : 0;
+                                            // Чистый доход
+                                            const netIncome = profit - ndsPayable - ndfl - onlineFee;
+                                            // Новая наценка
                                             const newMarkupKey = 'newMarkup_' + p.code;
                                             const newMarkupVal = newMarkupEdits[newMarkupKey];
                                             const hasNewMarkup = newMarkupVal !== undefined && newMarkupVal !== '';
                                             const appliedNewMarkup = hasNewMarkup ? (parseFloat(newMarkupVal) || 0) : null;
-                                            let newPrice = '-', newMargin = '-', newProfit = '-';
+                                            let newPrice = '-', newNetIncome = '-';
                                             if (hasNewMarkup && inPrice > 0) {
                                                 newPrice = Math.round(inPrice * (1 + appliedNewMarkup / 100));
-                                                newMargin = newPrice > 0 ? (((newPrice - inPrice) / newPrice) * 100).toFixed(1) : '0.0';
-                                                newProfit = newPrice - inPrice;
+                                                const newProfit = newPrice - inPrice;
+                                                const newNdsIn = ndsRate > 0 ? inPrice * ndsRate / (100 + ndsRate) : 0;
+                                                const newNdsOut = ndsRate > 0 ? newPrice * ndsRate / (100 + ndsRate) : 0;
+                                                const newNdsPay = newNdsOut - newNdsIn;
+                                                const newNdfl = ndflRate > 0 ? newProfit * ndflRate / 100 : 0;
+                                                const newOnline = onlineFeeRate > 0 ? newPrice * onlineFeeRate / 100 : 0;
+                                                newNetIncome = newProfit - newNdsPay - newNdfl - newOnline;
                                             }
-                                            const newPriceClass = hasNewMarkup ? (newPrice > shelfPrice ? 'text-emerald-700' : newPrice < shelfPrice ? 'text-red-600' : 'text-gray-700') : 'text-gray-400';
-                                            const newMarginClass = hasNewMarkup ? (appliedNewMarkup > effectiveMarkup ? 'text-emerald-700' : appliedNewMarkup < effectiveMarkup ? 'text-red-600' : 'text-gray-700') : 'text-gray-400';
-                                            const newProfitClass = hasNewMarkup ? (newProfit > profit ? 'text-emerald-700' : newProfit < profit ? 'text-red-600' : 'text-gray-700') : 'text-gray-400';
+                                            const effectiveMarkup = inPrice > 0 ? ((shelfPrice - inPrice) / inPrice * 100).toFixed(1) : (markup || 0);
                                             return `
                                                 <tr class="hover:bg-gray-50">
                                                     <td class="text-left text-[10px] text-gray-500">${p.group || ''}</td>
                                                     <td class="text-left font-medium text-gray-700">${p.nomenclature || ''}</td>
                                                     <td class="text-center font-mono text-[10px] text-gray-500">${p.code}</td>
                                                     <td class="text-center">${inPrice.toLocaleString('ru-RU')} ₽</td>
+                                                    <td class="text-center bg-amber-50"><input type="number" step="0.01" value="" placeholder="—" oninput="handleNewInPriceInput(this)" onkeydown="if(event.key==='Enter'){event.preventDefault();applyNewInPrice(this)}" data-code="${esc(p.code)}" class="input w-16 text-center text-xs font-bold text-amber-700 bg-amber-50" title="Новый вход. Введите и нажмите Enter для сохранения"></td>
                                                     <td class="text-center font-semibold bg-green-50">${shelfPrice.toLocaleString('ru-RU')} ₽</td>
-                                                    <td class="text-center bg-orange-50 font-semibold text-orange-700">${effectiveMarkup}%</td>
-                                                    <td class="text-center font-medium text-gray-700">${margin}%</td>
                                                     <td class="text-center font-medium ${profit > 0 ? 'text-emerald-600' : 'text-gray-500'}">${profit.toLocaleString('ru-RU')} ₽</td>
-                                                    <td class="text-center bg-blue-50"><input type="number" value="${hasNewMarkup ? newMarkupVal : ''}" oninput="handleNewMarkupInput(this)" data-code="${esc(p.code)}" placeholder="—" class="input w-16 text-center text-xs font-bold text-blue-700"></td>
-                                                    <td class="text-center font-semibold ${newPriceClass}">${hasNewMarkup ? newPrice.toLocaleString('ru-RU') + ' ₽' : '—'}</td>
-                                                    <td class="text-center font-medium ${newMarginClass}">${hasNewMarkup ? newMargin + '%' : '—'}</td>
-                                                    <td class="text-center font-medium ${newProfitClass}">${hasNewMarkup ? newProfit.toLocaleString('ru-RU') + ' ₽' : '—'}</td>
+                                                    <td class="text-center text-xs font-medium ${ndsPayable > 0 ? 'text-yellow-700 bg-yellow-50' : 'text-gray-400'}">${ndsPayable > 0 ? ndsPayable.toFixed(2) + ' ₽' : '—'}</td>
+                                                    <td class="text-center text-xs font-medium text-orange-700 bg-orange-50">${ndfl > 0 ? ndfl.toFixed(2) + ' ₽' : '—'}</td>
+                                                    <td class="text-center text-xs font-medium text-purple-700 bg-purple-50">${onlineFee > 0 ? onlineFee.toFixed(2) + ' ₽' : '—'}</td>
+                                                    <td class="text-center font-semibold ${netIncome >= 0 ? 'text-emerald-700 bg-emerald-50' : 'text-red-600 bg-red-50'}">${netIncome.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')} ₽</td>
+                                                    <td class="text-center bg-sky-50 font-semibold text-sky-700 text-xs">${effectiveMarkup}%</td>
+                                                    <td class="text-center bg-blue-50"><input type="number" value="${hasNewMarkup ? newMarkupVal : ''}" oninput="handleNewMarkupInput(this)" data-code="${esc(p.code)}" placeholder="—" class="input w-14 text-center text-xs font-bold text-blue-700"></td>
+                                                    <td class="text-center font-semibold ${hasNewMarkup ? (newPrice > shelfPrice ? 'text-emerald-700' : newPrice < shelfPrice ? 'text-red-600' : 'text-gray-700') : 'text-gray-400'}">${hasNewMarkup ? newPrice.toLocaleString('ru-RU') + ' ₽' : '—'}</td>
+                                                    <td class="text-center font-semibold ${hasNewMarkup ? (newNetIncome >= netIncome ? 'text-emerald-700' : 'text-red-600') : 'text-gray-400'}">${hasNewMarkup && typeof newNetIncome === 'number' ? newNetIncome.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ' ₽' : '—'}</td>
                                                 </tr>`;
                                         }).join('')}
                                     `).join('');
@@ -1347,8 +1606,23 @@
         }
 
         function updateGroupMarkup(group, value) {
-            if (value === '' || value === null) delete groupMarkups[group];
-            else groupMarkups[group] = parseFloat(value) || 0;
+            if (value === '' || value === null) {
+                delete groupMarkups[group];
+            } else {
+                const newMarkup = parseFloat(value) || 0;
+                groupMarkups[group] = newMarkup;
+                // Применить наценку ко ВСЕМ товарам в категории
+                Object.entries(matrix).forEach(([code, p]) => {
+                    if (p.group === group) {
+                        p.markup = newMarkup;
+                        // Пересчитать цену на полку
+                        if (p.inPrice > 0) {
+                            p.shelfPrice = Math.round(p.inPrice * (1 + newMarkup / 100));
+                        }
+                    }
+                });
+                save(KEYS.ASSORTMENT, matrix);
+            }
             save(KEYS.GROUP_MARKUPS, groupMarkups);
             render();
         }
@@ -1360,6 +1634,66 @@
             if (value === '' || value === null) delete product.markup;
             else product.markup = parseFloat(value) || 0;
             save(KEYS.ASSORTMENT, matrix);
+            render();
+        }
+
+        // === ЖИВОЕ ОБНОВЛЕНИЕ «НОВЫЙ ВХОД» (применяется по Enter) ===
+        function handleNewInPriceInput(inputEl) {
+            const code = inputEl.dataset.code;
+            if (!code) return;
+            const row = inputEl.closest('tr');
+            if (!row) return;
+            const cells = row.querySelectorAll('td');
+            const val = parseFloat(inputEl.value);
+            const product = matrix[code] || matrix[normCode(code)];
+            if (!product) return;
+
+            // При вводе значения — показываем предпросмотр без сохранения
+            const currentInPrice = product.inPrice || 0;
+            const markup = product.markup ?? groupMarkups[product.group || ''] ?? defaultMarkup;
+
+            if (isNaN(val) || val <= 0) {
+                // Вернуть текущие значения
+                const shelfPrice = product.shelfPrice > 0 ? product.shelfPrice : Math.round(currentInPrice * (1 + markup / 100));
+                cells[5].innerHTML = shelfPrice.toLocaleString('ru-RU') + ' ₽';
+                cells[5].className = 'text-center font-semibold bg-green-50';
+                return;
+            }
+
+            // Предпросмотр: новая цена на полке
+            const newShelfPrice = Math.round(val * (1 + markup / 100));
+            const newProfit = newShelfPrice - val;
+            const ndsIn = ndsRate > 0 ? val * ndsRate / (100 + ndsRate) : 0;
+            const ndsOut = ndsRate > 0 ? newShelfPrice * ndsRate / (100 + ndsRate) : 0;
+            const ndsPay = ndsOut - ndsIn;
+            const ndfl = ndflRate > 0 ? newProfit * ndflRate / 100 : 0;
+            const onlineFee = onlineFeeRate > 0 ? newShelfPrice * onlineFeeRate / 100 : 0;
+            const netInc = newProfit - ndsPay - ndfl - onlineFee;
+
+            cells[5].innerHTML = '<span class="text-amber-700">' + newShelfPrice.toLocaleString('ru-RU') + ' ₽</span>';
+            cells[5].className = 'text-center font-semibold bg-amber-50';
+            cells[6].innerHTML = '<span class="' + (newProfit > 0 ? 'text-emerald-600' : 'text-gray-500') + '">' + newProfit.toLocaleString('ru-RU') + ' ₽</span>';
+            cells[7].innerHTML = ndsPay > 0 ? '<span class="text-yellow-700 bg-yellow-50">' + ndsPay.toFixed(2) + ' ₽</span>' : '—';
+            cells[8].innerHTML = ndfl > 0 ? '<span class="text-orange-700 bg-orange-50">' + ndfl.toFixed(2) + ' ₽</span>' : '—';
+            cells[9].innerHTML = onlineFee > 0 ? '<span class="text-purple-700 bg-purple-50">' + onlineFee.toFixed(2) + ' ₽</span>' : '—';
+            cells[10].innerHTML = '<span class="font-semibold ' + (netInc >= 0 ? 'text-emerald-700 bg-emerald-50' : 'text-red-600 bg-red-50') + '">' + netInc.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ' ₽</span>';
+        }
+
+        // Применение нового входа по Enter (сохраняет в ассортимент)
+        function applyNewInPrice(inputEl) {
+            const code = inputEl.dataset.code;
+            if (!code) return;
+            const val = parseFloat(inputEl.value);
+            if (isNaN(val) || val <= 0) return;
+            const product = matrix[code] || matrix[normCode(code)];
+            if (!product) return;
+            product.inPrice = val;
+            product.price = val;
+            // Пересчитать цену на полку
+            const markup = product.markup ?? groupMarkups[product.group || ''] ?? defaultMarkup;
+            product.shelfPrice = Math.round(val * (1 + markup / 100));
+            save(KEYS.ASSORTMENT, matrix);
+            inputEl.value = '';
             render();
         }
 
@@ -1386,57 +1720,128 @@
             const profit = shelfPrice - inPrice;
 
             const cells = row.querySelectorAll('td');
-            // cells[8] = новая наценка (input), cells[9] = новая цена, cells[10] = новая маржа, cells[11] = новый доход
+            // cells[11] = наценка % (авто), cells[12] = новая наценка (input), cells[13] = новая цена, cells[14] = новый чист. доход
             if (val === '' || !inPrice) {
-                cells[9].innerHTML = '—';
-                cells[9].className = 'text-center font-semibold text-gray-400';
-                cells[10].innerHTML = '—';
-                cells[10].className = 'text-center font-medium text-gray-400';
-                cells[11].innerHTML = '—';
-                cells[11].className = 'text-center font-medium text-gray-400';
+                cells[13].innerHTML = '—';
+                cells[13].className = 'text-center font-semibold text-gray-400';
+                cells[14].innerHTML = '—';
+                cells[14].className = 'text-center font-semibold text-gray-400';
                 return;
             }
 
             const appliedNewMarkup = parseFloat(val) || 0;
             const newPrice = Math.round(inPrice * (1 + appliedNewMarkup / 100));
-            const newMargin = newPrice > 0 ? (((newPrice - inPrice) / newPrice) * 100).toFixed(1) : '0.0';
             const newProfit = newPrice - inPrice;
+            const currentProfit = shelfPrice - inPrice;
+
+            // Расчёт нового чистого дохода с НДС, НДФЛ, Онлайн
+            const curNdsIn = ndsRate > 0 ? inPrice * ndsRate / (100 + ndsRate) : 0;
+            const curNdsOut = ndsRate > 0 ? shelfPrice * ndsRate / (100 + ndsRate) : 0;
+            const curNdsPay = curNdsOut - curNdsIn;
+            const curNdfl = ndflRate > 0 ? currentProfit * ndflRate / 100 : 0;
+            const curOnline = onlineFeeRate > 0 ? shelfPrice * onlineFeeRate / 100 : 0;
+            const curNet = currentProfit - curNdsPay - curNdfl - curOnline;
+
+            const newNdsIn = ndsRate > 0 ? inPrice * ndsRate / (100 + ndsRate) : 0;
+            const newNdsOut = ndsRate > 0 ? newPrice * ndsRate / (100 + ndsRate) : 0;
+            const newNdsPay = newNdsOut - newNdsIn;
+            const newNdfl = ndflRate > 0 ? newProfit * ndflRate / 100 : 0;
+            const newOnline = onlineFeeRate > 0 ? newPrice * onlineFeeRate / 100 : 0;
+            const newNet = newProfit - newNdsPay - newNdfl - newOnline;
 
             const priceClass = newPrice > shelfPrice ? 'text-emerald-700' : newPrice < shelfPrice ? 'text-red-600' : 'text-gray-700';
-            const marginClass = appliedNewMarkup > effectiveMarkup ? 'text-emerald-700' : appliedNewMarkup < effectiveMarkup ? 'text-red-600' : 'text-gray-700';
-            const profitClass = newProfit > profit ? 'text-emerald-700' : newProfit < profit ? 'text-red-600' : 'text-gray-700';
+            const netClass = newNet >= curNet ? 'text-emerald-700' : 'text-red-600';
 
-            cells[9].innerHTML = newPrice.toLocaleString('ru-RU') + ' ₽';
-            cells[9].className = 'text-center font-semibold ' + priceClass;
-            cells[10].innerHTML = newMargin + '%';
-            cells[10].className = 'text-center font-medium ' + marginClass;
-            cells[11].innerHTML = newProfit.toLocaleString('ru-RU') + ' ₽';
-            cells[11].className = 'text-center font-medium ' + profitClass;
+            cells[13].innerHTML = newPrice.toLocaleString('ru-RU') + ' ₽';
+            cells[13].className = 'text-center font-semibold ' + priceClass;
+            cells[14].innerHTML = newNet.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ' ₽';
+            cells[14].className = 'text-center font-semibold ' + netClass;
+        }
+
+        function importPrices(input) {
+            if (!input || !input.files || !input.files[0]) return;
+            const file = input.files[0];
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                try {
+                    const data = new Uint8Array(ev.target.result);
+                    const wb = XLSX.read(data, { type: 'array' });
+                    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
+                    if (rows.length < 2) { alert('Файл пуст'); return; }
+                    const headers = rows[0].map(h => String(h || '').trim().toLowerCase());
+                    const codeIdx = headers.findIndex(h => h === 'код');
+                    const inPriceIdx = headers.findIndex(h => h.includes('вход'));
+                    const markupIdx = headers.findIndex(h => h.includes('наценка'));
+                    if (codeIdx < 0) { alert('Не найдена колонка "Код" в файле'); return; }
+                    let updated = 0;
+                    for (let i = 1; i < rows.length; i++) {
+                        const r = rows[i];
+                        if (!r[codeIdx]) continue;
+                        const code = String(r[codeIdx]).trim();
+                        const normC = normCode(code);
+                        const product = matrix[normC] || matrix[code];
+                        if (!product) continue;
+                        if (inPriceIdx >= 0 && r[inPriceIdx] !== undefined && r[inPriceIdx] !== '') {
+                            product.inPrice = parseFloat(r[inPriceIdx]) || 0;
+                            product.price = product.inPrice;
+                            // Пересчитать цену на полку
+                            const markup = product.markup ?? groupMarkups[product.group || ''] ?? defaultMarkup;
+                            if (product.inPrice > 0) {
+                                product.shelfPrice = Math.round(product.inPrice * (1 + markup / 100));
+                            }
+                        }
+                        if (markupIdx >= 0 && r[markupIdx] !== undefined && r[markupIdx] !== '') {
+                            const val = parseFloat(r[markupIdx]);
+                            if (!isNaN(val)) {
+                                product.markup = val;
+                                if (product.inPrice > 0) {
+                                    product.shelfPrice = Math.round(product.inPrice * (1 + val / 100));
+                                }
+                            }
+                        }
+                        updated++;
+                    }
+                    save(KEYS.ASSORTMENT, matrix);
+                    render();
+                    alert('Обновлено ' + updated + ' товаров');
+                } catch (err) { alert('Ошибка: ' + err.message); }
+            };
+            reader.readAsArrayBuffer(file);
+            input.value = '';
         }
 
         function exportPrices() {
-            const headers = ['Группа', 'Наименование', 'Код', 'Вход. цена', 'Цена на полке', 'Наценка %', 'Маржа %', 'Доход ₽', 'Новая наценка %', 'Новая цена', 'Новая маржа %', 'Новый доход ₽'];
+            const headers = ['Группа', 'Наименование', 'Код', 'Вход. цена', 'Цена на полке', 'Доход ₽', 'НДС к уплате', 'НДФЛ', 'Онлайн 1%', 'Чистый доход ₽', 'Новая наценка %', 'Новая цена', 'Новый чист. доход ₽'];
             const data = [];
             Object.entries(matrix).forEach(([code, p]) => {
                 const inPrice = p.inPrice || 0;
                 const markup = p.markup ?? groupMarkups[p.group || ''] ?? defaultMarkup;
                 const shelfPrice = p.shelfPrice > 0 ? p.shelfPrice : Math.round(inPrice * (1 + markup / 100));
-                const effectiveMarkup = inPrice > 0 ? Math.round(((shelfPrice - inPrice) / inPrice) * 100) : markup;
-                const margin = shelfPrice > 0 ? (((shelfPrice - inPrice) / shelfPrice) * 100).toFixed(1) : '0.0';
                 const profit = shelfPrice - inPrice;
+                const ndsIn = ndsRate > 0 ? inPrice * ndsRate / (100 + ndsRate) : 0;
+                const ndsOut = ndsRate > 0 ? shelfPrice * ndsRate / (100 + ndsRate) : 0;
+                const ndsPayable = ndsOut - ndsIn;
+                const ndfl = ndflRate > 0 ? profit * ndflRate / 100 : 0;
+                const onlineFee = onlineFeeRate > 0 ? shelfPrice * onlineFeeRate / 100 : 0;
+                const netIncome = profit - ndsPayable - ndfl - onlineFee;
                 // Новая наценка
                 const newMarkupKey = 'newMarkup_' + code;
                 const newMarkupVal = newMarkupEdits[newMarkupKey];
                 const hasNewMarkup = newMarkupVal !== undefined && newMarkupVal !== '' && inPrice > 0;
-                let newPrice = '', newMargin = '', newProfit = '', newMarkupStr = '';
+                let newPrice = '', newNetIncome = '', newMarkupStr = '';
                 if (hasNewMarkup) {
                     const nm = parseFloat(newMarkupVal) || 0;
                     newPrice = Math.round(inPrice * (1 + nm / 100));
-                    newMargin = newPrice > 0 ? (((newPrice - inPrice) / newPrice) * 100).toFixed(1) : '0.0';
-                    newProfit = newPrice - inPrice;
+                    const newProfit = newPrice - inPrice;
+                    const nNdsIn = ndsRate > 0 ? inPrice * ndsRate / (100 + ndsRate) : 0;
+                    const nNdsOut = ndsRate > 0 ? newPrice * ndsRate / (100 + ndsRate) : 0;
+                    const nNdsPay = nNdsOut - nNdsIn;
+                    const nNdfl = ndflRate > 0 ? newProfit * ndflRate / 100 : 0;
+                    const nOnline = onlineFeeRate > 0 ? newPrice * onlineFeeRate / 100 : 0;
+                    newNetIncome = (newProfit - nNdsPay - nNdfl - nOnline).toFixed(2);
                     newMarkupStr = nm + '%';
                 }
-                data.push([p.group || '', p.nomenclature || '', code, inPrice, shelfPrice, effectiveMarkup + '%', margin + '%', profit, newMarkupStr, newPrice !== '' ? newPrice : '', newMargin !== '' ? newMargin + '%' : '', newProfit !== '' ? newProfit : '']);
+                data.push([p.group || '', p.nomenclature || '', code, inPrice, shelfPrice, profit.toFixed(2), ndsPayable.toFixed(2), ndfl.toFixed(2), onlineFee.toFixed(2), netIncome.toFixed(2), newMarkupStr, newPrice !== '' ? newPrice : '', newNetIncome !== '' ? newNetIncome : '']);
             });
             const ws = SharedUtils.createStyledSheet(data, headers, [0, 1]);
             const wb = XLSX.utils.book_new();
@@ -1716,6 +2121,10 @@
                             <div class="bg-violet-100 text-violet-800 rounded-md px-3 py-1.5 cursor-pointer hover:bg-violet-200 transition-colors" onclick="showOrderSumsByStore(this)" title="Нажмите для сумм по магазинам"><div class="text-[10px] opacity-70">СУММА</div><div class="text-lg font-bold">${stats.sum.toFixed(0)} ₽</div></div>
                         </div>
                         <div class="flex gap-2">
+                            ${savedOrdersList.length > 0 ? '<button onclick="showSavedOrdersList()" class="btn px-3 py-2 text-sm font-medium text-violet-700 bg-violet-50 border border-violet-200 rounded-md hover:bg-violet-100">' + icons.order + ' Мои заказы (' + savedOrdersList.length + ')</button>' : ''}
+                            ${viewingOrderIdx !== null && savedOrdersList[viewingOrderIdx] ? '<div class="bg-violet-50 border border-violet-200 text-violet-800 rounded-md px-3 py-1.5 text-xs">Просмотр: <b>' + esc(savedOrdersList[viewingOrderIdx].name) + '</b> от ' + esc(savedOrdersList[viewingOrderIdx].date) + '</div>' : ''}
+                            <button onclick="placeOrders()" class="btn px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-md hover:bg-emerald-700">${icons.order} Сформировать заказ</button>
+                            <button onclick="clearSavedOrder()" class="btn px-3 py-2 text-sm font-medium text-gray-600 bg-gray-100 border border-gray-200 rounded-md hover:bg-gray-200">${icons.refresh} Сбросить</button>
                             <button onclick="exportOrder()" class="btn px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700">${icons.export} Экспорт</button>
                         </div>
                     </div>
@@ -1808,12 +2217,11 @@
                 if (statusTd) {
                     const packaging = p ? p.packaging || 'ШТ' : 'ШТ';
                     const unitLabel = packaging === 'КГ' ? 'кг' : 'шт';
-                    // Определяем тип: мин.заказ или обычный
                     const key = `${tt}_${code}`;
                     const stockMapLocal = new Map();
                     stocks.forEach(s => stockMapLocal.set(`${s.tt}_${s.code}`, s));
                     const stockData = stockMapLocal.get(key);
-                    const totalSales = 0; // приблизительно
+                    const totalSales = 0;
                     const isMinOrder = !stockData || (stockData.currentStock === 0 && totalSales === 0);
                     if (newOrder > 0) {
                         statusTd.textContent = isMinOrder ? `мин. заказ ${newOrder} ${unitLabel}` : `заказ ${newOrder} ${unitLabel}`;
@@ -1822,6 +2230,219 @@
                     }
                 }
             }
+        }
+
+        // === Сохранение заказа (множественное) ===
+        function cleanupOldOrders() {
+            var list = load(KEYS.SAVED_ORDERS_LIST, []);
+            var changed = false;
+            list = list.filter(function(o) {
+                if (!o.createdAt) return false;
+                var age = Date.now() - new Date(o.createdAt).getTime();
+                if (age >= 14 * 86400000) { changed = true; return false; }
+                return true;
+            });
+            if (changed) SharedUtils.save(KEYS.SAVED_ORDERS_LIST, list);
+            return list;
+        }
+
+        function placeOrders() {
+            if (!savedOrderResults || savedOrderResults.length === 0) {
+                alert('Нет данных для заказа. Сначала откройте вкладку Заказ.');
+                return;
+            }
+
+            // Формируем сводку по поставщикам
+            var supplierGroups = {};
+            var totalOrderItems = 0, totalSum = 0;
+            savedOrderResults.forEach(function(r) {
+                if (r.order <= 0) return;
+                var sup = (matrix[r.code] || {}).supplier || '—';
+                if (!supplierGroups[sup]) supplierGroups[sup] = { count: 0, sum: 0 };
+                supplierGroups[sup].count++;
+                supplierGroups[sup].sum += r.sum;
+                totalOrderItems++;
+                totalSum += r.sum;
+            });
+
+            // Формируем имя из поставщиков
+            var supNames = Object.keys(supplierGroups);
+            var defaultName = supNames.length > 0 ? supNames.join(', ') : 'Заказ';
+            if (defaultName.length > 50) defaultName = defaultName.substring(0, 47) + '...';
+
+            // Спрашиваем название заказа
+            var orderName = prompt('Название заказа:', defaultName);
+            if (orderName === null) return; // Отмена
+            if (!orderName.trim()) orderName = 'Заказ';
+            orderName = orderName.trim();
+
+            // Спрашиваем дату ожидаемой доставки
+            var tomorrow = new Date();
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            var defDateStr = tomorrow.toISOString().split('T')[0];
+            var expectedDateStr = prompt('Ожидаемая дата доставки (ГГГГ-ММ-ДД):', defDateStr);
+            var expectedDate = '';
+            if (expectedDateStr !== null && expectedDateStr.trim()) {
+                var d = new Date(expectedDateStr.trim());
+                if (!isNaN(d.getTime())) {
+                    expectedDate = d.toISOString().split('T')[0];
+                } else {
+                    alert('Неверный формат даты — дата доставки не сохранена.\nМожете указать позже в "График доставок".');
+                }
+            }
+
+            var orderData = {
+                name: orderName,
+                createdAt: new Date().toISOString(),
+                date: new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+                items: savedOrderResults,
+                stats: savedOrderStats,
+                supplierGroups: supplierGroups,
+                totalOrderItems: totalOrderItems,
+                totalSum: totalSum,
+                orderEdits: Object.assign({}, orderEdits),
+                expectedDate: expectedDate
+            };
+
+            // Проверяем — может это перезапись просматриваемого заказа?
+            if (viewingOrderIdx !== null && savedOrdersList[viewingOrderIdx]) {
+                if (!confirm('Перезаписать заказ "' + esc(savedOrdersList[viewingOrderIdx].name) + '" от ' + savedOrdersList[viewingOrderIdx].date + '?\nДля нового нажмите "Отмена" и задайте другое название.')) return;
+                orderData.id = savedOrdersList[viewingOrderIdx].id;
+                savedOrdersList[viewingOrderIdx] = orderData;
+            } else {
+                orderData.id = Date.now();
+                savedOrdersList.push(orderData);
+            }
+
+            save(KEYS.SAVED_ORDERS_LIST, savedOrdersList);
+            savedOrderDate = new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+            viewingOrderIdx = null;
+            alert('Заказ "' + orderName + '" сохранён!\n' + totalOrderItems + ' поз. на сумму ' + totalSum.toFixed(0) + ' ₽' + (expectedDate ? '\nДоставка: ' + expectedDate : ''));
+            render();
+        }
+
+        function clearSavedOrder() {
+            if (viewingOrderIdx !== null && savedOrdersList[viewingOrderIdx]) {
+                if (!confirm('Удалить сохранённый заказ "' + esc(savedOrdersList[viewingOrderIdx].name) + '"?')) return;
+                savedOrdersList.splice(viewingOrderIdx, 1);
+                save(KEYS.SAVED_ORDERS_LIST, savedOrdersList);
+            }
+            resetSavedOrders();
+            render();
+        }
+
+        // === Просмотр сохранённых заказов (список) ===
+        function showSavedOrdersList() {
+            var existing = document.getElementById('savedOrdersModal');
+            if (existing) existing.remove();
+
+            var list = savedOrdersList;
+            if (list.length === 0) {
+                alert('Нет сохранённых заказов.');
+                return;
+            }
+
+            var modal = document.createElement('div');
+            modal.id = 'savedOrdersModal';
+            modal.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-50';
+            modal.innerHTML = `
+                <div class="bg-white rounded-lg border border-gray-200 p-6 w-full max-w-2xl shadow-lg max-h-[90vh] flex flex-col" onclick="event.stopPropagation()">
+                    <div class="flex justify-between items-center mb-4 shrink-0">
+                        <h3 class="text-lg font-semibold text-gray-900">${icons.order} Сохранённые заказы (${list.length})</h3>
+                        <button onclick="document.getElementById('savedOrdersModal').remove()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+                    </div>
+                    <div class="flex-1 overflow-y-auto border rounded-lg divide-y">
+                        ${list.map(function(o, idx) {
+                            var daysLeft = Math.max(0, 14 - Math.floor((Date.now() - new Date(o.createdAt).getTime()) / 86400000));
+                            var supKeys = Object.keys(o.supplierGroups || {});
+                            var supInfo = supKeys.length > 0 ? supKeys.map(function(s) { return s + ' (' + (o.supplierGroups[s].count || 0) + ' поз.)'; }).join(', ') : '—';
+                            return `
+                            <div class="p-4 hover:bg-emerald-50 transition-colors">
+                                <div class="flex justify-between items-start gap-3">
+                                    <div class="flex-1 min-w-0">
+                                        <div class="font-semibold text-gray-900 text-base truncate">${esc(o.name)}</div>
+                                        <div class="text-xs text-gray-500 mt-0.5">${esc(o.date)}</div>
+                                        <div class="text-xs text-gray-400 mt-1">${esc(supInfo)}</div>
+                                    </div>
+                                    <div class="flex flex-col items-end gap-1 shrink-0">
+                                        <div class="bg-emerald-100 text-emerald-800 rounded px-2 py-0.5 text-xs font-medium">${(o.totalOrderItems || 0)} поз.</div>
+                                        <div class="text-sm font-bold text-gray-700">${(o.totalSum || 0).toFixed(0)} ₽</div>
+                                        <div class="text-[10px] text-gray-400">ост. ${daysLeft} дн.</div>
+                                    </div>
+                                </div>
+                                <div class="flex gap-2 mt-2">
+                                    <button onclick="viewSavedOrder(${idx});document.getElementById('savedOrdersModal').remove()" class="btn px-3 py-1 text-xs font-medium text-white bg-sky-600 rounded hover:bg-sky-700">${icons.search} Просмотр</button>
+                                    <button onclick="loadSavedOrderToEdit(${idx});document.getElementById('savedOrdersModal').remove()" class="btn px-3 py-1 text-xs font-medium text-gray-700 bg-gray-100 border border-gray-200 rounded hover:bg-gray-200">${icons.refresh} Редактировать</button>
+                                    <button onclick="exportSavedOrder(${idx})" class="btn px-3 py-1 text-xs font-medium text-white bg-blue-600 rounded hover:bg-blue-700">${icons.export} Excel</button>
+                                    <button onclick="deleteSavedOrder(${idx})" class="btn px-3 py-1 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded hover:bg-red-100">${icons.trash} Удалить</button>
+                                </div>
+                            </div>`;
+                        }).join('')}
+                    </div>
+                    <div class="mt-3 text-xs text-gray-400 text-center shrink-0">
+                        Заказы хранятся 14 дней, затем удаляются автоматически
+                    </div>
+                </div>
+            `;
+            modal.addEventListener('click', function() { modal.remove(); });
+            document.body.appendChild(modal);
+        }
+
+        function viewSavedOrder(idx) {
+            var o = savedOrdersList[idx];
+            if (!o) { alert('Заказ не найден'); return; }
+            viewingOrderIdx = idx;
+            savedOrderResults = o.items;
+            savedOrderStats = o.stats;
+            orderEdits = o.orderEdits || {};
+            savedOrderDate = o.date;
+            tab = 'order';
+            render();
+        }
+
+        function loadSavedOrderToEdit(idx) {
+            var o = savedOrdersList[idx];
+            if (!o) { alert('Заказ не найден'); return; }
+            viewingOrderIdx = idx;
+            savedOrderResults = o.items;
+            savedOrderStats = o.stats;
+            orderEdits = o.orderEdits || {};
+            savedOrderDate = o.date;
+            tab = 'order';
+            render();
+            alert('Заказ "' + o.name + '" загружен для редактирования.\nИзмените quantities и нажмите "Сформировать заказ" для перезаписи.');
+        }
+
+        function deleteSavedOrder(idx) {
+            var o = savedOrdersList[idx];
+            if (!o) return;
+            if (!confirm('Удалить заказ "' + esc(o.name) + '" от ' + esc(o.date) + '?')) return;
+            savedOrdersList.splice(idx, 1);
+            save(KEYS.SAVED_ORDERS_LIST, savedOrdersList);
+            if (viewingOrderIdx === idx) {
+                resetSavedOrders();
+            } else if (viewingOrderIdx !== null && viewingOrderIdx > idx) {
+                viewingOrderIdx--;
+            }
+            // Обновляем модалку если открыта
+            var modal = document.getElementById('savedOrdersModal');
+            if (modal) { modal.remove(); showSavedOrdersList(); }
+            else render();
+        }
+
+        function exportSavedOrder(idx) {
+            var o = savedOrdersList[idx];
+            if (!o || !o.items) { alert('Заказ не найден'); return; }
+            var rows = [['№ Маг.', 'ТТ', 'Код', 'Наименование', 'Группа', 'Продажи', 'Дней', 'Ср./день', 'Остаток', 'Заказ', 'Сумма', 'Статус']];
+            o.items.forEach(function(r) {
+                rows.push([r.storeNumber || '', r.tt || '', r.code || '', r.nomenclature || '', r.group || '', (r.sales || 0).toFixed(0), r.daysPresent || 0, (r.avgSalesPerDay || 0).toFixed(3), (r.currentStock || 0).toFixed(2), r.order || 0, (r.sum || 0).toFixed(2), r.status || '']);
+            });
+            var headers = rows.shift();
+            var ws = SharedUtils.createStyledSheet(rows, headers, [0, 1, 2, 3, 11]);
+            var wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Заказ');
+            var safeName = (o.name || 'заказ').replace(/[^a-zA-Zа-яА-Я0-9 _-]/g, '_').substring(0, 30);
+            XLSX.writeFile(wb, safeName + '_' + (o.date || '').replace(/[.:]/g, '-') + '.xlsx');
         }
 
         function showCalcDetail(el, r) {
