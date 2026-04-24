@@ -4,12 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Расчёт матрицы</title>
+    <!-- Version: 7.8 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
     <script src="shared-utils.js"></script>
     <script src="config.js"></script>
     <script src="storage.js"></script>
+    <script src="shared-data.js"></script>
     <style>
         * { font-family: system-ui, -apple-system, sans-serif; }
         .btn { transition: all 0.2s; }
@@ -27,8 +29,8 @@
         .col-group { min-width: 70px; max-width: 90px; }
         .col-name { min-width: 160px; }
         .cell-wrap { white-space: normal; word-wrap: break-word; }
-        .group-header { background: #ede9fe; font-weight: 600; color: #6d28d9; }
-        .store-header { background: #ede9fe; font-weight: 600; color: #6d28d9; }
+        .group-header { background: #e5e7eb; font-weight: 600; color: #374151; }
+        .store-header { background: #e5e7eb; font-weight: 600; color: #374151; }
         .abc-a { background: #dcfce7; color: #166534; }
         .abc-b { background: #fef9c3; color: #854d0e; }
         .abc-c { background: #fee2e2; color: #991b1b; }
@@ -43,7 +45,7 @@
                     <span>Назад</span>
                 </a>
                 <div class="flex items-center gap-2 px-2">
-                    <div class="p-1.5 bg-purple-100 rounded-lg text-purple-600">
+                    <div class="p-1.5 bg-gray-200 rounded-lg text-gray-600">
                         <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
                     </div>
                     <h1 class="text-base font-semibold text-gray-900">Расчёт матрицы</h1>
@@ -101,7 +103,18 @@
         };
 
         const load = (key, def) => SharedUtils.load(key, def);
-        const save = (key, data) => SharedUtils.save(key, data);
+        // Обёртка save — при сохранении товаров/магазинов также пишет в SharedData
+        const _save = (key, data) => SharedUtils.save(key, data);
+        const save = (key, data) => {
+            _save(key, data);
+            if (!window.SharedData) return;
+            if (key === KEYS.PRODUCTS) {
+                SharedData.saveProducts(data, 'matrix-calc');
+            }
+            if (key === KEYS.STORES) {
+                SharedData.saveStores(data, 'matrix-calc');
+            }
+        };
 
         const normCode = SharedUtils.normCode;
 
@@ -135,19 +148,44 @@
 
         function loadStoresFromHTML() {
             try {
-                const data = localStorage.getItem(KEYS.STORES);
-                if (data) {
-                    // Магазины хранятся в формате JSON (не сжатом)
-                    const parsed = JSON.parse(data);
-                    if (Array.isArray(parsed) && parsed.length > 0) {
-                        stores = parsed.map(s => ({ tt: s.tt || s.name || s }));
-                        return;
-                    }
+                const data = load(KEYS.STORES, []);
+                if (Array.isArray(data) && data.length > 0) {
+                    // Сохраняем полные объекты магазинов (tt, tt2, storeNumber, oldName и др.)
+                    stores = data;
+                    console.log(`[Matrix] Загружено ${stores.length} магазинов из stores.html`);
+                    return;
                 }
             } catch (e) { 
                 console.error('Load stores error:', e); 
             }
             stores = [];
+        }
+
+        // Проверяет, соответствует ли ТТ из данных (продажи/остатки) магазину из stores.html
+        // Учитывает tt, tt2, storeNumber, oldName — точное совпадение и вхождение
+        function storeMatches(dataTT) {
+            if (stores.length === 0) return true; // Список магазинов не загружен = не фильтруем
+            if (!dataTT) return false;
+            const t = dataTT.trim();
+            return stores.some(s => {
+                const tt = (s.tt || '').trim();
+                const tt2 = (s.tt2 || '').trim();
+                const num = String(s.storeNumber || '').trim();
+                const old = (s.oldName || '').trim();
+                // Точное совпадение
+                if (tt && tt === t) return true;
+                if (tt2 && tt2 === t) return true;
+                // stores.html: "ТТ Аптека" → данные: "ТТ Аптека Магазин" (tt — префикс)
+                if (tt && tt.length >= 5 && t.startsWith(tt)) return true;
+                if (tt && t.length >= 5 && tt.startsWith(t)) return true;
+                // Вхождение tt2
+                if (tt2 && tt2.length >= 3 && t.includes(tt2)) return true;
+                // Вхождение номера магазина
+                if (num && num.length >= 1 && t.includes(num)) return true;
+                // Вхождение старого названия
+                if (old && old.length >= 5 && t.includes(old)) return true;
+                return false;
+            });
         }
 
         function init() {
@@ -165,7 +203,71 @@
             // Слушаем изменения в localStorage (если обновили магазины в другом окне)
             window.addEventListener('storage', (e) => {
                 if (e.key === KEYS.STORES) loadStoresFromHTML();
+                if (e.key === SharedUtils.STORAGE_KEYS.PRODUCTS || e.key === 'db_products_v1') {
+                    try {
+                        const arr = SharedUtils.load(SharedUtils.STORAGE_KEYS.PRODUCTS, null);
+                        if (Array.isArray(arr) && arr.length > 0) {
+                            products = arr;
+                            save(KEYS.PRODUCTS, products);
+                            render();
+                        }
+                    } catch(e) {}
+                }
+                if (e.key === SharedUtils.STORAGE_KEYS.MATRIX || e.key === 'db_matrix_marks_v1') {
+                    try {
+                        const newMarks = SharedUtils.load(SharedUtils.STORAGE_KEYS.MATRIX, null);
+                        if (newMarks && Object.keys(newMarks).length > 0 && results.length > 0) {
+                            results.forEach(r => {
+                                const nc = normCode(r.code);
+                                if (newMarks[nc]) {
+                                    stores.forEach(s => {
+                                        if (newMarks[nc][s.tt] !== undefined) {
+                                            r.inMatrix = newMarks[nc][s.tt];
+                                        }
+                                    });
+                                }
+                            });
+                            render();
+                        }
+                    } catch(e) {}
+                }
             });
+
+            // Синхронизация assortment/stores/matrix с другими файлами через SharedData
+            if (window.SharedData) {
+                SharedData.onChange(({ source }) => {
+                    if (source !== 'matrix-calc') {
+                        const newProducts = SharedData.getProducts();
+                        if (newProducts.length > 0) {
+                            products = newProducts;
+                            save(KEYS.PRODUCTS, products);
+                        }
+                        const newStores = SharedData.getStores();
+                        if (newStores.length > 0) loadStoresFromHTML();
+                        // Синхронизация отметок матрицы из universal
+                        const newMarks = SharedData.getMatrixMarks();
+                        if (newMarks && Object.keys(newMarks).length > 0 && results.length > 0) {
+                            let merged = 0;
+                            results.forEach(r => {
+                                const nc = normCode(r.code);
+                                if (newMarks[nc]) {
+                                    stores.forEach(s => {
+                                        if (newMarks[nc][s.tt] !== undefined && r.inMatrix !== newMarks[nc][s.tt]) {
+                                            r.inMatrix = newMarks[nc][s.tt];
+                                            merged++;
+                                        }
+                                    });
+                                }
+                            });
+                            if (merged > 0) {
+                                save(KEYS.RESULTS, results);
+                                console.log(`SharedData sync: ${merged} marks обновлено из universal`);
+                            }
+                        }
+                        render();
+                    }
+                });
+            }
             
             render();
         }
@@ -175,8 +277,20 @@
         }
 
         function render() {
+            // Сохраняем позицию скролла для всех таблиц перед перерисовкой
+            const savedScrolls = {};
+            document.querySelectorAll('.table-container').forEach(c => {
+                savedScrolls[c.id] = c.scrollTop;
+            });
             renderTabs();
             renderContent();
+            // Восстанавливаем скролл после перерисовки
+            requestAnimationFrame(() => {
+                Object.entries(savedScrolls).forEach(([id, top]) => {
+                    const c = document.getElementById(id);
+                    if (c && top > 0) c.scrollTop = top;
+                });
+            });
         }
 
         function renderTabs() {
@@ -188,7 +302,7 @@
             ];
 
             document.getElementById('tabs').innerHTML = tabs.map(t => `
-                <button onclick="setTab('${t.id}')" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${tab === t.id ? 'bg-purple-600 text-white shadow-sm' : 'text-gray-600 hover:bg-white hover:text-gray-900'}">
+                <button onclick="setTab('${t.id}')" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${tab === t.id ? 'bg-gray-700 text-white shadow-sm' : 'text-gray-600 hover:bg-white hover:text-gray-900'}">
                     ${t.icon}<span>${t.label}</span>
                 </button>
             `).join('');
@@ -207,15 +321,17 @@
         }
 
         function renderUpload() {
+            const savedAssortments = getSavedAssortments();
+            const savedMatrices = getSavedMatrices();
             return `
                 <div class="bg-white rounded-lg border border-gray-200 p-4 mb-4">
                     <h2 class="text-base font-semibold text-gray-900 mb-3 flex items-center gap-2">${icons.settings} Настройки ABC-анализа</h2>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                        <div class="p-4 bg-purple-50 rounded-lg border border-purple-200">
-                            <label class="block font-medium text-purple-800 mb-2">Мин. баллов для матрицы</label>
+                        <div class="p-4 bg-gray-50 rounded-lg border border-gray-300">
+                            <label class="block font-medium text-gray-800 mb-2">Мин. баллов для матрицы</label>
                             <div class="flex items-center gap-3">
-                                <input type="number" min="3" max="9" value="${minPointsForMatrix}" onchange="minPointsForMatrix=parseInt(this.value)||5;saveSettings()" class="w-20 px-3 py-2 border border-purple-300 rounded-lg text-center font-bold text-purple-800">
-                                <div class="text-purple-700">
+                                <input type="number" min="3" max="9" value="${minPointsForMatrix}" onchange="minPointsForMatrix=parseInt(this.value)||5;saveSettings()" class="w-20 px-3 py-2 border border-gray-400 rounded-lg text-center font-bold text-gray-800">
+                                <div class="text-gray-700">
                                     <div class="text-xs">Товар попадает в матрицу если баллов ≥ этого значения</div>
                                     <div class="text-[10px] mt-1 opacity-70">A=3 балла, B=2 балла, C=1 балл (макс. 9)</div>
                                 </div>
@@ -247,7 +363,7 @@
 
                 <div class="bg-white rounded-lg border border-gray-200 p-4">
                     <h2 class="text-base font-semibold text-gray-900 mb-4">Загрузка данных</h2>
-                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                    <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
                         <div onclick="document.getElementById('salesInput').click()" class="p-4 border border-gray-200 rounded-lg cursor-pointer hover:bg-green-50 hover:border-green-300 transition-colors text-center">
                             <div class="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-green-100 text-green-600 mb-2">
                                 <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/></svg>
@@ -257,14 +373,14 @@
                             <input type="file" id="salesInput" accept=".xlsx,.xls,.csv" onchange="handleFile(this, 'sales')" class="hidden">
                             ${sales.length > 0 ? `<div class="mt-2 text-xs text-green-600 font-medium">${sales.length} записей</div>` : ''}
                         </div>
-                        <div onclick="document.getElementById('stocksInput').click()" class="p-4 border border-gray-200 rounded-lg cursor-pointer hover:bg-purple-50 hover:border-purple-300 transition-colors text-center">
-                            <div class="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-purple-100 text-purple-600 mb-2">
+                        <div onclick="document.getElementById('stocksInput').click()" class="p-4 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50 hover:border-gray-400 transition-colors text-center">
+                            <div class="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-gray-200 text-gray-600 mb-2">
                                 <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
                             </div>
                             <div class="font-medium text-gray-700 text-sm">Остатки</div>
                             <div class="text-xs text-gray-400">Магазин | Код | Ост.</div>
                             <input type="file" id="stocksInput" accept=".xlsx,.xls,.csv" onchange="handleFile(this, 'stocks')" class="hidden">
-                            ${stocks.length > 0 ? `<div class="mt-2 text-xs text-purple-600 font-medium">${stocks.length} записей</div>` : ''}
+                            ${stocks.length > 0 ? `<div class="mt-2 text-xs text-gray-600 font-medium">${stocks.length} записей</div>` : ''}
                         </div>
                         <div onclick="document.getElementById('writeoffInput').click()" class="p-4 border border-gray-200 rounded-lg cursor-pointer hover:bg-red-50 hover:border-red-300 transition-colors text-center">
                             <div class="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-red-100 text-red-600 mb-2">
@@ -275,19 +391,61 @@
                             <input type="file" id="writeoffInput" accept=".xlsx,.xls,.csv" onchange="handleFile(this, 'writeoff')" onclick="event.stopPropagation()" class="hidden">
                             ${writeoffs.length > 0 ? `<div class="mt-2 text-xs text-red-600 font-medium">${writeoffs.length} записей</div>` : ''}
                         </div>
-                        <div onclick="document.getElementById('assortInput').click()" class="p-4 border border-gray-200 rounded-lg cursor-pointer hover:bg-blue-50 hover:border-blue-300 transition-colors text-center">
-                            <div class="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-blue-100 text-blue-600 mb-2">
-                                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                        <div onclick="document.getElementById('assortInput').click()" class="p-4 border border-gray-200 rounded-lg cursor-pointer hover:bg-blue-50 hover:border-blue-300 transition-colors">
+                            <div class="flex flex-col items-center text-center">
+                                <div class="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-blue-100 text-blue-600 mb-2">
+                                    <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                                </div>
+                                <div class="font-medium text-gray-700 text-sm">Ассортимент</div>
+                                <div class="text-xs text-gray-400">Нажмите чтобы загрузить из файла</div>
+                                <input type="file" id="assortInput" accept=".xlsx,.xls,.csv" onchange="handleFile(this, 'assortment')" onclick="event.stopPropagation()" class="hidden">
+                                ${savedAssortments.length > 0 ? `
+                                <div class="space-y-0.5 mt-2 max-h-28 overflow-y-auto w-full">
+                                    ${savedAssortments.map(s => `
+                                        <div class="px-2 py-0.5 bg-blue-50 hover:bg-blue-100 rounded text-[11px] text-blue-700 transition-colors flex justify-between items-center">
+                                            <span onclick="event.stopPropagation();loadAssortmentByName('${s.name.replace(/'/g, "\\'")}')" class="truncate font-medium cursor-pointer flex-1">${s.name}</span>
+                                            <div class="flex items-center gap-1 shrink-0">
+                                                <span class="text-blue-400">${s.count}</span>
+                                                <button onclick="event.stopPropagation();deleteAssortment('${s.name.replace(/'/g, "\\'")}')" class="text-red-400 hover:text-red-600 p-0.5" title="Удалить">${icons.trash}</button>
+                                            </div>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                                ` : ''}
+                                ${products.length > 0 ? `<p class="mt-2 text-sm text-blue-600 font-bold">${products.length} товаров</p>` : ''}
                             </div>
-                            <div class="font-medium text-gray-700 text-sm">Ассортимент</div>
-                            <div class="text-xs text-gray-400">Группа | Наим | Код</div>
-                            <input type="file" id="assortInput" accept=".xlsx,.xls,.csv" onchange="handleFile(this, 'assortment')" onclick="event.stopPropagation()" class="hidden">
-                            ${products.length > 0 ? `<div class="mt-2 text-xs text-blue-600 font-medium">${products.length} товаров</div>` : ''}
+                        </div>
+                        <div onclick="document.getElementById('matrixInput').click()" class="p-4 border border-gray-200 rounded-lg cursor-pointer hover:bg-violet-50 hover:border-violet-300 transition-colors">
+                            <div class="flex flex-col items-center text-center">
+                                <div class="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-violet-100 text-violet-600 mb-2">
+                                    <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                                </div>
+                                <div class="font-medium text-gray-700 text-sm">Матрица</div>
+                                <div class="text-xs text-gray-400">Нажмите чтобы загрузить из файла</div>
+                                <input type="file" id="matrixInput" accept=".xlsx,.xls" onchange="handleMatrixUpload(this)" class="hidden">
+                                ${savedMatrices.length > 0 ? `
+                                <div class="space-y-0.5 mt-2 max-h-28 overflow-y-auto w-full">
+                                    ${savedMatrices.map(s => `
+                                        <div class="px-2 py-0.5 bg-violet-50 hover:bg-violet-100 rounded text-[11px] text-violet-700 transition-colors flex justify-between items-center">
+                                            <span onclick="event.stopPropagation();loadMatrixByName('${s.name.replace(/'/g, "\\'")}')" class="truncate font-medium cursor-pointer flex-1">${s.name}</span>
+                                            <div class="flex items-center gap-1 shrink-0">
+                                                <span class="text-violet-400">${s.products || 0}</span>
+                                                <button onclick="event.stopPropagation();deleteMatrix('${s.name.replace(/'/g, "\\'")}')" class="text-red-400 hover:text-red-600 p-0.5" title="Удалить">${icons.trash}</button>
+                                            </div>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                                ` : ''}
+                                ${results.length > 0 ? `<p class="mt-2 text-sm text-violet-600 font-bold">${results.length} записей</p>` : ''}
+                            </div>
                         </div>
                     </div>
                     <div class="bg-gray-50 rounded-lg p-3 mb-4 border border-gray-200">
                         <div class="flex flex-wrap gap-3 text-xs text-gray-600">
-                            <span class="px-2 py-1 bg-purple-100 rounded border border-purple-200">Магазинов: <strong>${stores.length}</strong></span>
+                            <span class="px-2 py-1 bg-gray-200 rounded border border-gray-300">Магазинов: <strong>${stores.length}</strong></span>
                             <span class="px-2 py-1 bg-white rounded border">Продаж: <strong>${sales.length}</strong></span>
                             <span class="px-2 py-1 bg-white rounded border">Остатков: <strong>${stocks.length}</strong></span>
                             <span class="px-2 py-1 bg-white rounded border">Списаний: <strong>${writeoffs.length}</strong></span>
@@ -296,7 +454,7 @@
                     </div>
                     <div class="flex flex-wrap gap-2">
                         <button onclick="generateAssortment()" class="btn inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700">${icons.package} Создать ассортимент</button>
-                        <button onclick="runAnalysis()" class="btn inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700">${icons.calc} Рассчитать анализ</button>
+                        <button onclick="runAnalysis()" class="btn inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-gray-700 rounded-lg hover:bg-gray-800">${icons.calc} Рассчитать анализ</button>
                         <button onclick="clearData()" class="btn inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-red-600 bg-white border border-red-300 rounded-lg hover:bg-red-50">${icons.trash} Очистить</button>
                     </div>
                 </div>`;
@@ -332,31 +490,41 @@
                 groupedProducts[g].push(p);
             });
 
+            // Фильтр по группе
+            let displayedGroups = Object.keys(groupedProducts).sort((a, b) => a.localeCompare(b, 'ru'));
+            if (selectedGroup) {
+                displayedGroups = displayedGroups.filter(g => g === selectedGroup);
+            }
+
             return `
                 <div class="bg-white rounded-lg border border-gray-200 p-3 mb-3">
                     <div class="flex justify-between items-center">
                         <div class="flex gap-2 items-center">
-                            <div class="bg-purple-100 text-purple-800 rounded-lg px-3 py-1.5">
+                            <div class="bg-gray-200 text-gray-800 rounded-lg px-3 py-1.5">
                                 <span class="text-xs">Товаров: </span><strong>${filteredProducts.length}${assortmentSearch ? '/' + products.length : ''}</strong>
                             </div>
-                            <div class="bg-purple-100 text-purple-800 rounded-lg px-3 py-1.5">
+                            <div class="bg-gray-200 text-gray-800 rounded-lg px-3 py-1.5">
                                 <span class="text-xs">Групп: </span><strong>${filteredGroups.length}</strong>
                             </div>
+                            <select onchange="selectedGroup=this.value;filterAssortment()" class="px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500">
+                                <option value="">Все группы</option>
+                                ${groups.map(g => `<option value="${g}" ${selectedGroup === g ? 'selected' : ''}>${g}</option>`).join('')}
+                            </select>
                             <div class="relative">
                                 <input type="text" 
                                     id="assortmentSearchInput"
                                     placeholder="Поиск по названию или коду..." 
                                     value="${assortmentSearch}" 
-                                    oninput="assortmentSearch=this.value;filterAssortment()"
-                                    class="pl-8 pr-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-purple-400 w-56"
+                                    oninput="debounceSearchAssort(this)"
+                                    class="pl-8 pr-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500 w-56"
                                 >
                                 <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400">${icons.search}</span>
                                 ${assortmentSearch ? `<button onclick="assortmentSearch='';filterAssortment()" class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">${icons.x}</button>` : ''}
                             </div>
                         </div>
                         <div class="flex gap-2">
+                            <button onclick="saveAllPrices()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-amber-500 rounded-lg hover:bg-amber-600">${icons.save} Сохранить цены</button>
                             <button onclick="showSaveAssortmentModal()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700">${icons.save} Сохранить</button>
-                            <button onclick="showLoadAssortmentModal()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700">${icons.import} Загрузить</button>
                             <button onclick="addNewProduct()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700">${icons.plus} Добавить</button>
                             <button onclick="exportAssortment()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">${icons.export} Экспорт</button>
                         </div>
@@ -375,21 +543,27 @@
                                     <th style="min-width:12px">Упак.</th>
                                     <th style="min-width:20px">Поставщик</th>
                                     <th style="min-width:15px">Цена</th>
-                                    <th style="min-width:15px">Полка</th>
+                                    <th style="min-width:15px">Цена на полке</th>
+                                    <th class="bg-sky-100" style="min-width:15px">Наценка</th>
+                                    <th class="bg-amber-100" style="min-width:15px">Новый вход</th>
+                                    <th class="bg-sky-100" style="min-width:15px">Наценка %</th>
+                                    <th style="min-width:15px">Дом. полка</th>
                                     <th style="min-width:20px">Квант</th>
+                                    <th style="min-width:20px">Объём</th>
                                     <th style="min-width:10px">Действ.</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                ${Object.entries(groupedProducts).sort((a, b) => a[0].localeCompare(b[0], 'ru')).map(([gr, items]) => {
+                                ${displayedGroups.map(gr => {
+                                    const items = groupedProducts[gr];
                                     const isCollapsed = collapsedGroups[gr];
                                     return `
                                         <tr class="group-header cursor-pointer" onclick="toggleGroup('${gr}')">
-                                            <td colspan="10" class="text-left py-1 px-2">
+                                            <td colspan="15" class="text-left py-1 px-2">
                                                 <div class="flex items-center gap-2">
                                                     ${isCollapsed ? icons.chevronRight : icons.chevronDown}
                                                     <span class="font-semibold">${gr}</span>
-                                                    <span class="text-[10px] bg-purple-200 text-purple-800 px-1 rounded">${items.length}</span>
+                                                    <span class="text-[10px] bg-gray-200 text-gray-800 px-1 rounded">${items.length}</span>
                                                 </div>
                                             </td>
                                         </tr>
@@ -403,29 +577,36 @@
                                                     </button>
                                                 </td>
                                                 <td class="text-left">
-                                                    <input type="text" value="${esc(p.group || '')}" onchange="updateProduct('${p.code}', 'group', this.value)" class="w-full px-1.5 py-1 text-[10px] border rounded focus:outline-none focus:border-purple-400">
+                                                    <input type="text" value="${esc(p.group || '')}" onchange="updateProduct('${p.code}', 'group', this.value)" class="w-full px-1.5 py-1 text-[10px] border rounded focus:outline-none focus:border-gray-500">
                                                 </td>
                                                 <td class="text-left">
-                                                    <input type="text" value="${esc(p.nomenclature || '')}" onchange="updateProduct('${p.code}', 'nomenclature', this.value)" class="w-full px-1.5 py-1 text-xs border rounded focus:outline-none focus:border-purple-400">
+                                                    <input type="text" value="${esc(p.nomenclature || '')}" onchange="updateProduct('${p.code}', 'nomenclature', this.value)" class="w-full px-1.5 py-1 text-xs border rounded focus:outline-none focus:border-gray-500">
                                                 </td>
                                                 <td class="text-left">
                                                     <span class="font-mono text-[10px]">${p.code}</span>
                                                 </td>
                                                 <td>
-                                                    <input type="text" value="${esc(p.packaging || 'ШТ')}" onchange="updateProduct('${p.code}', 'packaging', this.value)" class="w-full px-1.5 py-1 text-[10px] border rounded focus:outline-none focus:border-purple-400 text-center">
+                                                    <input type="text" value="${esc(p.packaging || 'ШТ')}" onchange="updateProduct('${p.code}', 'packaging', this.value)" class="w-full px-1.5 py-1 text-[10px] border rounded focus:outline-none focus:border-gray-500 text-center">
                                                 </td>
                                                 <td>
-                                                    <input type="text" value="${esc(p.supplier || '')}" onchange="updateProduct('${p.code}', 'supplier', this.value)" class="w-full px-1.5 py-1 text-[10px] border rounded focus:outline-none focus:border-purple-400">
+                                                    <input type="text" value="${esc(p.supplier || '')}" onchange="updateProduct('${p.code}', 'supplier', this.value)" class="w-full px-1.5 py-1 text-[10px] border rounded focus:outline-none focus:border-gray-500">
                                                 </td>
                                                 <td>
-                                                    <input type="number" step="0.01" value="${p.price || ''}" onchange="updateProduct('${p.code}', 'price', parseFloat(this.value) || 0)" class="w-full px-1.5 py-1 text-[10px] border rounded focus:outline-none focus:border-purple-400 text-center">
+                                                    <input type="number" step="0.01" value="${p.price || ''}" onchange="updateProduct('${p.code}', 'price', parseFloat(this.value) || 0)" class="w-full px-1.5 py-1 text-[10px] border rounded focus:outline-none focus:border-gray-500 text-center">
                                                 </td>
                                                 <td>
-                                                    <input type="number" step="0.01" value="${p.shelf || ''}" onchange="updateProduct('${p.code}', 'shelf', parseFloat(this.value) || 0)" class="w-full px-1.5 py-1 text-[10px] border rounded focus:outline-none focus:border-purple-400 text-center">
+                                                    <input type="number" step="0.01" value="${p.shelfPrice || ''}" onchange="updateProduct('${p.code}', 'shelfPrice', parseFloat(this.value) || 0)" class="w-full px-1.5 py-1 text-[10px] border rounded focus:outline-none focus:border-gray-500 text-center">
+                                                </td>
+                                                <td class="text-center font-semibold text-sky-700 bg-sky-50 text-xs">${(() => { const ip = p.inPrice || p.price || 0; const sp = p.shelfPrice || 0; return ip > 0 ? ((sp - ip) / ip * 100).toFixed(1) : 0; })()}%</td>
+                                                <td class="text-center bg-amber-50"><input type="number" step="0.01" value="" placeholder="—" data-code="${esc(p.code)}" data-field="newInPrice" class="input w-16 text-center text-xs font-bold text-amber-700 bg-amber-50" title="Новый вход"></td>
+                                                <td class="text-center font-semibold text-sky-700 bg-sky-50 text-xs">${(() => { const ip = p.inPrice || p.price || 0; const sp = p.shelfPrice || 0; return ip > 0 ? ((sp - ip) / ip * 100).toFixed(1) : 0; })()}%</td>
+                                                <td>
+                                                    <input type="number" step="0.01" value="${p.shelf || ''}" onchange="updateProduct('${p.code}', 'shelf', parseFloat(this.value) || 0)" class="w-full px-1.5 py-1 text-[10px] border rounded focus:outline-none focus:border-gray-500 text-center">
                                                 </td>
                                                 <td>
-                                                    <input type="number" value="${p.quant || 1}" onchange="updateProduct('${p.code}', 'quant', parseInt(this.value) || 1)" class="w-8 px-0.5 py-0.5 text-[10px] border rounded focus:outline-none focus:border-purple-400 text-center">
+                                                    <input type="number" value="${p.quant || 1}" onchange="updateProduct('${p.code}', 'quant', parseInt(this.value) || 1)" class="w-8 px-0.5 py-0.5 text-[10px] border rounded focus:outline-none focus:border-gray-500 text-center">
                                                 </td>
+                                                <td><input type="number" step="0.01" value="${p.volume || 0}" onchange="updateProduct('${p.code}', 'volume', parseFloat(this.value)||0)" class="input w-16 text-center text-sm"></td>
                                                 <td>
                                                     <button onclick="deleteProduct('${p.code}')" class="p-1 text-red-500 hover:bg-red-100 rounded" title="Удалить">${icons.trash}</button>
                                                 </td>
@@ -441,43 +622,45 @@
 
         function exportAssortment() {
             if (products.length === 0) { alert('Нет данных'); return; }
-            
-            // Группируем товары
+            // Группируем и сортируем как раньше
             const grouped = {};
             products.forEach(p => {
-                const gr = p.group || 'Без группы';
-                if (!grouped[gr]) grouped[gr] = [];
-                grouped[gr].push(p);
+                const g = p.group || 'Без группы';
+                if (!grouped[g]) grouped[g] = [];
+                grouped[g].push(p);
             });
-            
-            const headers = ['Группа', 'Наименование', 'Код', 'Упаковка', 'Поставщик', 'Цена', 'Полка', 'Квант'];
-            const data = [];
-            
-            // Сортируем группы и добавляем с группировкой
-            Object.keys(grouped).sort((a, b) => a.localeCompare(b, 'ru')).forEach((gr, grIdx) => {
-                grouped[gr].forEach(p => {
-                    data.push([
-                        p.group || '',
-                        p.nomenclature || '',
-                        p.code || '',
-                        p.packaging || 'ШТ',
-                        p.supplier || '',
-                        p.price || 0,
-                        p.shelf || 0,
-                        p.quant || 1
-                    ]);
-                });
-            });
-            
-            const ws = SharedUtils.createStyledSheet(data, headers, [0, 1]); // Группа и Наименование - по левому краю
-            
-            const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, 'Ассортимент');
-            XLSX.writeFile(wb, `ассортимент_${new Date().toISOString().slice(0, 10)}.xlsx`);
+            const sorted = Object.keys(grouped).sort((a, b) => a.localeCompare(b, 'ru'));
+            const sortedProducts = [];
+            sorted.forEach(g => sortedProducts.push(...grouped[g]));
+
+            // Конвертируем mandatoryProducts (plain object) в Set
+            const mandatorySet = new Set(Object.keys(mandatoryProducts).filter(code => mandatoryProducts[code]));
+            SharedUtils.exportAssortmentUnified(sortedProducts, { mandatorySet: mandatorySet });
         }
 
         // === СОХРАНЕНИЕ И ЗАГРУЗКА АССОРТИМЕНТА ===
         const ASSORTMENTS_KEY = SharedUtils.STORAGE_KEYS.SAVED_ASSORTMENTS;
+        let currentLoadedAssortment = null; // Имя загруженного сохранённого списка (для авто-синхронизации)
+
+        function syncToSavedAssortment() {
+            if (!currentLoadedAssortment) return;
+            const saved = getSavedAssortments();
+            const idx = saved.findIndex(s => s.name === currentLoadedAssortment);
+            if (idx < 0) return;
+            const mandatory = {};
+            products.forEach(p => {
+                if (p.code && mandatoryProducts[p.code]) mandatory[p.code] = true;
+            });
+            saved[idx] = {
+                ...saved[idx],
+                date: new Date().toISOString(),
+                count: products.length,
+                data: JSON.parse(JSON.stringify(products)),
+                mandatory: mandatory,
+                totalSales: products.reduce(function(sum, p) { return sum + (p.totalSales || 0); }, 0)
+            };
+            SharedUtils.save(ASSORTMENTS_KEY, saved);
+        }
 
         function getSavedAssortments() {
             return SharedUtils.load(ASSORTMENTS_KEY, []);
@@ -495,11 +678,18 @@
             const saved = getSavedAssortments();
             const existing = saved.findIndex(s => s.name === name);
             
+            // Собираем пометки обязательных для товаров в текущем ассортименте
+            const mandatory = {};
+            products.forEach(p => {
+                if (p.code && mandatoryProducts[p.code]) mandatory[p.code] = true;
+            });
+
             const record = {
                 name,
                 date: new Date().toISOString(),
                 count: products.length,
-                data: products
+                data: products,
+                mandatory: mandatory
             };
             
             if (existing >= 0) {
@@ -573,8 +763,18 @@
             }
             
             products = record.data;
-            save(KEYS.PRODUCTS, products);
             
+            // Восстанавливаем пометки обязательных товаров
+            if (record.mandatory && typeof record.mandatory === 'object') {
+                Object.entries(record.mandatory).forEach(([code, val]) => {
+                    if (val) mandatoryProducts[code] = true;
+                });
+                save(KEYS.MANDATORY, mandatoryProducts);
+            }
+            
+            save(KEYS.PRODUCTS, products);
+            currentLoadedAssortment = name;
+
             // Закрываем модальное окно
             const modal = document.getElementById('loadAssortmentModal');
             if (modal) modal.remove();
@@ -590,12 +790,10 @@
             saved = saved.filter(s => s.name !== name);
             SharedUtils.save(ASSORTMENTS_KEY, saved);
             
-            // Обновляем модальное окно
+            // Обновляем интерфейс
             const modal = document.getElementById('loadAssortmentModal');
-            if (modal) {
-                modal.remove();
-                showLoadAssortmentModal();
-            }
+            if (modal) modal.remove();
+            render();
         }
 
         // Экспорт списка сохранённых ассортиментов для universal.html
@@ -716,7 +914,33 @@
             }
 
             results = record.results || [];
+
+            // Сливаем с отметками из universal (shared_matrix_v1)
+            try {
+                const sharedMarks = SharedUtils.load(SharedUtils.STORAGE_KEYS.MATRIX, {});
+                if (sharedMarks && Object.keys(sharedMarks).length > 0) {
+                    let merged = 0;
+                    results.forEach(r => {
+                        const nc = normCode(r.code);
+                        if (sharedMarks[nc]) {
+                            const marks = sharedMarks[nc];
+                            stores.forEach(s => {
+                                if (marks[s.tt] !== undefined) {
+                                    const oldVal = r.inMatrix;
+                                    r.inMatrix = marks[s.tt];
+                                    if (oldVal !== marks[s.tt]) merged++;
+                                }
+                            });
+                        }
+                    });
+                    if (merged > 0) {
+                        console.log(`Слияние с universal: ${merged} отметок обновлено`);
+                    }
+                }
+            } catch(e) { console.error('Merge marks error:', e); }
+
             save(KEYS.RESULTS, results);
+            syncMarksToShared();
 
             const modal = document.getElementById('loadMatrixModal');
             if (modal) modal.remove();
@@ -733,10 +957,8 @@
             SharedUtils.save(MATRICES_KEY, saved);
 
             const modal = document.getElementById('loadMatrixModal');
-            if (modal) {
-                modal.remove();
-                showLoadMatrixModal();
-            }
+            if (modal) modal.remove();
+            render();
         }
 
         function updateProduct(code, field, value) {
@@ -747,13 +969,41 @@
             }
         }
 
+        function saveAllPrices() {
+            let updatedInPrice = 0;
+            document.querySelectorAll('input[data-field="newInPrice"]').forEach(function(inputEl) {
+                const code = inputEl.dataset.code;
+                if (!code) return;
+                const val = parseFloat(inputEl.value);
+                if (isNaN(val) || val <= 0) return;
+                const p = products.find(item => item.code === code);
+                if (!p) return;
+                p.inPrice = val;
+                p.price = val;
+                if (val > 0 && p.shelfPrice > 0) {
+                    const markup = p.markup || defaultMarkup || 25;
+                    p.shelfPrice = Math.round(val * (1 + markup / 100));
+                }
+                updatedInPrice++;
+                inputEl.value = '';
+            });
+            if (updatedInPrice === 0) { alert('Нет новых цен для сохранения'); return; }
+            save(KEYS.PRODUCTS, products);
+            syncToSavedAssortment();
+            render();
+            alert('Сохранено: ' + updatedInPrice + ' товаров\nДанные синхронизированы.');
+        }
+
         function deleteProduct(code) {
             if (!confirm('Удалить товар?')) return;
             const container = document.getElementById('assortmentTableContainer');
             const scrollTop = container ? container.scrollTop : 0;
             
             products = products.filter(p => p.code !== code);
+            delete mandatoryProducts[code];
             save(KEYS.PRODUCTS, products);
+            save(KEYS.MANDATORY, mandatoryProducts);
+            syncToSavedAssortment();
             render();
             
             // Восстанавливаем скролл после перерисовки
@@ -761,97 +1011,6 @@
                 const newContainer = document.getElementById('assortmentTableContainer');
                 if (newContainer) newContainer.scrollTop = scrollTop;
             });
-        }
-
-        // Фильтрация ассортимента без полной перерисовки (сохраняет фокус)
-        function filterAssortment() {
-            const container = document.getElementById('assortmentTableContainer');
-            const scrollTop = container ? container.scrollTop : 0;
-
-            // Перерисовываем только tbody
-            const tbody = document.querySelector('#assortmentTableContainer tbody');
-            if (!tbody) {
-                render();
-                return;
-            }
-
-            // Получаем отфильтрованные продукты
-            let filteredProducts = products;
-            if (assortmentSearch) {
-                const searchLower = assortmentSearch.toLowerCase();
-                filteredProducts = products.filter(p => 
-                    (p.nomenclature || '').toLowerCase().includes(searchLower) ||
-                    (p.code || '').toLowerCase().includes(searchLower)
-                );
-            }
-
-            const groupedProducts = {};
-            filteredProducts.forEach(p => {
-                const g = p.group || 'Без группы';
-                if (!groupedProducts[g]) groupedProducts[g] = [];
-                groupedProducts[g].push(p);
-            });
-
-            tbody.innerHTML = Object.entries(groupedProducts).sort((a, b) => a[0].localeCompare(b[0], 'ru')).map(([gr, items]) => {
-                const isCollapsed = collapsedGroups[gr];
-                return `
-                    <tr class="group-header cursor-pointer" onclick="toggleGroup('${gr}')">
-                        <td colspan="10" class="text-left py-1 px-2">
-                            <div class="flex items-center gap-2">
-                                ${isCollapsed ? icons.chevronRight : icons.chevronDown}
-                                <span class="font-semibold">${gr}</span>
-                                <span class="text-[10px] bg-purple-200 text-purple-800 px-1 rounded">${items.length}</span>
-                            </div>
-                        </td>
-                    </tr>
-                    ${isCollapsed ? '' : items.map(p => {
-                        const isMandatory = mandatoryProducts[p.code];
-                        return `
-                        <tr class="hover:bg-gray-50 ${isMandatory ? 'bg-amber-50' : ''}" style="height:28px" id="row_${p.code}">
-                            <td class="text-center">
-                                <button onclick="toggleMandatoryProduct('${p.code}', event)" class="p-1 rounded hover:bg-amber-100 ${isMandatory ? 'text-amber-600' : 'text-gray-300'}" title="${isMandatory ? 'Обязательный товар (нажмите чтобы убрать)' : 'Сделать обязательным'}">
-                                    ${isMandatory ? icons.star : icons.starEmpty}
-                                </button>
-                            </td>
-                            <td class="text-left">
-                                <input type="text" value="${esc(p.group || '')}" onchange="updateProduct('${p.code}', 'group', this.value)" class="w-full px-1.5 py-1 text-[10px] border rounded focus:outline-none focus:border-purple-400">
-                            </td>
-                            <td class="text-left">
-                                <input type="text" value="${esc(p.nomenclature || '')}" onchange="updateProduct('${p.code}', 'nomenclature', this.value)" class="w-full px-1.5 py-1 text-xs border rounded focus:outline-none focus:border-purple-400">
-                            </td>
-                            <td class="text-left">
-                                <span class="font-mono text-[10px]">${p.code}</span>
-                            </td>
-                            <td>
-                                <input type="text" value="${esc(p.packaging || 'ШТ')}" onchange="updateProduct('${p.code}', 'packaging', this.value)" class="w-full px-1.5 py-1 text-[10px] border rounded focus:outline-none focus:border-purple-400 text-center">
-                            </td>
-                            <td>
-                                <input type="text" value="${esc(p.supplier || '')}" onchange="updateProduct('${p.code}', 'supplier', this.value)" class="w-full px-1.5 py-1 text-[10px] border rounded focus:outline-none focus:border-purple-400">
-                            </td>
-                            <td>
-                                <input type="number" step="0.01" value="${p.price || ''}" onchange="updateProduct('${p.code}', 'price', parseFloat(this.value) || 0)" class="w-full px-1.5 py-1 text-[10px] border rounded focus:outline-none focus:border-purple-400 text-center">
-                            </td>
-                            <td>
-                                <input type="number" step="0.01" value="${p.shelf || ''}" onchange="updateProduct('${p.code}', 'shelf', parseFloat(this.value) || 0)" class="w-full px-1.5 py-1 text-[10px] border rounded focus:outline-none focus:border-purple-400 text-center">
-                            </td>
-                            <td>
-                                <input type="number" value="${p.quant || 1}" onchange="updateProduct('${p.code}', 'quant', parseInt(this.value) || 1)" class="w-8 px-0.5 py-0.5 text-[10px] border rounded focus:outline-none focus:border-purple-400 text-center">
-                            </td>
-                            <td>
-                                <button onclick="deleteProduct('${p.code}')" class="p-1 text-red-500 hover:bg-red-100 rounded" title="Удалить">${icons.trash}</button>
-                            </td>
-                        </tr>
-                    `}).join('')}
-                `;
-            }).join('');
-
-            // Обновляем счётчики
-            const counters = document.querySelectorAll('.bg-purple-100 strong');
-            if (counters[0]) counters[0].textContent = filteredProducts.length + (assortmentSearch ? '/' + products.length : '');
-            if (counters[1]) counters[1].textContent = Object.keys(groupedProducts).length;
-
-            // Восстанавливаем скролл
-            if (container) container.scrollTop = scrollTop;
         }
 
         // Переключение обязательного товара с сохранением скролла
@@ -897,39 +1056,47 @@
                     <div class="space-y-3">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Код товара *</label>
-                            <input type="text" id="newProductCode" placeholder="Введите код" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-purple-400">
+                            <input type="text" id="newProductCode" placeholder="Введите код" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500">
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Наименование *</label>
-                            <input type="text" id="newProductName" placeholder="Наименование товара" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-purple-400">
+                            <input type="text" id="newProductName" placeholder="Наименование товара" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500">
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Группа</label>
-                            <input type="text" id="newProductGroup" placeholder="Категория/группа" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-purple-400">
+                            <input type="text" id="newProductGroup" placeholder="Категория/группа" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500">
                         </div>
                         <div class="grid grid-cols-2 gap-3">
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Упаковка</label>
-                                <input type="text" id="newProductPackaging" value="ШТ" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-purple-400">
+                                <input type="text" id="newProductPackaging" value="ШТ" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500">
                             </div>
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Квант</label>
-                                <input type="number" id="newProductQuant" value="1" min="1" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-purple-400">
+                                <input type="number" id="newProductQuant" value="1" min="1" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500">
+                            </div>
+                            <div>
+                                <label>Объём</label>
+                                <input id="newProductVolume" type="number" step="0.01" value="0">
                             </div>
                         </div>
-                        <div class="grid grid-cols-2 gap-3">
+                        <div class="grid grid-cols-3 gap-3">
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Цена</label>
-                                <input type="number" step="0.01" id="newProductPrice" placeholder="0.00" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-purple-400">
+                                <input type="number" step="0.01" id="newProductPrice" placeholder="0.00" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500">
                             </div>
                             <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">Полка</label>
-                                <input type="number" step="0.01" id="newProductShelf" placeholder="0.00" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-purple-400">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Цена на полке</label>
+                                <input type="number" step="0.01" id="newProductShelfPrice" placeholder="0.00" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Дом. полка</label>
+                                <input type="number" step="0.01" id="newProductShelf" placeholder="0.00" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500">
                             </div>
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Поставщик</label>
-                            <input type="text" id="newProductSupplier" placeholder="Название поставщика" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-purple-400">
+                            <input type="text" id="newProductSupplier" placeholder="Название поставщика" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500">
                         </div>
                     </div>
                     <div class="flex gap-3 mt-5">
@@ -973,13 +1140,16 @@
                 packaging: document.getElementById('newProductPackaging').value || 'ШТ',
                 supplier: document.getElementById('newProductSupplier').value.trim(),
                 price: parseFloat(document.getElementById('newProductPrice').value) || 0,
+                shelfPrice: parseFloat(document.getElementById('newProductShelfPrice').value) || 0,
                 shelf: parseFloat(document.getElementById('newProductShelf').value) || 0,
-                quant: parseInt(document.getElementById('newProductQuant').value) || 1
+                quant: parseInt(document.getElementById('newProductQuant').value) || 1,
+                volume: parseFloat(document.getElementById('newProductVolume').value) || 0
             };
             
             products.push(newProduct);
             save(KEYS.PRODUCTS, products);
-            
+            syncToSavedAssortment();
+
             document.getElementById('addProductModal').remove();
             render();
         }
@@ -999,11 +1169,11 @@
             const tts = [...new Set(results.map(r => r.tt))].sort((a, b) => a.localeCompare(b, 'ru'));
 
             // Filter results — фильтруем только если справочник магазинов/ассортимент загружен
-            const storeTTs = new Set(stores.map(s => s.tt));
+            const hasStores = stores.length > 0;
             const productCodes = new Set(products.map(p => p.code));
             const filteredResults = results.filter(r => {
-                // Фильтруем по магазинам только если список не пустой
-                if (storeTTs.size > 0 && !storeTTs.has(r.tt)) return false;
+                // Фильтруем по магазинам из stores.html
+                if (hasStores && !storeMatches(r.tt)) return false;
                 // Фильтруем по ассортименту только если список не пустой
                 if (products.length > 0 && !productCodes.has(r.code)) return false;
                 if (selectedTT && r.tt !== selectedTT) return false;
@@ -1057,7 +1227,7 @@
                                 <div class="text-[8px] opacity-70">НЕТ</div>
                                 <div class="text-base font-bold">${stats.notInMatrix}</div>
                             </div>
-                            <div class="bg-purple-100 text-purple-800 rounded-lg px-2 py-1 text-center min-w-[50px] cursor-pointer hover:bg-purple-200" onclick="showMandatoryModal()">
+                            <div class="bg-gray-200 text-gray-800 rounded-lg px-2 py-1 text-center min-w-[50px] cursor-pointer hover:bg-gray-200" onclick="showMandatoryModal()">
                                 <div class="text-[8px] opacity-70">⭐ ОБЯЗАТ.</div>
                                 <div class="text-base font-bold">${stats.mandatory}</div>
                             </div>
@@ -1068,20 +1238,20 @@
                             </div>
                         </div>
                         <div class="flex flex-wrap gap-2 items-center">
-                            <select onchange="selectedTT=this.value;render()" class="px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-purple-400">
+                            <select onchange="selectedTT=this.value;filterAnalysis()" class="px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500">
                                 <option value="">Магазин (${tts.length})</option>
                                 ${tts.map(tt => `<option value="${tt}" ${selectedTT === tt ? 'selected' : ''}>${tt.substring(0,20)}${tt.length>20?'...':''}</option>`).join('')}
                             </select>
-                            <select onchange="selectedGroup=this.value;render()" class="px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-purple-400">
+                            <select onchange="selectedGroup=this.value;filterAnalysis()" class="px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500">
                                 <option value="">Группа (${groups.length})</option>
                                 ${groups.map(g => `<option value="${g}" ${selectedGroup === g ? 'selected' : ''}>${g}</option>`).join('')}
                             </select>
-                            <select onchange="filterMatrixStatus=this.value;render()" class="px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-purple-400">
+                            <select onchange="filterMatrixStatus=this.value;filterAnalysis()" class="px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500">
                                 <option value="">Матрица</option>
                                 <option value="yes" ${filterMatrixStatus === 'yes' ? 'selected' : ''}>ДА</option>
                                 <option value="no" ${filterMatrixStatus === 'no' ? 'selected' : ''}>НЕТ</option>
                             </select>
-                            <select onchange="filterABC=this.value;render()" class="px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-purple-400">
+                            <select onchange="filterABC=this.value;filterAnalysis()" class="px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500">
                                 <option value="">ABC</option>
                                 <option value="A" ${filterABC === 'A' ? 'selected' : ''}>A</option>
                                 <option value="B" ${filterABC === 'B' ? 'selected' : ''}>B</option>
@@ -1089,12 +1259,12 @@
                             </select>
                             <div class="relative">
                                 <div class="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400">${icons.search}</div>
-                                <input type="text" placeholder="Поиск..." value="${searchProduct}" oninput="searchProduct=this.value;render()" class="pl-7 pr-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-purple-400 w-40">
+                                <input type="text" id="analysisSearchInput" placeholder="Поиск..." value="${esc(searchProduct)}" oninput="debounceSearchAnalysis(this)" class="pl-7 pr-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500 w-40">
                             </div>
                             <button onclick="showSaveMatrixModal()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700">${icons.save} Сохранить</button>
                             <button onclick="showLoadMatrixModal()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700">${icons.import} Загрузить</button>
                             <button onclick="exportAnalysis()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">${icons.export} Экспорт</button>
-                            <button onclick="generateMatrix()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700">${icons.grid} Создать матрицу</button>
+                            <button onclick="generateMatrix()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-gray-700 rounded-lg hover:bg-gray-800">${icons.grid} Создать матрицу</button>
                         </div>
                     </div>
                 </div>
@@ -1113,22 +1283,13 @@
                                     <th class="col-header bg-red-100" style="min-width:60px">Списание</th>
                                     <th class="col-header bg-green-50" style="min-width:60px">Ср. прод/день</th>
                                     <th class="col-header bg-red-50" style="min-width:50px">% спис.</th>
-                                    <th class="col-header bg-purple-100" style="min-width:80px" title="ABC: Продажи / Оборачиваемость / Списания">ABC (П/О/С)</th>
+                                    <th class="col-header bg-gray-200" style="min-width:80px" title="ABC: Продажи / Оборачиваемость / Списания">ABC (П/О/С)</th>
                                     <th class="col-header bg-amber-100" style="min-width:50px">Итого</th>
                                     <th class="col-header bg-emerald-100" style="min-width:70px">В матрице</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 ${(() => {
-                                    let prevTT = null;
-                                    let prevGroup = null;
-                                    let ttCount = 0;
-                                    let groupCount = 0;
-                                    let ttInMatrix = 0;
-                                    let groupInMatrix = 0;
-                                    let ttNotInMatrix = 0;
-                                    let groupNotInMatrix = 0;
-                                    
                                     // Подсчитываем статистику по ТТ и группам
                                     const ttStats = {};
                                     const groupStats = {};
@@ -1145,81 +1306,105 @@
                                         if (r.inMatrix === 'ДА') groupStats[key].inMatrix++;
                                         else groupStats[key].notInMatrix++;
                                     });
-                                    
-                                    const rows = [];
-                                    filteredResults.forEach((r, idx) => {
+
+                                    // Группируем по ТТ
+                                    const ttGroups = {};
+                                    filteredResults.forEach(r => {
                                         const grp = r.group || 'Без группы';
-                                        const groupKey = r.tt + '_' + grp;
-                                        
-                                        // Проверяем свёрнутость
-                                        if (collapsedTT[r.tt]) return;
-                                        if (collapsedGroups[groupKey]) return;
-                                        
-                                        const isFirstInTT = prevTT !== r.tt;
-                                        const isFirstInGroup = prevGroup !== grp || prevTT !== r.tt;
-                                        
-                                        // Цвет ячеек по ABC классу (для всех колонок кроме ТТ и Группа)
-                                        const cellColor = r.abcClass === 'A' ? 'bg-green-100' : r.abcClass === 'B' ? 'bg-yellow-100' : 'bg-red-100';
-                                        
-                                        // Кнопка "В матрице"
-                                        const matrixBtnClass = r.inMatrix === 'ДА' 
-                                            ? 'bg-emerald-500 hover:bg-emerald-600 text-white' 
-                                            : 'bg-red-500 hover:bg-red-600 text-white';
-                                        const matrixBtn = `<button onclick="toggleAnalysisMatrix('${r.tt}', '${r.code}')" class="px-2 py-1 rounded text-xs font-bold ${matrixBtnClass} cursor-pointer" title="Нажмите чтобы изменить">${r.inMatrix === 'ДА' ? '✓ ДА' : '✗ НЕТ'}</button>`;
-                                        
-                                        const ttStat = ttStats[r.tt];
-                                        const grpStat = groupStats[r.tt + '|' + grp];
-                                        
+                                        if (!ttGroups[r.tt]) ttGroups[r.tt] = {};
+                                        if (!ttGroups[r.tt][grp]) ttGroups[r.tt][grp] = [];
+                                        ttGroups[r.tt][grp].push(r);
+                                    });
+
+                                    const rows = [];
+                                    const sortedTTs = Object.keys(ttGroups).sort((a, b) => a.localeCompare(b, 'ru'));
+
+                                    sortedTTs.forEach(tt => {
+                                        const isCollapsed = collapsedTT[tt];
+                                        const stat = ttStats[tt];
+
+                                        // Заголовок ТТ — всегда показывается
                                         rows.push(`
-                                            <tr class="hover:bg-gray-50">
-                                                <td class="text-left text-[10px] text-gray-500 font-semibold border-r border-gray-200 ${isFirstInTT ? 'bg-purple-50' : ''}" style="${isFirstInTT ? 'border-top: 2px solid #9ca3af' : ''}">
-                                                    ${isFirstInTT ? `
-                                                        <div class="flex items-center gap-1 cursor-pointer hover:text-gray-700" onclick="toggleTT('${r.tt}')">
-                                                            ${icons.store}
-                                                            <span class="font-bold">${r.tt}</span>
-                                                            <span class="text-[8px] bg-purple-200 text-purple-700 px-1 rounded">${ttStat.count}</span>
-                                                            <span class="text-[8px] bg-emerald-200 text-emerald-700 px-1 rounded">✓${ttStat.inMatrix}</span>
-                                                        </div>
-                                                    ` : ''}
+                                            <tr class="hover:bg-gray-50 cursor-pointer" onclick="toggleTT('${tt.replace(/'/g, "\\'")}')">
+                                                <td colspan="13" class="text-left py-1.5 px-2 bg-gray-50 border-b-2 border-gray-300">
+                                                    <div class="flex items-center gap-2">
+                                                        ${isCollapsed ? icons.chevronRight : icons.chevronDown}
+                                                        <span class="font-bold text-sm text-gray-800">${tt}</span>
+                                                        <span class="text-[10px] bg-gray-200 text-gray-700 px-1.5 rounded">${stat.count} тов.</span>
+                                                        <span class="text-[10px] bg-emerald-200 text-emerald-700 px-1.5 rounded">✓${stat.inMatrix}</span>
+                                                        <span class="text-[10px] bg-rose-200 text-rose-700 px-1.5 rounded">✗${stat.notInMatrix}</span>
+                                                    </div>
                                                 </td>
-                                                <td class="text-left text-[10px] text-gray-500 border-r border-gray-200 ${isFirstInGroup ? 'bg-purple-50' : ''}" style="${isFirstInGroup ? 'border-top: 1px solid #d1d5db' : ''}">
-                                                    ${isFirstInGroup ? `
-                                                        <div class="flex items-center gap-1 cursor-pointer hover:text-gray-700" onclick="toggleGroup('${groupKey}')">
-                                                            <span class="font-medium">${grp}</span>
-                                                            <span class="text-[8px] bg-purple-200 text-purple-700 px-1 rounded">${grpStat.count}</span>
-                                                            <span class="text-[8px] bg-emerald-200 text-emerald-700 px-1 rounded">✓${grpStat.inMatrix}</span>
-                                                        </div>
-                                                    ` : ''}
-                                                </td>
-                                                <td class="text-left cell-wrap text-xs ${cellColor}">${esc(r.nomenclature)}</td>
-                                                <td class="font-mono text-[10px] ${cellColor}">${r.code}</td>
-                                                <td class="${cellColor} text-center">
-                                                    <button onclick="showCalcDetails('${r.tt}', '${r.code}')" class="px-2 py-0.5 rounded hover:opacity-80 font-medium cursor-pointer" title="Нажмите для просмотра расчёта">
-                                                        ${r.sales.toFixed(1)}
-                                                    </button>
-                                                </td>
-                                                <td class="${cellColor} text-center">${r.daysPresent}</td>
-                                                <td class="${cellColor} text-center ${r.writeoff > 0 ? 'text-red-600 font-medium' : ''}">${r.writeoff.toFixed(1)}</td>
-                                                <td class="${cellColor} text-center">${r.avgPerDay.toFixed(2)}</td>
-                                                <td class="${cellColor} text-center">${r.writeoffPercent.toFixed(0)}%</td>
-                                                <td class="${cellColor} text-center">
-                                                    <span class="text-[9px] font-medium ${r.abcSales === 'A' ? 'text-green-700' : r.abcSales === 'B' ? 'text-yellow-700' : 'text-red-700'}">${r.abcSales}</span>
-                                                    <span class="text-gray-400">/</span>
-                                                    <span class="text-[9px] font-medium ${r.abcTurnover === 'A' ? 'text-green-700' : r.abcTurnover === 'B' ? 'text-yellow-700' : 'text-red-700'}">${r.abcTurnover}</span>
-                                                    <span class="text-gray-400">/</span>
-                                                    <span class="text-[9px] font-medium ${r.abcWriteoff === 'A' ? 'text-green-700' : r.abcWriteoff === 'B' ? 'text-yellow-700' : 'text-red-700'}">${r.abcWriteoff}</span>
-                                                </td>
-                                                <td class="${cellColor} text-center">
-                                                    <span class="px-2 py-0.5 rounded text-xs font-bold ${r.abcScore >= 7 ? 'bg-green-300 text-green-900' : r.abcScore >= 5 ? 'bg-yellow-300 text-yellow-900' : 'bg-red-300 text-red-900'}">${r.abcScore}</span>
-                                                </td>
-                                                <td class="${cellColor} text-center">${matrixBtn}</td>
                                             </tr>
                                         `);
-                                        
-                                        prevTT = r.tt;
-                                        prevGroup = grp;
+
+                                        // Если ТТ свёрнут — пропускаем содержимое
+                                        if (isCollapsed) return;
+
+                                        // Внутри ТТ — группы и товары
+                                        const sortedGroups = Object.keys(ttGroups[tt]).sort((a, b) => a.localeCompare(b, 'ru'));
+                                        sortedGroups.forEach(grp => {
+                                            const groupKey = tt + '_' + grp;
+                                            const isGroupCollapsed = collapsedGroups[groupKey];
+                                            const grpStat = groupStats[tt + '|' + grp];
+
+                                            // Заголовок группы
+                                            rows.push(`
+                                                <tr class="hover:bg-gray-50 cursor-pointer" onclick="toggleGroup('${groupKey.replace(/'/g, "\\'")}')">
+                                                    <td colspan="13" class="text-left py-1 px-3 bg-gray-50 border-b border-gray-200">
+                                                        <div class="flex items-center gap-2">
+                                                            ${isGroupCollapsed ? icons.chevronRight : icons.chevronDown}
+                                                            <span class="font-medium text-xs text-gray-700">${grp}</span>
+                                                            <span class="text-[9px] bg-gray-200 text-gray-700 px-1 rounded">${grpStat.count}</span>
+                                                            <span class="text-[9px] bg-emerald-200 text-emerald-700 px-1 rounded">✓${grpStat.inMatrix}</span>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            `);
+
+                                            // Если группа свёрнута — пропускаем товары
+                                            if (isGroupCollapsed) return;
+
+                                            // Товары группы
+                                            ttGroups[tt][grp].forEach((r, idx) => {
+                                                const cellColor = r.abcClass === 'A' ? 'bg-green-100' : r.abcClass === 'B' ? 'bg-yellow-100' : 'bg-red-100';
+                                                const matrixBtnClass = r.inMatrix === 'ДА' 
+                                                    ? 'bg-emerald-500 hover:bg-emerald-600 text-white' 
+                                                    : 'bg-red-500 hover:bg-red-600 text-white';
+                                                const matrixBtn = `<button onclick="event.stopPropagation();toggleAnalysisMatrix('${r.tt}', '${r.code}')" class="px-2 py-1 rounded text-xs font-bold ${matrixBtnClass} cursor-pointer" title="Нажмите чтобы изменить">${r.inMatrix === 'ДА' ? '✓ ДА' : '✗ НЕТ'}</button>`;
+
+                                                rows.push(`
+                                                    <tr class="hover:bg-gray-50">
+                                                        <td class="text-left text-[10px] text-gray-400"></td>
+                                                        <td class="text-left text-[10px] text-gray-500 font-medium"></td>
+                                                        <td class="text-left cell-wrap text-xs ${cellColor}">${esc(r.nomenclature)}</td>
+                                                        <td class="font-mono text-[10px] ${cellColor}">${r.code}</td>
+                                                        <td class="${cellColor} text-center">
+                                                            <button onclick="event.stopPropagation();showCalcDetails('${r.tt}', '${r.code}')" class="px-2 py-0.5 rounded hover:opacity-80 font-medium cursor-pointer" title="Нажмите для просмотра расчёта">
+                                                                ${r.sales.toFixed(1)}
+                                                            </button>
+                                                        </td>
+                                                        <td class="${cellColor} text-center">${r.daysPresent}</td>
+                                                        <td class="${cellColor} text-center ${r.writeoff > 0 ? 'text-red-600 font-medium' : ''}">${r.writeoff.toFixed(1)}</td>
+                                                        <td class="${cellColor} text-center">${r.avgPerDay.toFixed(2)}</td>
+                                                        <td class="${cellColor} text-center">${r.writeoffPercent.toFixed(0)}%</td>
+                                                        <td class="${cellColor} text-center">
+                                                            <span class="text-[9px] font-medium ${r.abcSales === 'A' ? 'text-green-700' : r.abcSales === 'B' ? 'text-yellow-700' : 'text-red-700'}">${r.abcSales}</span>
+                                                            <span class="text-gray-400">/</span>
+                                                            <span class="text-[9px] font-medium ${r.abcTurnover === 'A' ? 'text-green-700' : r.abcTurnover === 'B' ? 'text-yellow-700' : 'text-red-700'}">${r.abcTurnover}</span>
+                                                            <span class="text-gray-400">/</span>
+                                                            <span class="text-[9px] font-medium ${r.abcWriteoff === 'A' ? 'text-green-700' : r.abcWriteoff === 'B' ? 'text-yellow-700' : 'text-red-700'}">${r.abcWriteoff}</span>
+                                                        </td>
+                                                        <td class="${cellColor} text-center">
+                                                            <span class="px-2 py-0.5 rounded text-xs font-bold ${r.abcScore >= 7 ? 'bg-green-300 text-green-900' : r.abcScore >= 5 ? 'bg-yellow-300 text-yellow-900' : 'bg-red-300 text-red-900'}">${r.abcScore}</span>
+                                                        </td>
+                                                        <td class="${cellColor} text-center">${matrixBtn}</td>
+                                                    </tr>
+                                                `);
+                                            });
+                                        });
                                     });
-                                    
+
                                     return rows.join('');
                                 })()}
                             </tbody>
@@ -1240,42 +1425,33 @@
             `;
         }
 
+        let searchTimeoutAssort = null;
+        function debounceSearchAssort(input) {
+            const val = input.value;
+            const pos = input.selectionStart;
+            clearTimeout(searchTimeoutAssort);
+            searchTimeoutAssort = setTimeout(() => {
+                assortmentSearch = val;
+                render();
+                setTimeout(() => {
+                    const el = document.getElementById('assortmentSearchInput');
+                    if (el) { el.focus(); el.setSelectionRange(pos, pos); }
+                }, 10);
+            }, 300);
+        }
+
+        function filterAssortment() {
+            render();
+        }
+
         function toggleGroup(group) {
             collapsedGroups[group] = !collapsedGroups[group];
-            
-            // Сохраняем скролл в зависимости от текущей вкладки
-            let containerId = null;
-            if (tab === 'assortment') containerId = 'assortmentTableContainer';
-            else if (tab === 'matrix') containerId = 'matrixTableContainer';
-            
-            const container = containerId ? document.getElementById(containerId) : null;
-            const scrollTop = container ? container.scrollTop : 0;
-            
             render();
-            
-            // Восстанавливаем скролл после перерисовки
-            if (containerId) {
-                requestAnimationFrame(() => {
-                    const newContainer = document.getElementById(containerId);
-                    if (newContainer) newContainer.scrollTop = scrollTop;
-                });
-            }
         }
 
         function toggleTT(tt) {
             collapsedTT[tt] = !collapsedTT[tt];
-            
-            // Сохраняем скролл для вкладки анализ
-            const container = document.getElementById('analysisTableContainer');
-            const scrollTop = container ? container.scrollTop : 0;
-            
             render();
-            
-            // Восстанавливаем скролл после перерисовки
-            requestAnimationFrame(() => {
-                const newContainer = document.getElementById('analysisTableContainer');
-                if (newContainer) newContainer.scrollTop = scrollTop;
-            });
         }
         
         function showCalcDetails(tt, code) {
@@ -1353,8 +1529,46 @@
             document.getElementById('calcModal').classList.remove('flex');
         }
 
-        // Переключение статуса товара в матрице из таблицы анализа
+        let searchTimeoutAnalysis = null;
+        function debounceSearchAnalysis(input) {
+            const val = input.value;
+            const pos = input.selectionStart;
+            clearTimeout(searchTimeoutAnalysis);
+            searchTimeoutAnalysis = setTimeout(() => {
+                searchProduct = val;
+                render();
+                setTimeout(() => {
+                    const el = document.getElementById('analysisSearchInput');
+                    if (el) { el.focus(); el.setSelectionRange(pos, pos); }
+                }, 10);
+            }, 300);
+        }
+
+        // Быстрый фильтр анализа (для select-ов)
+        function filterAnalysis() {
+            render();
+        }
+
+        // Синхронизация marks из results в shared_matrix_v1 + SharedData
+        function syncMarksToShared() {
+            try {
+                const marks = {};
+                results.forEach(r => {
+                    if (r.inMatrix === 'ДА' || r.inMatrix === 'НЕТ') {
+                        if (!marks[r.code]) marks[r.code] = {};
+                        marks[r.code][r.tt] = r.inMatrix;
+                    }
+                });
+                SharedUtils.save(SharedUtils.STORAGE_KEYS.MATRIX, marks);
+                if (window.SharedData) SharedData.saveMatrixMarks(marks, 'matrix-calc');
+            } catch(e) {}
+        }
+
+        // Переключение статуса товара в матрице из таблицы анализа — быстрое, без полного рендера
         function toggleAnalysisMatrix(tt, code) {
+            const container = document.getElementById('analysisTableContainer');
+            const scrollTop = container ? container.scrollTop : 0;
+
             results.forEach(r => {
                 if (r.tt === tt && r.code === code) {
                     r.inMatrix = r.inMatrix === 'ДА' ? 'НЕТ' : 'ДА';
@@ -1363,18 +1577,19 @@
                 }
             });
             save(KEYS.RESULTS, results);
-            render();
-        }
+            syncMarksToShared();
 
-        function toggleMatrix(tt, code) {
-            results.forEach(r => {
-                if (r.tt === tt && r.code === code) {
-                    r.inMatrix = r.inMatrix === 'ДА' ? 'НЕТ' : 'ДА';
-                    r.manualEdit = true;
-                }
-            });
-            save(KEYS.RESULTS, results);
-            render();
+            // Быстрое обновление только изменённой ячейки и счётчиков — без полного render()
+            const btn = event.target.closest('button');
+            if (btn) {
+                const isDA = results.find(r => r.tt === tt && r.code === code)?.inMatrix === 'ДА';
+                btn.className = `px-2 py-1 rounded text-xs font-bold ${isDA ? 'bg-emerald-500 hover:bg-emerald-600 text-white' : 'bg-red-500 hover:bg-red-600 text-white'} cursor-pointer`;
+                btn.textContent = isDA ? '✓ ДА' : '✗ НЕТ';
+            }
+
+            // Обновляем счётчики в TT-заголовке
+            const ttHeaderCell = container?.querySelector(`td[onclick="toggleTT('${tt.replace(/'/g, "\\'")}')"]`);
+            // Простой fallback: обновляем через data-атрибут или просто пропускаем (счётчики обновятся при следующем render)
         }
 
         function renderMatrix() {
@@ -1387,10 +1602,10 @@
                 </div>`;
             }
 
-            // Фильтруем только по магазинам из списка
-            const storeTTs = new Set(stores.map(s => s.tt));
-            const filteredResults = storeTTs.size > 0
-                ? results.filter(r => storeTTs.has(r.tt))
+            // Фильтруем только по магазинам из stores.html
+            const hasStores = stores.length > 0;
+            const filteredResults = hasStores
+                ? results.filter(r => storeMatches(r.tt))
                 : results;
 
             // Get unique TTs and products (только из отфильтрованных)
@@ -1433,10 +1648,10 @@
                 <div class="bg-white rounded-lg border border-gray-200 p-3 mb-3">
                     <div class="flex justify-between items-center">
                         <div class="flex gap-2 items-center">
-                            <div class="bg-purple-100 text-purple-800 rounded-lg px-3 py-1.5">
+                            <div class="bg-gray-200 text-gray-800 rounded-lg px-3 py-1.5">
                                 <span class="text-xs">Товаров: </span><strong>${filteredMatrixData.length}${matrixSearch ? '/' + productMap.size : ''}</strong>
                             </div>
-                            <div class="bg-purple-100 text-purple-800 rounded-lg px-3 py-1.5">
+                            <div class="bg-gray-200 text-gray-800 rounded-lg px-3 py-1.5">
                                 <span class="text-xs">Магазинов: </span><strong>${tts.length}</strong>
                             </div>
                             <div class="relative">
@@ -1445,7 +1660,7 @@
                                     placeholder="Поиск по названию, коду, группе..." 
                                     value="${matrixSearch}" 
                                     oninput="matrixSearch=this.value;filterMatrix()"
-                                    class="pl-8 pr-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-purple-400 w-56"
+                                    class="pl-8 pr-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500 w-56"
                                 >
                                 <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400">${icons.search}</span>
                                 ${matrixSearch ? `<button onclick="matrixSearch='';filterMatrix()" class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">${icons.x}</button>` : ''}
@@ -1453,7 +1668,6 @@
                         </div>
                         <div class="flex gap-2">
                             <button onclick="showSaveMatrixModal()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700">${icons.save} Сохранить</button>
-                            <button onclick="showLoadMatrixModal()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700">${icons.import} Загрузить</button>
                             <button onclick="document.getElementById('matrixImportInput').click()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700">${icons.import} Импорт</button>
                             <input type="file" id="matrixImportInput" accept=".xlsx,.xls,.csv" onchange="importMatrix(this)" class="hidden">
                             <button onclick="exportMatrix()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">${icons.export} Экспорт</button>
@@ -1479,7 +1693,7 @@
                                             <div class="flex items-center gap-2">
                                                 ${collapsedGroups['matrix_' + gr] ? icons.chevronRight : icons.chevronDown}
                                                 <span class="font-semibold text-xs">${gr}</span>
-                                                <span class="text-[10px] bg-purple-200 text-purple-800 px-1 rounded">${items.length}</span>
+                                                <span class="text-[10px] bg-gray-200 text-gray-800 px-1 rounded">${items.length}</span>
                                             </div>
                                         </td>
                                     </tr>
@@ -1502,74 +1716,13 @@
                 </div>`;
         }
 
+        // Импорт матрицы с вкладки Матрица — работает через тот же merge-механизм
         function importMatrix(input) {
-            const file = input.files[0];
-            if (!file) return;
-            
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                try {
-                    const data = new Uint8Array(e.target.result);
-                    const workbook = XLSX.read(data, { type: 'array' });
-                    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-                    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-                    
-                    if (rows.length < 2) {
-                        alert('Файл пуст или не содержит данных');
-                        return;
-                    }
-                    
-                    // Первая строка - заголовки: Группа, Наименование, Код, Магазины...
-                    const headers = rows[0];
-                    const storeColumns = [];
-                    
-                    // Найти колонки с магазинами (начиная с 4-й колонки)
-                    for (let i = 3; i < headers.length; i++) {
-                        if (headers[i]) storeColumns.push({ index: i, tt: String(headers[i]).trim() });
-                    }
-                    
-                    let updated = 0;
-                    
-                    // Обработать строки данных
-                    for (let r = 1; r < rows.length; r++) {
-                        const row = rows[r];
-                        const code = normCode(row[2] || row[1]);
-                        if (!code || code === '0') continue;
-                        
-                        // Обновить статус матрицы для каждого магазина
-                        storeColumns.forEach(col => {
-                            const cellValue = String(row[col.index] || '').toUpperCase().trim();
-                            const inMatrix = cellValue === 'ДА' || cellValue === '1' || cellValue === 'TRUE' || cellValue === 'V' || cellValue === '✓';
-                            
-                            results.forEach(res => {
-                                if (normCode(res.code) === code && res.tt === col.tt) {
-                                    if (res.inMatrix !== (inMatrix ? 'ДА' : 'НЕТ')) {
-                                        res.inMatrix = inMatrix ? 'ДА' : 'НЕТ';
-                                        res.manualEdit = true;
-                                        updated++;
-                                    }
-                                }
-                            });
-                        });
-                    }
-                    
-                    save(KEYS.RESULTS, results);
-                    alert(`Импорт завершён. Обновлено записей: ${updated}`);
-                    render();
-                } catch (err) {
-                    console.error('Import error:', err);
-                    alert('Ошибка импорта: ' + err.message);
-                }
-            };
-            reader.readAsArrayBuffer(file);
-            input.value = '';
+            // Делегируем в handleMatrixUpload — та же логика слияния
+            handleMatrixUpload(input);
         }
 
         function toggleMatrixCell(code, tt) {
-            // Сохраняем позицию скролла
-            const container = document.getElementById('matrixTableContainer');
-            const scrollTop = container ? container.scrollTop : 0;
-            
             // Ищем существующую запись
             let found = false;
             results.forEach(r => {
@@ -1615,13 +1768,8 @@
             }
             
             save(KEYS.RESULTS, results);
+            syncMarksToShared();
             render();
-            
-            // Восстанавливаем скролл после перерисовки
-            requestAnimationFrame(() => {
-                const newContainer = document.getElementById('matrixTableContainer');
-                if (newContainer) newContainer.scrollTop = scrollTop;
-            });
         }
 
         // Фильтрация матрицы без полной перерисовки (сохраняет фокус и скролл)
@@ -1636,10 +1784,10 @@
                 return;
             }
 
-            // Фильтруем только по магазинам из списка
-            const storeTTs = new Set(stores.map(s => s.tt));
-            const filteredResults = storeTTs.size > 0
-                ? results.filter(r => storeTTs.has(r.tt))
+            // Фильтруем только по магазинам из stores.html
+            const hasStores = stores.length > 0;
+            const filteredResults = hasStores
+                ? results.filter(r => storeMatches(r.tt))
                 : results;
 
             // Get unique TTs and products
@@ -1678,7 +1826,7 @@
                         <div class="flex items-center gap-2">
                             ${collapsedGroups['matrix_' + gr] ? icons.chevronRight : icons.chevronDown}
                             <span class="font-semibold text-xs">${gr}</span>
-                            <span class="text-[10px] bg-purple-200 text-purple-800 px-1 rounded">${items.length}</span>
+                            <span class="text-[10px] bg-gray-200 text-gray-800 px-1 rounded">${items.length}</span>
                         </div>
                     </td>
                 </tr>
@@ -1700,7 +1848,7 @@
             if (container) container.scrollTop = scrollTop;
 
             // Обновляем счётчик товаров
-            const counterEl = document.querySelector('.bg-purple-100 strong');
+            const counterEl = document.querySelector('.bg-gray-200 strong');
             if (counterEl) {
                 counterEl.textContent = filteredMatrixData.length + (matrixSearch ? '/' + Object.keys(matrixData).length : '');
             }
@@ -1709,67 +1857,31 @@
         function exportMatrix() {
             if (results.length === 0) { alert('Нет данных'); return; }
 
-            // Фильтруем только по магазинам из списка
-            const storeTTs = new Set(stores.map(s => s.tt));
-            const filteredResults = storeTTs.size > 0
-                ? results.filter(r => storeTTs.has(r.tt))
+            // Фильтруем только по магазинам из stores.html
+            const hasStores = stores.length > 0;
+            const filteredResults = hasStores
+                ? results.filter(r => storeMatches(r.tt))
                 : results;
 
             const tts = [...new Set(filteredResults.map(r => r.tt))].sort((a, b) => a.localeCompare(b, 'ru'));
             
-            // Группируем по группам
-            const grouped = {};
+            // Собираем данные в единый формат: {code, nomenclature, tt1: 'ДА'/'НЕТ', ...}
+            const matrixData = {};
             filteredResults.forEach(r => {
-                const gr = r.group || 'Без группы';
-                if (!grouped[gr]) grouped[gr] = {};
-                if (!grouped[gr][r.code]) {
-                    grouped[gr][r.code] = {
-                        group: gr,
-                        nomenclature: r.nomenclature,
-                        code: r.code,
-                        tts: {}
-                    };
-                }
-                grouped[gr][r.code].tts[r.tt] = r.inMatrix;
+                if (!matrixData[r.code]) matrixData[r.code] = { code: r.code, nomenclature: r.nomenclature };
+                matrixData[r.code][r.tt] = r.inMatrix;
             });
             
-            const headers = ['Группа', 'Наименование', 'Код', ...tts];
-            const data = [];
-            const merges = []; // Для объединения ячеек групп
-            let currentRow = 1; // Начинаем с 1 (после заголовка)
-            
-            // Сортируем группы и добавляем данные
-            Object.keys(grouped).sort((a, b) => a.localeCompare(b, 'ru')).forEach(gr => {
-                const items = Object.values(grouped[gr]);
-                const startRow = currentRow;
-                
-                // Добавляем товары группы
-                items.forEach((item, idx) => {
-                    const row = [
-                        item.group,
-                        item.nomenclature,
-                        item.code,
-                        ...tts.map(tt => item.tts[tt] || 'НЕТ')
-                    ];
-                    data.push(row);
-                    currentRow++;
-                });
-            });
-            
-            const ws = SharedUtils.createStyledSheet(data, headers, [0, 1]); // Группа и Наименование - по левому краю
-            
-            const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, 'Матрица');
-            XLSX.writeFile(wb, `матрица_${new Date().toISOString().slice(0, 10)}.xlsx`);
+            SharedUtils.exportMatrixExcel(Object.values(matrixData), tts);
         }
 
         function exportAnalysis() {
             if (results.length === 0) { alert('Нет данных'); return; }
 
-            // Фильтруем только по магазинам из списка
-            const storeTTs = new Set(stores.map(s => s.tt));
-            const filteredResults = storeTTs.size > 0
-                ? results.filter(r => storeTTs.has(r.tt))
+            // Фильтруем только по магазинам из stores.html
+            const hasStores = stores.length > 0;
+            const filteredResults = hasStores
+                ? results.filter(r => storeMatches(r.tt))
                 : results;
 
             // Сортируем: ТТ → Группа → ABC (A,B,C)
@@ -1815,6 +1927,28 @@
 
         // === FILE PARSING ===
         function handleFile(input, type) {
+            if (type === 'assortment') {
+                const file = input.files[0];
+                if (!file) return;
+                currentLoadedAssortment = null;
+                SharedUtils.importAssortmentUnified(file).then(function(result) {
+                    products = result.items;
+                    products.forEach(function(p) {
+                        if (!p.markup && p.markup !== 0) p.markup = defaultMarkup;
+                        if (!p.inPrice) p.inPrice = p.price || 0;
+                    });
+                    save(KEYS.PRODUCTS, products);
+                    syncToSavedAssortment();
+                    render();
+                    alert('Загружено товаров: ' + products.length);
+                }).catch(function(err) {
+                    alert('Ошибка импорта: ' + err.message);
+                    console.error(err);
+                });
+                input.value = '';
+                return;
+            }
+
             const file = input.files[0];
             if (!file) return;
 
@@ -1837,10 +1971,6 @@
                         const { items } = SharedUtils.parseWriteoffs(json);
                         writeoffs = items;
                         save(KEYS.WRITEOFFS, writeoffs);
-                    } else if (type === 'assortment') {
-                        const { items, newShelf } = SharedUtils.parseAssortment(json);
-                        products = items;
-                        save(KEYS.PRODUCTS, products);
                     }
 
                     render();
@@ -1850,6 +1980,99 @@
                 }
             };
             reader.readAsArrayBuffer(file);
+            input.value = '';
+        }
+
+        // Загрузка матрицы из Excel файла — единый формат (автоопределение старого/нового)
+        function handleMatrixUpload(input) {
+            const file = input.files[0];
+            if (!file) return;
+
+            SharedUtils.importMatrixExcel(file).then(({ marks, products }) => {
+                const importCodes = new Set(Object.keys(marks));
+                const importTTs = new Set(Object.keys(marks).flatMap(code => Object.keys(marks[code])));
+
+                // Если results пуст — создаём записи из файла (первый импорт без анализа)
+                if (results.length === 0) {
+                    if (!confirm(`Загрузить матрицу из файла (${products.length} товаров)?\nАнализ не был рассчитан — данные будут только из файла.`)) return;
+
+                    const parsed = [];
+                    products.forEach(p => {
+                        Object.entries(marks[p.code] || {}).forEach(([tt, val]) => {
+                            parsed.push({
+                                tt, code: p.code, nomenclature: p.nomenclature,
+                                group: p.group,
+                                inMatrix: val,
+                                sales: 0, stock: 0, daysPresent: 0, totalDays: 0,
+                                avgPerDay: 0, turnoverIndex: 999, writeoff: 0, writeoffPercent: 0,
+                                abcSales: 'C', abcTurnover: 'C', abcWriteoff: 'A',
+                                abcScore: 5, abcClass: 'C', hasPrice: false,
+                                isMandatory: false, manualEdit: true
+                            });
+                        });
+                    });
+                    results = parsed;
+                    save(KEYS.RESULTS, results);
+                    syncMarksToShared();
+                    render();
+                    alert(`Загружено ${parsed.length} записей матрицы из файла`);
+                    return;
+                }
+
+                // РЕЖИМ СЛИЯНИЯ: обновляем inMatrix из файла, не затирая ABC-данные
+                let updatedDA = 0, updatedNET = 0, setToNET = 0;
+
+                results.forEach(r => {
+                    const code = normCode(r.code);
+                    const codeMarks = marks[code];
+
+                    if (codeMarks) {
+                        const imported = codeMarks[r.tt];
+                        if (imported !== undefined) {
+                            if (r.inMatrix !== imported) {
+                                if (imported === 'ДА') updatedDA++;
+                                else updatedNET++;
+                                r.inMatrix = imported;
+                                r.manualEdit = true;
+                            }
+                        } else {
+                            // ТТ есть в results, но нет в файле для этого кода
+                            if (r.inMatrix === 'ДА') {
+                                r.inMatrix = 'НЕТ';
+                                r.manualEdit = true;
+                                setToNET++;
+                            }
+                        }
+                    } else {
+                        // Код отсутствует в файле — убираем из матрицы
+                        if (r.inMatrix === 'ДА') {
+                            r.inMatrix = 'НЕТ';
+                            r.manualEdit = true;
+                            setToNET++;
+                        }
+                    }
+                });
+
+                // Обновляем названия товаров и групп из файла
+                products.forEach(p => {
+                    results.forEach(res => {
+                        if (normCode(res.code) === p.code) {
+                            if (p.nomenclature && p.nomenclature !== '0') res.nomenclature = p.nomenclature;
+                            if (p.group) res.group = p.group;
+                        }
+                    });
+                });
+
+                save(KEYS.RESULTS, results);
+                syncMarksToShared();
+                render();
+
+                const msg = `Матрица обновлена из файла:\n• Установлено ДА: ${updatedDA}\n• Установлено НЕТ: ${updatedNET}\n• Убрано (нет в файле): ${setToNET}`;
+            }).catch(err => {
+                console.error('Matrix parse error:', err);
+                alert('Ошибка чтения матрицы: ' + err.message);
+            });
+
             input.value = '';
         }
 
@@ -1920,17 +2143,16 @@
                 allPairs.add(`${w.tt}_${code}`);
             });
 
-            // Фильтруем только товары из ассортимента (если ассортимент не пустой)
+            // Фильтруем только товары из ассортимента и магазины из stores.html
             const productCodes = new Set(products.map(p => p.code));
-            const storeTTs = new Set(stores.map(s => s.tt));
+            const hasStores = stores.length > 0;
 
-            if (products.length > 0 || storeTTs.size > 0) {
+            if (products.length > 0 || hasStores) {
                 const filteredPairs = new Set();
                 allPairs.forEach(pair => {
                     const [tt, code] = pair.split('_');
-                    // Проверяем: товар в ассортименте (или ассортимент пуст) И магазин в списке (или список пуст)
                     const productOk = products.length === 0 || productCodes.has(code);
-                    const storeOk = storeTTs.size === 0 || storeTTs.has(tt);
+                    const storeOk = !hasStores || storeMatches(tt);
                     if (productOk && storeOk) {
                         filteredPairs.add(pair);
                     }
@@ -2134,6 +2356,7 @@
             });
 
             save(KEYS.RESULTS, results);
+            syncMarksToShared();
             setTab('analysis');
 
             const stats = {
@@ -2145,15 +2368,16 @@
         }
 
         function generateAssortment() {
+            currentLoadedAssortment = null;
             if (sales.length === 0 && stocks.length === 0) {
                 alert('Загрузите файлы продаж и/или остатков!');
                 return;
             }
 
-            // Фильтруем только по магазинам из списка (если список не пустой)
-            const storeTTs = new Set(stores.map(s => s.tt));
-            const filteredStocks = storeTTs.size > 0 ? stocks.filter(s => storeTTs.has(s.tt)) : stocks;
-            const filteredSales = storeTTs.size > 0 ? sales.filter(s => storeTTs.has(s.tt)) : sales;
+            // Фильтруем только по магазинам из stores.html
+            const hasStores = stores.length > 0;
+            const filteredStocks = hasStores ? stocks.filter(s => storeMatches(s.tt)) : stocks;
+            const filteredSales = hasStores ? sales.filter(s => storeMatches(s.tt)) : sales;
 
             // Создаём маппинг: название товара -> код (из stocks) - как ВПР
             const nameToCode = new Map();
@@ -2181,6 +2405,7 @@
                         packaging: 'ШТ',
                         supplier: '',
                         price: 0,
+                        shelfPrice: 0,
                         shelf: 0,
                         quant: 1
                     });
@@ -2222,6 +2447,7 @@
                         packaging: 'ШТ',
                         supplier: '',
                         price: 0,
+                        shelfPrice: 0,
                         shelf: 0,
                         quant: 1
                     });
@@ -2265,11 +2491,11 @@
                 return;
             }
             
-            // Фильтруем только магазины из списка (если загружен) и товары из ассортимента (если загружен)
-            const storeTTs = new Set(stores.map(s => s.tt));
+            // Фильтруем только магазины из stores.html и товары из ассортимента
+            const hasStores = stores.length > 0;
             const productCodes = new Set(products.map(p => p.code));
             const matrixResults = results.filter(r => {
-                if (storeTTs.size > 0 && !storeTTs.has(r.tt)) return false;
+                if (hasStores && !storeMatches(r.tt)) return false;
                 if (products.length > 0 && !productCodes.has(r.code)) return false;
                 return r.inMatrix === 'ДА';
             });
@@ -2311,6 +2537,7 @@
                 }
             });
             save(KEYS.RESULTS, results);
+            syncMarksToShared();
             render();
         }
 
