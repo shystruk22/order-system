@@ -2724,10 +2724,9 @@
                         supOrder = Math.round(supOrder * 100) / 100;
                         if (orderEdits[editKey] !== undefined) supOrder = orderEdits[editKey];
 
-                        if (supOrder > 0) {
-                            supplierOrders[sup] = { order: supOrder, inPrice, sum: supOrder * inPrice, daysUntil: 1 };
-                            allOrderSuppliers.add(sup);
-                        }
+                        // Всегда добавляем запись (даже при order=0), чтобы ячейка была редактируемой
+                        supplierOrders[sup] = { order: supOrder, inPrice, sum: supOrder * inPrice, daysUntil: 1 };
+                        if (supOrder > 0) allOrderSuppliers.add(sup);
                     });
 
                     // hasConflict: >1 поставщик с заказом > 0
