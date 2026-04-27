@@ -1141,7 +1141,40 @@
         }
 
         function exportAssortment() {
-            SharedUtils.exportAssortmentUnified(Object.values(matrix));
+            const items = Object.values(matrix).sort((a, b) => {
+                const ga = (a.group || '').localeCompare(b.group || '', 'ru');
+                return ga !== 0 ? ga : (a.nomenclature || '').localeCompare(b.nomenclature || '', 'ru');
+            });
+            if (items.length === 0) { alert('Нет данных для экспорта'); return; }
+
+            const headers = ['Группа', 'Наименование', 'Код', 'Упак.', 'Поставщик', 'Цена', 'Цена на полке', 'Дом. полка', 'Квант', 'Объём'];
+            const rows = [headers];
+            items.forEach(p => {
+                rows.push([
+                    p.group || '',
+                    p.nomenclature || '',
+                    p.code || '',
+                    p.packaging || 'ШТ',
+                    p.supplier || '',
+                    p.price || 0,
+                    p.shelfPrice || 0,
+                    p.shelf || 0,
+                    p.quant || 1,
+                    p.volume || 0
+                ]);
+            });
+
+            const ws = XLSX.utils.aoa_to_sheet(rows);
+            // Ширина колонок
+            ws['!cols'] = [
+                { wch: 18 }, { wch: 35 }, { wch: 12 }, { wch: 6 },
+                { wch: 18 }, { wch: 10 }, { wch: 12 }, { wch: 10 },
+                { wch: 8 }, { wch: 8 }
+            ];
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Ассортимент');
+            const today = new Date().toISOString().slice(0, 10);
+            XLSX.writeFile(wb, `ассортимент_${today}.xlsx`);
         }
 
         // === МАТРИЦА ===
