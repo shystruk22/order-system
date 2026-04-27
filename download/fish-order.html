@@ -1567,6 +1567,7 @@
                     </div>
                     <div class="ml-auto flex gap-2">
                         <button onclick="applyDefaultMarkup()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-violet-600 rounded-lg hover:bg-violet-700">${icons.refresh} Наценка</button>
+                        <button onclick="recalcInPricesFromSuppliers()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-orange-700 bg-orange-50 border border-orange-200 rounded-lg hover:bg-orange-100" title="Пересчитать inPrice: взять минимальную цену из поставщиков вместо максимальной">🔧 Испр. вх. цены</button>
                         <button onclick="document.getElementById('pricesImportInput').click()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700">${icons.import} Импорт</button>
                         <input type="file" id="pricesImportInput" accept=".xlsx,.xls,.csv" onchange="importPrices(this)" class="hidden">
                         <button onclick="exportPrices()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">${icons.export} Экспорт</button>
@@ -1719,16 +1720,53 @@
                 delete supplierPrices[nc][supplierName];
                 if (Object.keys(supplierPrices[nc]).length === 0) delete supplierPrices[nc];
             }
-            // Обновляем inPrice = макс. цена среди всех поставщиков
-            const maxP = getSupplierMaxPrice(nc);
+            // НЕ перезаписываем inPrice максимальной ценой!
+            // inPrice — это входящая цена товара (основного поставщика), не максимум.
+            // Сохраняем supplierPrices — они используются в расчёте заказа напрямую.
             const product = matrix[nc] || matrix[code];
             if (product) {
-                product.inPrice = maxP;
-                product.price = maxP;
+                // Обновляем inPrice ТОЛЬКО если он ещё не был установлен
+                // (берём минимальную цену из поставщиков как базовую)
+                if (!product.inPrice || product.inPrice === 0) {
+                    const minP = getSupplierMinPrice(nc);
+                    if (minP > 0) product.inPrice = minP;
+                }
                 syncFishAssortment();
             }
             save(KEYS.SUPPLIER_PRICES, supplierPrices);
             render();
+        }
+
+        function getSupplierMinPrice(code) {
+            const prices = supplierPrices[code] || {};
+            const vals = Object.values(prices).filter(v => v > 0);
+            if (vals.length > 0) return Math.min(...vals);
+            return 0;
+        }
+
+        function recalcInPricesFromSuppliers() {
+            if (!confirm('Исправить входящие цены (inPrice) у всех товаров?\n\nСейчас inPrice = максимальная цена поставщика.\nПосле исправления: inPrice = минимальная цена поставщика.\n\nЭто повлияет на расчёт заказа и наценки.')) return;
+
+            let fixed = 0;
+            Object.entries(matrix).forEach(([code, p]) => {
+                const supPrices = supplierPrices[code];
+                if (!supPrices) return;
+                const vals = Object.values(supPrices).filter(v => v > 0);
+                if (vals.length === 0) return;
+                const minP = Math.min(...vals);
+                const maxP = Math.max(...vals);
+                if (minP !== maxP && (p.inPrice || 0) === maxP) {
+                    p.inPrice = minP;
+                    p.price = minP;
+                    fixed++;
+                }
+            });
+
+            syncFishAssortment();
+            save(KEYS.ASSORTMENT, matrix);
+            save(KEYS.SUPPLIER_PRICES, supplierPrices);
+            render();
+            alert('Исправлено: ' + fixed + ' товаров\ninPrice теперь = минимальная цена из поставщиков\n(ранее была максимальная)');
         }
 
         function updatePrice(code, field, value) {
@@ -2603,7 +2641,8 @@
                             if (!(sup in supplierPeriodMap)) return;
                             const editKey = `${store.tt}_${code}_${sup}`;
                             let supOrder = orderEdits[editKey] !== undefined ? orderEdits[editKey] : 0;
-                            supplierOrders[sup] = { order: supOrder, inPrice, sum: supOrder * inPrice, daysUntil: 1 };
+                            const supSpecificPrice = (supplierPrices[code] && supplierPrices[code][sup]) || p.inPrice || 0;
+                            supplierOrders[sup] = { order: supOrder, inPrice: supSpecificPrice, sum: supOrder * supSpecificPrice, daysUntil: 1 };
                             if (supOrder > 0) allOrderSuppliers.add(sup);
                         });
 
@@ -2724,8 +2763,11 @@
                         supOrder = Math.round(supOrder * 100) / 100;
                         if (orderEdits[editKey] !== undefined) supOrder = orderEdits[editKey];
 
+                        // Цена конкретного поставщика (не максимальная из всех!)
+                        const supSpecificPrice = (supplierPrices[code] && supplierPrices[code][sup]) || p.inPrice || 0;
+                        const supSum = supOrder * supSpecificPrice;
                         // Всегда добавляем запись (даже при order=0), чтобы ячейка была редактируемой
-                        supplierOrders[sup] = { order: supOrder, inPrice, sum: supOrder * inPrice, daysUntil: 1 };
+                        supplierOrders[sup] = { order: supOrder, inPrice: supSpecificPrice, sum: supSum, daysUntil: 1 };
                         if (supOrder > 0) allOrderSuppliers.add(sup);
                     });
 
