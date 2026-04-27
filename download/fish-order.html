@@ -1531,8 +1531,13 @@
             let markupCount = 0;
 
             Object.values(matrix).forEach(p => {
-                const maxInP = getSupplierMaxPrice(p.code) || p.inPrice || p.price || 0;
                 const shP = p.shelfPrice || 0;
+                let maxInP = getSupplierMaxPrice(p.code);
+                if (!maxInP) {
+                    const inP = p.inPrice || 0;
+                    if (inP > 0 && inP < shP) maxInP = inP;
+                    else maxInP = 0;
+                }
                 if (maxInP > 0) itemsWithPrice++;
                 if (shP > 0) itemsWithShelfPrice++;
                 if (maxInP > 0 && shP > 0) {
@@ -1634,8 +1639,13 @@
                 let grMarginSum = 0;
                 let grPricedCount = 0;
                 items.forEach(p => {
-                    const maxInP = getSupplierMaxPrice(p.code) || p.inPrice || p.price || 0;
                     const shP = p.shelfPrice || 0;
+                    let maxInP = getSupplierMaxPrice(p.code);
+                    if (!maxInP) {
+                        const inP = p.inPrice || 0;
+                        if (inP > 0 && inP < shP) maxInP = inP;
+                        else maxInP = 0;
+                    }
                     if (maxInP > 0 && shP > 0) {
                         grIncome += (shP - maxInP);
                         grMarkupSum += (shP - maxInP) / maxInP * 100;
@@ -1660,8 +1670,18 @@
                     items.forEach(p => {
                         const code = p.code;
                         const sp = supplierPrices[code] || {};
-                        const maxInP = getSupplierMaxPrice(code) || p.inPrice || p.price || 0;
                         const shP = p.shelfPrice || 0;
+                        // Макс. вх. = максимальная цена из поставщиков
+                        // Если нет цен у поставщиков — берём p.inPrice, но ТОЛЬКО если он < shelfPrice (реально входящая, а не полка)
+                        let maxInP = getSupplierMaxPrice(code);
+                        if (!maxInP) {
+                            const inP = p.inPrice || 0;
+                            if (inP > 0 && inP < shP) {
+                                maxInP = inP;
+                            } else {
+                                maxInP = 0;
+                            }
+                        }
                         const income = shP - maxInP;
                         const markup = maxInP > 0 ? (shP - maxInP) / maxInP * 100 : 0;
                         const margin = shP > 0 ? (shP - maxInP) / shP * 100 : 0;
@@ -1745,10 +1765,19 @@
         }
 
         function recalcInPricesFromSuppliers() {
-            if (!confirm('Исправить входящие цены (inPrice) у всех товаров?\n\nСейчас inPrice = максимальная цена поставщика.\nПосле исправления: inPrice = минимальная цена поставщика.\n\nЭто повлияет на расчёт заказа и наценки.')) return;
+            if (!confirm('Исправить входящие цены (inPrice) у всех товаров?\n\nЗаменит inPrice:\n- Если есть цены поставщиков → минимальная из них\n- Если inPrice = shelfPrice → очистить (0)\n\nЭто повлияет на расчёт заказа и наценки.')) return;
 
             let fixed = 0;
+            let cleared = 0;
             Object.entries(matrix).forEach(([code, p]) => {
+                // Случай 1: inPrice = shelfPrice → явно ошибка, очищаем
+                if (p.inPrice > 0 && p.inPrice === p.shelfPrice) {
+                    p.inPrice = 0;
+                    p.price = 0;
+                    cleared++;
+                    return;
+                }
+                // Случай 2: есть цены у поставщиков — берём минимальную
                 const supPrices = supplierPrices[code];
                 if (!supPrices) return;
                 const vals = Object.values(supPrices).filter(v => v > 0);
@@ -1766,7 +1795,7 @@
             save(KEYS.ASSORTMENT, matrix);
             save(KEYS.SUPPLIER_PRICES, supplierPrices);
             render();
-            alert('Исправлено: ' + fixed + ' товаров\ninPrice теперь = минимальная цена из поставщиков\n(ранее была максимальная)');
+            alert('Исправлено: ' + fixed + ' товаров (inPrice = мин. цена пост.)\nОчищено: ' + cleared + ' товаров (inPrice был = цене полки)');
         }
 
         function updatePrice(code, field, value) {
@@ -1788,7 +1817,13 @@
 
             let updated = 0;
             Object.values(matrix).forEach(p => {
-                const maxInP = getSupplierMaxPrice(p.code) || p.inPrice || p.price || 0;
+                const shP = p.shelfPrice || 0;
+                let maxInP = getSupplierMaxPrice(p.code);
+                if (!maxInP) {
+                    const inP = p.inPrice || 0;
+                    if (inP > 0 && inP < shP) maxInP = inP;
+                    else maxInP = 0;
+                }
                 if (maxInP > 0) {
                     const newShelfPrice = Math.round(maxInP * (1 + markupVal / 100) * 100) / 100;
                     if (!p.shelfPrice || p.shelfPrice === 0) {
@@ -1811,8 +1846,13 @@
             const headers = ['Группа', 'Наименование', 'Код', 'Упак.', ...supplierNames.map(s => 'Цена ' + s), 'Макс. вх.', 'Цена полки', 'Доход', 'Наценка %', 'Маржа %'];
             const data = items.map(p => {
                 const sp = supplierPrices[p.code] || {};
-                const maxInP = getSupplierMaxPrice(p.code) || p.inPrice || p.price || 0;
                 const shP = p.shelfPrice || 0;
+                let maxInP = getSupplierMaxPrice(p.code);
+                if (!maxInP) {
+                    const inP = p.inPrice || 0;
+                    if (inP > 0 && inP < shP) maxInP = inP;
+                    else maxInP = 0;
+                }
                 const income = shP - maxInP;
                 const markup = maxInP > 0 ? (shP - maxInP) / maxInP * 100 : 0;
                 const margin = shP > 0 ? (shP - maxInP) / shP * 100 : 0;
