@@ -1092,42 +1092,102 @@
         function importAssortment(input) {
             if (!input || !input.files || !input.files[0]) return;
             const file = input.files[0];
-            
-            SharedUtils.importAssortmentUnified(file).then(function(result) {
-                const items = result.items;
-                if (items.length === 0) {
-                    alert('Не найдено товаров в файле');
+            input.value = '';
+
+            SharedUtils.readExcelFile(file).then(function(json) {
+                // Автоопределение колонок по заголовкам
+                let headerRow = -1;
+                let colGroup = -1, colName = -1, colCode = -1, colPack = -1;
+                let colSupplier = -1, colPrice = -1, colShelfPrice = -1, colShelf = -1;
+                let colQuant = -1, colVolume = -1;
+
+                for (let i = 0; i < Math.min(5, json.length); i++) {
+                    const row = (json[i] || []).map(function(c) { return String(c || '').trim().toLowerCase(); });
+                    if (row.some(function(c) { return c === 'группа' || c === 'групп'; }) &&
+                        row.some(function(c) { return c === 'код' || c === 'код товара' || c === 'код(товар)'; })) {
+                        headerRow = i;
+                        row.forEach(function(h, idx) {
+                            if (h === 'группа' || h === 'групп') colGroup = idx;
+                            else if (h === 'наименование' || h === 'название' || h === 'наим' || h === 'товар') colName = idx;
+                            else if (h === 'код' || h === 'код товара' || h === 'код(товар)') colCode = idx;
+                            else if (h === 'упак.' || h === 'упак' || h === 'упаковка' || h === 'ед.изм.') colPack = idx;
+                            else if (h === 'поставщик') colSupplier = idx;
+                            else if (h === 'цена' || h === 'вх.цена' || h === 'вход.цена' || h === 'цена вх.') colPrice = idx;
+                            else if (h === 'цена на полке' || h === 'полка' || h === 'цена полки') colShelfPrice = idx;
+                            else if (h === 'дом. полка' || h === 'дом.полка' || h === 'мин.остаток') colShelf = idx;
+                            else if (h === 'квант' || h === 'квант поставки') colQuant = idx;
+                            else if (h === 'объём' || h === 'объем') colVolume = idx;
+                        });
+                        break;
+                    }
+                }
+
+                if (headerRow < 0 || colCode < 0) {
+                    alert('Не найдена строка заголовков с колонками "Группа" и "Код".\nПроверьте формат файла.');
                     return;
                 }
-                
-                const existingCount = Object.keys(matrix).length;
+
+                // Если наименование не найдено — используем колонку после группы или после кода
+                if (colName < 0) colName = colCode > 0 ? colCode - 1 : 0;
+
+                var items = [];
+                for (var i = headerRow + 1; i < json.length; i++) {
+                    var r = json[i];
+                    if (!r || r.length < 2) continue;
+
+                    var code = normCode(r[colCode]);
+                    if (!code) continue;
+
+                    var name = colName >= 0 ? String(r[colName] || '').trim() : '';
+                    var group = colGroup >= 0 ? String(r[colGroup] || '').trim() : '';
+                    if (!code && !name) continue;
+
+                    items.push({
+                        code: code,
+                        nomenclature: name,
+                        group: group,
+                        packaging: colPack >= 0 ? String(r[colPack] || 'ШТ').trim().toUpperCase() : 'ШТ',
+                        supplier: colSupplier >= 0 ? String(r[colSupplier] || '').trim() : '',
+                        price: colPrice >= 0 ? parseFloat(String(r[colPrice] || '0').replace(',', '.')) || 0 : 0,
+                        inPrice: colPrice >= 0 ? parseFloat(String(r[colPrice] || '0').replace(',', '.')) || 0 : 0,
+                        shelfPrice: colShelfPrice >= 0 ? parseFloat(String(r[colShelfPrice] || '0').replace(',', '.')) || 0 : 0,
+                        shelf: colShelf >= 0 ? parseFloat(String(r[colShelf] || '0').replace(',', '.')) || 0 : 0,
+                        quant: colQuant >= 0 ? parseFloat(String(r[colQuant] || '1').replace(',', '.')) || 1 : 1,
+                        volume: colVolume >= 0 ? parseFloat(String(r[colVolume] || '0').replace(',', '.')) || 0 : 0
+                    });
+                }
+
+                if (items.length === 0) {
+                    alert('Не найдено товаров в файле (код: ' + colCode + ', имя: ' + colName + ', группа: ' + colGroup + ')');
+                    return;
+                }
+
+                var existingCount = Object.keys(matrix).length;
                 if (existingCount > 0) {
                     if (!confirm('Загружено ' + items.length + ' товаров. Заменить текущий ассортимент (' + existingCount + ' товаров)?')) {
-                        input.value = '';
                         return;
                     }
                 }
-                
+
                 matrix = {};
                 items.forEach(function(p) {
-                    const code = normCode(p.code);
-                    matrix[code] = {
-                        code: code,
-                        nomenclature: p.nomenclature || '',
-                        group: p.group || '',
-                        packaging: p.packaging || 'ШТ',
-                        supplier: p.supplier || '',
-                        price: p.price || p.inPrice || 0,
-                        inPrice: p.inPrice || p.price || 0,
-                        shelfPrice: p.shelfPrice || 0,
-                        shelf: p.shelf || 0,
-                        quant: p.quant || 1,
-                        volume: p.volume || 0,
+                    matrix[p.code] = {
+                        code: p.code,
+                        nomenclature: p.nomenclature,
+                        group: p.group,
+                        packaging: p.packaging,
+                        supplier: p.supplier,
+                        price: p.price,
+                        inPrice: p.inPrice,
+                        shelfPrice: p.shelfPrice,
+                        shelf: p.shelf,
+                        quant: p.quant,
+                        volume: p.volume,
                         markup: p.markup || defaultMarkup,
-                        mandatory: p.mandatory || false
+                        mandatory: false
                     };
                 });
-                
+
                 save(KEYS.ASSORTMENT, matrix);
                 syncToSavedAssortment();
                 render();
@@ -1136,8 +1196,6 @@
                 alert('Ошибка импорта: ' + err.message);
                 console.error(err);
             });
-            
-            input.value = '';
         }
 
         function exportAssortment() {
