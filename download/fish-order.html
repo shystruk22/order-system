@@ -2874,6 +2874,7 @@
                         <div class="flex gap-2">
                             <button onclick="placeOrders()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700">${icons.order} Сформировать заказ</button>
                             <button onclick="exportOrder()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">${icons.export} Экспорт</button>
+                            <button onclick="debugOrderEditability()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-orange-700 bg-orange-50 border border-orange-200 rounded-lg hover:bg-orange-100" title="Показать почему ячейки заблокированы">🔍 Диагностика</button>
                         </div>
                     </div>
                 </div>
@@ -2987,6 +2988,68 @@
             </div>`;
         }
 
+
+        function debugOrderEditability() {
+            // Собираем инфу: для каждого товара + ТТ + поставщика — почему ячейка заблокирована
+            const lines = [];
+            const scheduleKeys = Object.keys(deliverySchedule);
+            lines.push('=== ДИАГНОСТИКА ЗАКАЗА ===');
+            lines.push('Поставщики в графике: ' + scheduleKeys.join(', '));
+            lines.push('Всего товаров в каталоге: ' + Object.keys(matrix).length);
+            lines.push('Всего ТТ: ' + stores.map(s => s.tt).join(', '));
+            lines.push('');
+
+            // Берём первые 5 ТТ и первые 10 товаров для диагностики
+            const diagStores = stores.slice(0, 3);
+            const diagCodes = Object.keys(matrix).slice(0, 10);
+
+            diagStores.forEach(store => {
+                lines.push('--- ТТ: ' + store.tt + ' ---');
+                diagCodes.forEach(code => {
+                    const p = matrix[code];
+                    if (!p) return;
+                    const name = p.nomenclature || code;
+
+                    // 1) Матрица
+                    const inMatrix = !!matrixMarks[code];
+                    const mark = inMatrix ? (matrixMarks[code][store.tt] || 'НЕТ') : 'не в матрице';
+                    const matrixOk = mark === 'ДА' || !inMatrix;
+
+                    // 2) Поставщики товара
+                    const supList = (supplierAssortment[code] && supplierAssortment[code].length > 0)
+                        ? supplierAssortment[code]
+                        : (p.supplier ? [p.supplier] : []);
+                    const supStr = supList.join(', ') || '(пусто)';
+
+                    // 3) Для каждого поставщика — доставка завтра?
+                    const supDetails = supList.map(sup => {
+                        const dp = getDeliveryPeriod(sup, store.tt);
+                        const dpToday = hasSupplierDeliveryToday(sup, store.tt);
+                        const inSchedule = !!deliverySchedule[sup] && !!deliverySchedule[sup][store.tt];
+                        const scheduleDays = inSchedule ? deliverySchedule[sup][store.tt].map((d, i) => d ? DAY_NAMES[i] : '').filter(Boolean).join(', ') : '(не найден в графике)';
+
+                        // Проверяем совпадение имени
+                        const nameMatch = scheduleKeys.includes(sup);
+
+                        return '  ' + sup + ': dp=' + (dp ? dp.period + 'дн' : 'null') +
+                            ', сегодня=' + dpToday +
+                            ', вГрафике=' + inSchedule +
+                            ', имяСовпадает=' + nameMatch +
+                            ', дни=[' + scheduleDays + ']';
+                    });
+
+                    lines.push(name + ' (' + code + '): матрица=' + mark + (matrixOk ? ' ✓' : ' ✗') +
+                        ', поставщики=[' + supStr + ']');
+                    supDetails.forEach(d => lines.push(d));
+                });
+                lines.push('');
+            });
+
+            // Выводим в консоль И в alert
+            const text = lines.join('\n');
+            console.log(text);
+            alert(text);
+        }
 
         function editOrder(input) {
             const val = input.value.trim();
