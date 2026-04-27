@@ -436,25 +436,71 @@
         function importFromFile(input) {
             if (!input || !input.files || !input.files[0]) return;
             const file = input.files[0];
-            
-            SharedUtils.importAssortmentUnified(file).then(function(result) {
-                const items = result.items;
-                if (items.length === 0) {
-                    alert('Не найдено товаров в файле');
+            input.value = '';
+
+            SharedUtils.readExcelFile(file).then(function(json) {
+                // Автоопределение колонок по заголовкам
+                let headerRow = -1;
+                let colGroup = -1, colName = -1, colCode = -1, colPack = -1;
+                let colSupplier = -1, colPrice = -1, colShelfPrice = -1, colShelf = -1;
+                let colQuant = -1, colVolume = -1;
+
+                for (let i = 0; i < Math.min(5, json.length); i++) {
+                    const row = (json[i] || []).map(function(c) { return String(c || '').trim().toLowerCase(); });
+                    if (row.some(function(c) { return c === 'группа' || c === 'групп'; }) &&
+                        row.some(function(c) { return c === 'код' || c === 'код товара'; })) {
+                        headerRow = i;
+                        row.forEach(function(h, idx) {
+                            if (h === 'группа' || h === 'групп') colGroup = idx;
+                            else if (h === 'наименование' || h === 'название' || h === 'наим') colName = idx;
+                            else if (h === 'код' || h === 'код товара') colCode = idx;
+                            else if (h === 'упак.' || h === 'упак' || h === 'упаковка') colPack = idx;
+                            else if (h === 'поставщик') colSupplier = idx;
+                            else if (h === 'цена' || h === 'вх.цена' || h === 'вход.цена') colPrice = idx;
+                            else if (h === 'цена на полке' || h === 'полка' || h === 'цена полки') colShelfPrice = idx;
+                            else if (h === 'дом. полка' || h === 'дом.полка') colShelf = idx;
+                            else if (h === 'квант') colQuant = idx;
+                            else if (h === 'объём' || h === 'объем') colVolume = idx;
+                        });
+                        break;
+                    }
+                }
+
+                if (headerRow < 0 || colCode < 0) {
+                    alert('Не найдена строка заголовков с колонками "Группа" и "Код".\nПроверьте формат файла.');
                     return;
                 }
-                
-                if (products.length > 0) {
-                    if (!confirm(`Найдено ${items.length} товаров. Заменить текущий ассортимент (${products.length} товаров)?`)) return;
+                if (colName < 0) colName = colCode > 0 ? colCode - 1 : 0;
+
+                var items = [];
+                for (var i = headerRow + 1; i < json.length; i++) {
+                    var r = json[i];
+                    if (!r || r.length < 2) continue;
+                    var code = normCode(r[colCode]);
+                    if (!code) continue;
+                    items.push({
+                        code: code,
+                        nomenclature: colName >= 0 ? String(r[colName] || '').trim() : '',
+                        group: colGroup >= 0 ? String(r[colGroup] || '').trim() : '',
+                        packaging: colPack >= 0 ? String(r[colPack] || 'ШТ').trim().toUpperCase() : 'ШТ',
+                        supplier: colSupplier >= 0 ? String(r[colSupplier] || '').trim() : '',
+                        price: colPrice >= 0 ? parseFloat(String(r[colPrice] || '0').replace(',', '.')) || 0 : 0,
+                        inPrice: colPrice >= 0 ? parseFloat(String(r[colPrice] || '0').replace(',', '.')) || 0 : 0,
+                        shelfPrice: colShelfPrice >= 0 ? parseFloat(String(r[colShelfPrice] || '0').replace(',', '.')) || 0 : 0,
+                        shelf: colShelf >= 0 ? parseFloat(String(r[colShelf] || '0').replace(',', '.')) || 0 : 0,
+                        quant: colQuant >= 0 ? parseFloat(String(r[colQuant] || '1').replace(',', '.')) || 1 : 1,
+                        volume: colVolume >= 0 ? parseFloat(String(r[colVolume] || '0').replace(',', '.')) || 0 : 0,
+                        markup: defaultMarkup
+                    });
                 }
-                
+
+                if (items.length === 0) { alert('Не найдено товаров в файле'); return; }
+
+                if (products.length > 0) {
+                    if (!confirm('Найдено ' + items.length + ' товаров. Заменить текущий ассортимент (' + products.length + ' товаров)?')) return;
+                }
+
                 products = items;
-                // Ensure all products have required fields
-                products.forEach(function(p) {
-                    if (!p.markup && p.markup !== 0) p.markup = defaultMarkup;
-                    if (!p.inPrice) p.inPrice = p.price || 0;
-                });
-                
                 currentLoadedAssortment = null;
                 syncAll();
                 render();
@@ -463,8 +509,6 @@
                 alert('Ошибка импорта: ' + err.message);
                 console.error(err);
             });
-            
-            input.value = '';
         }
 
         function confirmImport() {
@@ -510,30 +554,55 @@
         // EXPORT TO EXCEL
         // ============================================================================
         function exportAssortment() {
-            SharedUtils.exportAssortmentUnified(products);
+            if (products.length === 0) { alert('Нет данных для экспорта'); return; }
+            const headers = ['Группа', 'Наименование', 'Код', 'Упак.', 'Поставщик', 'Цена', 'Цена на полке', 'Дом. полка', 'Квант', 'Объём'];
+            const rows = [headers];
+            products.sort(function(a, b) {
+                const ga = (a.group || '').localeCompare(b.group || '', 'ru');
+                return ga !== 0 ? ga : (a.nomenclature || '').localeCompare(b.nomenclature || '', 'ru');
+            }).forEach(function(p) {
+                rows.push([
+                    p.group || '', p.nomenclature || '', p.code || '', p.packaging || 'ШТ',
+                    p.supplier || '', p.price || 0, p.shelfPrice || 0, p.shelf || 0,
+                    p.quant || 1, p.volume || 0
+                ]);
+            });
+            const ws = XLSX.utils.aoa_to_sheet(rows);
+            ws['!cols'] = [
+                { wch: 18 }, { wch: 35 }, { wch: 12 }, { wch: 6 },
+                { wch: 18 }, { wch: 10 }, { wch: 12 }, { wch: 10 },
+                { wch: 8 }, { wch: 8 }
+            ];
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Ассортимент');
+            const today = new Date().toISOString().slice(0, 10);
+            XLSX.writeFile(wb, 'ассортимент_' + today + '.xlsx');
         }
 
         function exportAllSavedLists() {
             const saved = getSavedAssortments();
             if (saved.length === 0) { alert('Нет сохранённых списков'); return; }
-            const headers = ['Список', 'Дата', 'Товаров'].concat(SharedUtils.ASSORTMENT_HEADERS);
+            const baseHeaders = ['Группа', 'Наименование', 'Код', 'Упак.', 'Поставщик', 'Цена', 'Цена полки', 'Полка', 'Квант', 'Объём', 'Маржа %'];
+            const headers = ['Список', 'Дата', 'Товаров'].concat(baseHeaders);
             const data = [];
             saved.forEach(s => {
                 (s.data || []).forEach((p, i) => {
-                    var isMandatory = p.mandatory || false;
-                    var inPrice = p.inPrice || p.price || 0;
-                    var shelfPrice = p.shelfPrice || 0;
-                    var income = shelfPrice - inPrice;
-                    var markup = inPrice > 0 ? (shelfPrice - inPrice) / inPrice * 100 : (p.markup || 0);
-                    var margin = shelfPrice > 0 ? (shelfPrice - inPrice) / shelfPrice * 100 : 0;
-                    data.push([i === 0 ? s.name : '', i === 0 ? new Date(s.date).toLocaleDateString('ru-RU') : '', i === 0 ? s.count : '', isMandatory ? '\u2B50' : '', p.group || '', p.nomenclature || '', p.code, p.packaging || 'ШТ', p.volume || 0, p.quant || 1, p.shelf || 0, p.supplier || '', p.totalSales || 0, inPrice, shelfPrice, Math.round(income * 100) / 100, Math.round(markup * 100) / 100, Math.round(margin * 100) / 100]);
+                    const inP = p.inPrice || p.price || 0;
+                    const shP = p.shelfPrice || 0;
+                    const markup = inP > 0 ? (shP - inP) / inP * 100 : 0;
+                    data.push([
+                        i === 0 ? s.name : '', i === 0 ? new Date(s.date).toLocaleDateString('ru-RU') : '', i === 0 ? s.count : '',
+                        p.group || '', p.nomenclature || '', p.code, p.packaging || 'ШТ',
+                        p.supplier || '', inP, shP, p.shelf || 0, p.quant || 1, p.volume || 0,
+                        Math.round(markup * 100) / 100
+                    ]);
                 });
             });
-            const ws = SharedUtils.createStyledSheet(data, headers, [0, 3, 4, 8]);
+            const ws = XLSX.utils.aoa_to_sheet(data);
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, 'Списки');
             const d = new Date();
-            XLSX.writeFile(wb, `списки_ассортимента_${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}.xlsx`);
+            XLSX.writeFile(wb, 'списки_ассортимента_' + d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') + '.xlsx');
         }
 
         // ============================================================================
@@ -1257,9 +1326,10 @@
             render();
         }
 
-        // Start after cloud storage is ready
+        // Start after cloud storage is ready (with fallback timeout)
         if (window.CloudStorage && CloudStorage.waitForReady) {
-            CloudStorage.waitForReady().then(init);
+            const timeout = setTimeout(() => { console.warn('[Assortment] CloudStorage timeout — starting anyway'); init(); }, 3000);
+            CloudStorage.waitForReady().then(() => { clearTimeout(timeout); init(); });
         } else {
             document.addEventListener('DOMContentLoaded', init);
         }
