@@ -48,3 +48,39 @@ Work Log:
 - Added auto-calculated Наценка column (bg-sky-100) showing effective markup %
 - Updated exportPrices() to include Наценка расч. column
 - File: /home/z/my-project/download/universal-prices-update.zip
+---
+Task ID: 3
+Agent: Main Agent
+Task: Fix fish-order.html — order edits not applied when saving/exporting
+
+Work Log:
+- Found root cause: `placeOrders()` and `exportOrder()` read `savedOrderResults` directly without applying `orderEdits`
+- In frozen order view, edits are displayed in input fields but not written to `savedOrderResults`
+- Created `getEditedOrderResults()` helper that applies `orderEdits` to a copy of `savedOrderResults`
+- Fixed `placeOrders()`: now uses `getEditedOrderResults()` before creating "В пути" entries, also updates `savedOrderResults` with edits before freezing
+- Fixed `exportOrder()`: now uses `getEditedOrderResults()` for correct export data
+- Fixed `renderFrozenOrder()`: now uses `getEditedOrderResults()` for correct stats (positions count, sum)
+
+Stage Summary:
+- Helper function `getEditedOrderResults()` applies orderEdits to supplierOrders, recalculates sums
+- Both "Сформировать заказ" and "Экспорт" now respect manual edits
+- Stats display in frozen order view also reflects edits
+- File: /home/z/my-project/download/fish-order.html
+---
+Task ID: 4
+Agent: Main Agent
+Task: Add import/export prices to assortment.html + sync price settings with universal.html
+
+Work Log:
+- Added Import/Export buttons to Prices tab header in assortment.html (matching universal.html layout)
+- Created `importPrices()` function: reads Excel with Код, Вход. цена, Наценка, Цена на полке columns
+- Created `exportPrices()` function: exports full price table with НДС, НДФЛ, Онлайн, Чистый доход calculations
+- Added `renderPricesDebounced()` for smooth group collapse without delays
+- Changed group collapse in prices tab to use `renderPricesDebounced()` instead of full `render()`
+- Fixed universal.html `SharedData.onChange` to detect changes in `inPrice`, `shelfPrice`, `markup` (previously only checked `nomenclature`, `price`, `group`)
+- Updated version comment to 2.2
+
+Stage Summary:
+- assortment.html Prices tab now matches universal.html functionality (import/export)
+- Bidirectional price sync: assortment ↔ universal via SharedData polling (inPrice, shelfPrice, markup)
+- Files: /home/z/my-project/download/assortment.html, /home/z/my-project/download/universal.html

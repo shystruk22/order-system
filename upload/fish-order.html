@@ -2599,9 +2599,12 @@
                 }
             }
 
+            // Применяем ручные правки к результатам заказа
+            var editedResults = getEditedOrderResults();
+
             // Собираем заказы по поставщикам И ТТ для создания записей "В пути"
             var supplierStoreMap = {};
-            savedOrderResults.forEach(function(r) {
+            editedResults.forEach(function(r) {
                 if (!r.supplierOrders || !r.tt) return;
                 Object.keys(r.supplierOrders).forEach(function(sup) {
                     var so = r.supplierOrders[sup];
@@ -2616,6 +2619,9 @@
                     });
                 });
             });
+
+            // Обновляем savedOrderResults с учётными правками перед заморозкой
+            savedOrderResults = editedResults;
 
             // Создаём записи "В пути" для каждого поставщика+ТТ
             var createdCount = 0;
@@ -3904,23 +3910,78 @@
             return days > 0 ? weekdaySales[key] / days : 0;
         }
 
+        // === ПРИМЕНИТЬ РУЧНЫЕ ПРАВКИ К РЕЗУЛЬТАТАМ ЗАКАЗА ===
+        function getEditedOrderResults() {
+            if (!savedOrderResults || savedOrderResults.length === 0) return [];
+            return savedOrderResults.map(function(r) {
+                var edited = Object.assign({}, r);
+                // Применяем orderEdits к supplierOrders
+                if (edited.supplierOrders) {
+                    var newSO = {};
+                    Object.keys(edited.supplierOrders).forEach(function(sup) {
+                        var so = edited.supplierOrders[sup];
+                        var ek = r.tt + '_' + r.code + '_' + sup;
+                        var orderVal = so.order;
+                        if (orderEdits[ek] !== undefined) orderVal = orderEdits[ek];
+                        var supPrice = (supplierPrices[r.code] && supplierPrices[r.code][sup]) || so.inPrice || r.inPrice || 0;
+                        newSO[sup] = { order: orderVal, inPrice: so.inPrice, sum: orderVal * supPrice, daysUntil: so.daysUntil };
+                        // Проверяем также orderEdits для поставщиков которых не было в заказе (добавили вручную)
+                    });
+                    // Добавляем orderEdits для поставщиков, которых ещё нет в supplierOrders
+                    Object.keys(orderEdits).forEach(function(ek) {
+                        var parts = ek.split('_');
+                        if (parts.length >= 3 && parts[0] === r.tt && parts[1] === r.code) {
+                            var sup = parts.slice(2).join('_');
+                            if (!newSO[sup] && orderEdits[ek] > 0) {
+                                var supPrice = (supplierPrices[r.code] && supplierPrices[r.code][sup]) || r.inPrice || 0;
+                                newSO[sup] = { order: orderEdits[ek], inPrice: supPrice, sum: orderEdits[ek] * supPrice, daysUntil: 1 };
+                            }
+                        }
+                    });
+                    edited.supplierOrders = newSO;
+                } else {
+                    // Fallback: single supplier
+                    var editKey = r.tt + '_' + r.code;
+                    if (orderEdits[editKey] !== undefined) edited.order = orderEdits[editKey];
+                    var editKeySup = r.tt + '_' + r.code + '_' + (r.supplier || '');
+                    if (orderEdits[editKeySup] !== undefined) edited.order = orderEdits[editKeySup];
+                }
+                // Пересчитываем sum для основного заказа
+                if (edited.supplierOrders) {
+                    var totalOrder = 0;
+                    var primarySup = r.supplier || '';
+                    var primaryOrder = 0;
+                    Object.keys(edited.supplierOrders).forEach(function(sup) {
+                        var so = edited.supplierOrders[sup];
+                        if (so.order > 0) totalOrder += so.order;
+                        if (sup === primarySup) primaryOrder = so.order;
+                    });
+                    edited.order = totalOrder;
+                    edited.sum = Object.values(edited.supplierOrders).reduce(function(s, so) { return s + so.sum; }, 0);
+                } else {
+                    edited.sum = edited.order * (edited.inPrice || 0);
+                }
+                return edited;
+            });
+        }
+
         function exportOrder() {
             if (!savedOrderResults || savedOrderResults.length === 0) {
                 alert('Нет данных для экспорта. Сначала откройте вкладку Заказ.');
                 return;
             }
 
+            var editedResults = getEditedOrderResults();
+
             const rows = [['№ Маг.', 'ТТ', 'Код', 'Наименование', 'Группа', 'Поставщик', 'Продажи, кг', 'Среднее/день', 'Остаток, кг', 'Доставлено', 'В пути', 'Дн. до дост.', 'Заказ, кг', 'Сумма', 'Статус']];
 
-            savedOrderResults.forEach(r => {
+            editedResults.forEach(r => {
                 const avgDay = (r.weekendAvg > 0 || r.weekdayAvg > 0)
                     ? ((r.weekdayCount * r.weekdayAvg + r.weekendCount * r.weekendAvg) / Math.max(1, r.weekdayCount + r.weekendCount))
                     : r.avgSalesPerDay;
 
                 if (!r.supplierOrders) {
                     // Fallback for results without supplierOrders (single supplier)
-                    const editKey = `${r.tt}_${r.code}`;
-                    const orderQty = orderEdits[editKey] !== undefined ? orderEdits[editKey] : r.order;
                     rows.push([
                         r.tt || '', r.tt, r.code, r.nomenclature || '', r.group || '',
                         r.supplier || '',
@@ -3930,8 +3991,8 @@
                         r.deliveredQty || 0,
                         r.inTransitQty || 0,
                         r.daysUntil >= 99 ? '∞' : r.daysUntil,
-                        orderQty,
-                        (orderQty * (r.inPrice || 0)).toFixed(2),
+                        r.order,
+                        (r.order * (r.inPrice || 0)).toFixed(2),
                         r.status || ''
                     ]);
                 } else {
@@ -3948,7 +4009,7 @@
                             r.inTransitQty || 0,
                             r.daysUntil >= 99 ? '∞' : r.daysUntil,
                             so.order,
-                            (so.order * ((so.inPrice || 0))).toFixed(2),
+                            so.sum.toFixed(2),
                             'заказ'
                         ]);
                     });
@@ -4187,7 +4248,9 @@
         // === РЕНДЕР ЗАМОРОЖЕННОГО ЗАКАЗА (Пункт 4) ===
         // После "Сформировать заказ" данные сохраняются как есть, можно редактировать но не пересчитывать
         function renderFrozenOrder() {
-            var filtered = savedOrderResults;
+            // Применяем ручные правки для корректных статистик и отображения
+            var editedResults = getEditedOrderResults();
+            var filtered = editedResults;
             if (searchResults) {
                 var s = searchResults.toLowerCase();
                 filtered = filtered.filter(function(r) {
