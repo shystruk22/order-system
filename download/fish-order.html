@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Заказ рыбы</title>
-    <!-- Version: 3.15 -->
+    <!-- Version: 3.21 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -3145,7 +3145,61 @@
                 const num = parseFloat(val);
                 orderEdits[editKey] = isNaN(num) ? 0 : Math.round(num * 100) / 100;
             }
+            // Автосохранение правок в localStorage (чтобы не потерялись при перезагрузке)
+            try {
+                var saved = load(KEYS.SAVED_ORDER, null);
+                if (saved) {
+                    saved.orderEdits = Object.assign({}, orderEdits);
+                    save(KEYS.SAVED_ORDER, saved);
+                }
+            } catch(e) {}
             render();
+        }
+
+        // Собрать ВСЕ текущие значения из полей ввода заказа в orderEdits
+        // Вызывать перед сохранением/экспортом чтобы гарантировать актуальность правок
+        function collectEditsFromDOM() {
+            const inputs = document.querySelectorAll('input[data-tt][data-code][data-supplier], input[data-tt][data-code]:not([data-supplier])');
+            inputs.forEach(function(input) {
+                const tt = input.dataset.tt;
+                const code = input.dataset.code;
+                const supplier = input.dataset.supplier || '';
+                const editKey = supplier ? `${tt}_${code}_${supplier}` : `${tt}_${code}`;
+                const val = input.value.trim();
+                if (val === '') {
+                    delete orderEdits[editKey];
+                } else {
+                    const num = parseFloat(val);
+                    if (!isNaN(num)) {
+                        orderEdits[editKey] = Math.round(num * 100) / 100;
+                    }
+                }
+            });
+        }
+
+        // Применить orderEdits к savedOrderResults (для сохранения и экспорта)
+        function applyEditsToResults() {
+            if (!savedOrderResults) return;
+            savedOrderResults.forEach(function(r) {
+                if (!r.supplierOrders) return;
+                Object.keys(r.supplierOrders).forEach(function(sup) {
+                    const editKey = `${r.tt}_${r.code}_${sup}`;
+                    if (orderEdits[editKey] !== undefined) {
+                        var so = r.supplierOrders[sup];
+                        so.order = orderEdits[editKey];
+                        so.sum = so.order * (so.inPrice || 0);
+                    }
+                });
+                // Also update primary order
+                const editKeyPrimary = r.supplier ? `${r.tt}_${r.code}_${r.supplier}` : `${r.tt}_${r.code}`;
+                if (orderEdits[editKeyPrimary] !== undefined) {
+                    r.order = orderEdits[editKeyPrimary];
+                    r.sum = r.order * (r.inPrice || 0);
+                } else if (orderEdits[`${r.tt}_${r.code}`] !== undefined) {
+                    r.order = orderEdits[`${r.tt}_${r.code}`];
+                    r.sum = r.order * (r.inPrice || 0);
+                }
+            });
         }
 
         function showCalcDetail(el, r) {
@@ -3600,6 +3654,11 @@
                 return;
             }
 
+            // Собрать все текущие правки из полей ввода (на случай если onchange не успел сработать)
+            collectEditsFromDOM();
+            // Применить правки к savedOrderResults перед экспортом
+            applyEditsToResults();
+
             const rows = [['№ Маг.', 'ТТ', 'Код', 'Наименование', 'Группа', 'Поставщик', 'Продажи, кг', 'Среднее/день', 'Остаток, кг', 'Доставлено', 'В пути', 'Дн. до дост.', 'Заказ, кг', 'Сумма', 'Статус']];
 
             savedOrderResults.forEach(r => {
@@ -3609,8 +3668,9 @@
 
                 if (!r.supplierOrders) {
                     // Fallback for results without supplierOrders (single supplier)
-                    const editKey = `${r.tt}_${r.code}`;
-                    const orderQty = orderEdits[editKey] !== undefined ? orderEdits[editKey] : r.order;
+                    const editKey1 = `${r.tt}_${r.code}_${r.supplier}`;
+                    const editKey2 = `${r.tt}_${r.code}`;
+                    const orderQty = orderEdits[editKey1] !== undefined ? orderEdits[editKey1] : (orderEdits[editKey2] !== undefined ? orderEdits[editKey2] : r.order);
                     rows.push([
                         r.tt || '', r.tt, r.code, r.nomenclature || '', r.group || '',
                         r.supplier || '',
@@ -3627,7 +3687,11 @@
                 } else {
                     // Multi-supplier: one row per active supplier
                     Object.entries(r.supplierOrders).forEach(([sup, so]) => {
-                        if (!so || so.order <= 0) return;
+                        // Явно проверяем orderEdits для каждого поставщика
+                        const editKey = `${r.tt}_${r.code}_${sup}`;
+                        const orderQty = orderEdits[editKey] !== undefined ? orderEdits[editKey] : so.order;
+                        if (orderQty <= 0 && (so.order || 0) <= 0) return;
+                        const supPrice = so.inPrice || r.inPrice || 0;
                         rows.push([
                             r.tt || '', r.tt, r.code, r.nomenclature || '', r.group || '',
                             sup,
@@ -3637,9 +3701,9 @@
                             r.deliveredQty || 0,
                             r.inTransitQty || 0,
                             r.daysUntil >= 99 ? '∞' : r.daysUntil,
-                            so.order,
-                            (so.order * ((so.inPrice || 0))).toFixed(2),
-                            'заказ'
+                            orderQty,
+                            (orderQty * supPrice).toFixed(2),
+                            orderQty > 0 ? 'заказ' : ''
                         ]);
                     });
                 }
@@ -3658,6 +3722,12 @@
                 alert('Нет данных для сохранения.');
                 return;
             }
+
+            // Собрать все текущие правки из полей ввода перед сохранением
+            collectEditsFromDOM();
+            // Применить правки к savedOrderResults
+            applyEditsToResults();
+
             var supplierGroups = {};
             var totalOrderItems = 0, totalSum = 0;
             savedOrderResults.forEach(function(r) {
