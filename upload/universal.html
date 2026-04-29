@@ -537,7 +537,9 @@
                                 let changed = false;
                                 Object.entries(obj).forEach(([code, item]) => {
                                     if (!matrix[code] || matrix[code].nomenclature !== item.nomenclature ||
-                                        matrix[code].price !== item.price || matrix[code].group !== item.group) {
+                                        matrix[code].price !== item.price || matrix[code].group !== item.group ||
+                                        matrix[code].inPrice !== item.inPrice || matrix[code].shelfPrice !== item.shelfPrice ||
+                                        matrix[code].markup !== item.markup) {
                                         changed = true;
                                     }
                                 });
