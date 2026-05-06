@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Заказ рыбы</title>
-    <!-- Version: 3.21 -->
+    <!-- Version: 3.22 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -850,13 +850,11 @@
                 }
             });
 
-            // Очистить supplierAssortment от поставщиков которых НЕТ в deliverySchedule
-            matrixCodes.forEach(code => {
-                if (supplierAssortment[code]) {
-                    supplierAssortment[code] = supplierAssortment[code].filter(s => knownFishSuppliers.includes(s));
-                    if (supplierAssortment[code].length === 0) delete supplierAssortment[code];
-                }
-            });
+            // НЕ удаляем ручные назначения поставщиков!
+            // Раньше здесь была очистка supplierAssortment от поставщиков, которых нет в deliverySchedule.
+            // Это приводило к потере галочек при перезагрузке, если поставщик был добавлен вручную
+            // или если deliverySchedule ещё не загружен полностью.
+            // Теперь оставляем все сохранённые назначения как есть.
 
             if (newSuppliersAdded) {
                 save(KEYS.SCHEDULE, deliverySchedule);
