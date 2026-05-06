@@ -84,3 +84,26 @@ Stage Summary:
 - assortment.html Prices tab now matches universal.html functionality (import/export)
 - Bidirectional price sync: assortment ↔ universal via SharedData polling (inPrice, shelfPrice, markup)
 - Files: /home/z/my-project/download/assortment.html, /home/z/my-project/download/universal.html
+
+---
+Task ID: 5
+Agent: Main Agent
+Task: Fix fish-order.html — show supplier-linked positions even if not in matrix
+
+Work Log:
+- Identified issue: positions linked to a supplier but NOT in matrixMarks were only shown if supplier delivers tomorrow
+- Modified order formation (notInMatrix block): removed `if (periodArr.length === 0) return;` — now always shows items with supplier link
+- For "не в матрице" items: ALL suppliers in supplierOrders included, daysUntil=null for no-delivery suppliers
+- Status text: "не в матрице" (with delivery) or "не в матрице, нет доставки завтра" (without)
+- Updated supplierColumns: added suppliers from supplierAssortment even without active delivery days
+- Updated order table rendering: "не в матрице" items with no delivery show bg-blue-100 with editable input
+- Updated saved order rendering: same blue highlight for no-delivery "не в матрице" items
+- Updated export: includes "не в матрице" status text and "нет доставки" for daysUntil=null
+- Version bumped to 3.23
+
+Stage Summary:
+- Positions linked to a supplier now ALWAYS appear in the order, regardless of matrixMarks or delivery schedule
+- "Не в матрице" items without delivery show with blue-100 background and are fully editable
+- All supplier columns appear even for suppliers without active delivery days
+- Export correctly shows "не в матрице" status and "нет доставки" for days column
+- File: /home/z/my-project/download/fish-order.html (v3.23)

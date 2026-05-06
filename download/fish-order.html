@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Заказ рыбы</title>
-    <!-- Version: 3.22 -->
+    <!-- Version: 3.23 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -2666,23 +2666,31 @@
 
                     const periodArr = Object.values(supplierPeriodMap);
 
-                    // Товар НЕ в матрице — показываем только если есть доставка завтра
+                    // Товар НЕ в матрице — ВСЕГДА показываем если привязан к поставщику
                     if (notInMatrix) {
-                        if (periodArr.length === 0) return; // Нет доставки завтра — пропускаем
-                        // Для не-матричных товаров — минимальный заказ (0.5 кг)
+                        // Получить поставщиков товара (уже вычислено выше на строке 2646)
+                        const allSuppliers = (supplierAssortment[code] && supplierAssortment[code].length > 0)
+                            ? supplierAssortment[code]
+                            : (p.supplier ? [p.supplier] : []);
+                        if (allSuppliers.length === 0) return; // Нет привязки к поставщику — не показываем
+
                         const supplierOrders = {};
                         const primarySupplier = p.supplier || '';
                         const quant = p.quant || 1;
                         const inPrice = p.inPrice || 0;
+                        const hasAnyDeliveryTomorrow = periodArr.length > 0;
 
-                        suppliers.forEach(sup => {
-                            if (!(sup in supplierPeriodMap)) return;
+                        // Добавляем ВСЕХ поставщиков товара, даже без доставки завтра
+                        allSuppliers.forEach(sup => {
                             const editKey = `${store.tt}_${code}_${sup}`;
                             let supOrder = orderEdits[editKey] !== undefined ? orderEdits[editKey] : 0;
                             const supSpecificPrice = (supplierPrices[code] && supplierPrices[code][sup]) || p.inPrice || 0;
-                            supplierOrders[sup] = { order: supOrder, inPrice: supSpecificPrice, sum: supOrder * supSpecificPrice, daysUntil: 1 };
+                            const hasDelivery = !!(sup in supplierPeriodMap);
+                            supplierOrders[sup] = { order: supOrder, inPrice: supSpecificPrice, sum: supOrder * supSpecificPrice, daysUntil: hasDelivery ? 1 : null };
                             if (supOrder > 0) allOrderSuppliers.add(sup);
                         });
+
+                        const statusText = hasAnyDeliveryTomorrow ? 'не в матрице' : 'не в матрице, нет доставки завтра';
 
                         results.push({
                             tt: store.tt, code, nomenclature: p.nomenclature || '',
@@ -2691,10 +2699,10 @@
                             deliveredQty: 0, effectiveStock: stockData ? (stockData.currentStock || 0) : 0,
                             sales: 0, daysPresent: 0, effectiveDays: 0,
                             weekendAvg: 0, weekdayAvg: 0, avgSalesPerDay: 0,
-                            weekendCount: 0, weekdayCount: 0, daysUntil: 7,
+                            weekendCount: 0, weekdayCount: 0, daysUntil: hasAnyDeliveryTomorrow ? 7 : null,
                             estimatedSales: 0, inTransitQty: 0,
                             rawOrder: 0, order: 0, quant, inPrice, sum: 0, shelf: 0,
-                            status: 'не в матрице',
+                            status: statusText,
                             statusType: 'notInMatrix',
                             supplierOrders, hasConflict: false,
                             notInMatrix: true
@@ -2882,7 +2890,7 @@
             const stats = { total: filtered.length, toOrder: filtered.filter(r => r.order > 0).length, sum: filtered.reduce((s, r) => s + r.sum, 0) };
             const allGroups = getAllGroups();
 
-            // Dynamic supplier columns — все поставщики с активными днями доставки + с ручными правками
+            // Dynamic supplier columns — все поставщики с активными днями доставки + с ручными правками + привязанные товары
             const allScheduledSuppliers = new Set();
             Object.entries(deliverySchedule).forEach(function(entry) {
                 var sup = entry[0], storeMap = entry[1];
@@ -2893,6 +2901,12 @@
             Object.keys(orderEdits).forEach(function(ek) {
                 Object.keys(deliverySchedule).forEach(function(sup) {
                     if (ek.endsWith('_' + sup)) allScheduledSuppliers.add(sup);
+                });
+            });
+            // Добавляем поставщиков, у которых есть привязанные товары (даже без активных дней доставки)
+            Object.values(supplierAssortment).forEach(function(sups) {
+                sups.forEach(function(sup) {
+                    if (deliverySchedule[sup]) allScheduledSuppliers.add(sup);
                 });
             });
             const supplierColumns = [...allOrderSuppliers].concat([...allScheduledSuppliers].filter(function(s) { return !allOrderSuppliers.has(s); })).sort();
@@ -3034,15 +3048,23 @@
                                                     const supPrice = (supplierPrices[r.code] && supplierPrices[r.code][sup]) || r.inPrice || 0;
                                                     const sumVal = orderVal * supPrice;
 
-                                                    // Не в матрице — голубая подсветка, инпут доступен
-                                                    if (r.notInMatrix && deliversTomorrow) {
-                                                        if (orderVal > 0) {
-                                                            return '<td class="text-center bg-blue-50" title="Не в матрице (ручной заказ)"><input type="number" step="0.5" min="0" value="' + Number(orderVal).toFixed(1) + '" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onchange="editOrder(this)" class="input w-16 text-center text-sm font-bold"><div class="text-[10px] text-gray-500">' + sumVal.toFixed(0) + ' ₽</div></td>';
+                                                    // Не в матрице — голубая подсветка, инпут ДОСТУПЕН ВСЕГДА (и с доставкой, и без)
+                                                    if (r.notInMatrix && so) {
+                                                        if (deliversTomorrow) {
+                                                            if (orderVal > 0) {
+                                                                return '<td class="text-center bg-blue-50" title="Не в матрице (ручной заказ)"><input type="number" step="0.5" min="0" value="' + Number(orderVal).toFixed(1) + '" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onchange="editOrder(this)" class="input w-16 text-center text-sm font-bold"><div class="text-[10px] text-gray-500">' + sumVal.toFixed(0) + ' ₽</div></td>';
+                                                            }
+                                                            return '<td class="text-center bg-blue-50" title="Не в матрице"><input type="number" step="0.5" min="0" value="' + (hasManualEdit ? '0' : '') + '" placeholder="0" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onchange="editOrder(this)" class="input w-16 text-center text-sm text-gray-400 bg-gray-50"></td>';
+                                                        } else {
+                                                            // Нет доставки завтра — всё равно показываем инпут
+                                                            if (orderVal > 0) {
+                                                                return '<td class="text-center bg-blue-100" title="Не в матрице, нет доставки завтра"><input type="number" step="0.5" min="0" value="' + Number(orderVal).toFixed(1) + '" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onchange="editOrder(this)" class="input w-16 text-center text-sm font-bold"><div class="text-[10px] text-gray-500">' + sumVal.toFixed(0) + ' ₽</div></td>';
+                                                            }
+                                                            return '<td class="text-center bg-blue-100" title="Не в матрице, нет доставки завтра"><input type="number" step="0.5" min="0" value="' + (hasManualEdit ? '0' : '') + '" placeholder="0" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onchange="editOrder(this)" class="input w-16 text-center text-sm text-gray-400 bg-gray-50"></td>';
                                                         }
-                                                        return '<td class="text-center bg-blue-50" title="Не в матрице"><input type="number" step="0.5" min="0" value="' + (hasManualEdit ? '0' : '') + '" placeholder="0" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onchange="editOrder(this)" class="input w-16 text-center text-sm text-gray-400 bg-gray-50"></td>';
                                                     }
 
-                                                    // Серая колонка: поставщик не доставляет завтра в эту ТТ
+                                                    // Серая колонка: поставщик не доставляет завтра в эту ТТ (только для товаров В матрице)
                                                     if (!deliversTomorrow) {
                                                         return '<td class="text-center bg-gray-200 opacity-50 cursor-not-allowed" title="Нет доставки завтра от ' + esc(sup) + '"><span class="text-gray-400 text-xs">—</span></td>';
                                                     }
@@ -3690,6 +3712,10 @@
                         const orderQty = orderEdits[editKey] !== undefined ? orderEdits[editKey] : so.order;
                         if (orderQty <= 0 && (so.order || 0) <= 0) return;
                         const supPrice = so.inPrice || r.inPrice || 0;
+                        const statusText = r.notInMatrix
+                            ? (orderQty > 0 ? 'не в матрице (заказ)' : 'не в матрице')
+                            : (orderQty > 0 ? 'заказ' : '');
+                        const daysText = so.daysUntil === null ? 'нет доставки' : (r.daysUntil >= 99 ? '∞' : (r.daysUntil || '—'));
                         rows.push([
                             r.tt || '', r.tt, r.code, r.nomenclature || '', r.group || '',
                             sup,
@@ -3698,10 +3724,10 @@
                             (r.currentStock || 0).toFixed(2),
                             r.deliveredQty || 0,
                             r.inTransitQty || 0,
-                            r.daysUntil >= 99 ? '∞' : r.daysUntil,
+                            daysText,
                             orderQty,
                             (orderQty * supPrice).toFixed(2),
-                            orderQty > 0 ? 'заказ' : ''
+                            statusText
                         ]);
                     });
                 }
@@ -3811,6 +3837,12 @@
                 });
                 if (hasActive) allScheduledSuppliers.add(sup);
             });
+            // Добавляем поставщиков, у которых есть привязанные товары
+            Object.values(supplierAssortment).forEach(function(sups) {
+                sups.forEach(function(sup) {
+                    if (deliverySchedule[sup]) allScheduledSuppliers.add(sup);
+                });
+            });
             var supplierColumns = Array.from(allOrderSuppliers).concat(
                 Array.from(allScheduledSuppliers).filter(function(s) { return !allOrderSuppliers.has(s); })
             ).sort();
@@ -3888,9 +3920,14 @@
                                                 var orderVal = so ? so.order : 0;
                                                 var supPrice = (supplierPrices[r.code] && supplierPrices[r.code][sup]) || r.inPrice || 0;
                                                 var sumVal = orderVal * supPrice;
-                                                // Не в матрице — голубой
-                                                if (r.notInMatrix && deliversTomorrow && orderVal > 0) {
-                                                    return '<td class="text-center bg-blue-50" title="\u041D\u0435 \u0432 \u043C\u0430\u0442\u0440\u0438\u0446\u0435"><div class="font-bold text-sm">' + orderVal.toFixed(1) + '</div><div class="text-[10px] text-gray-500">' + sumVal.toFixed(0) + ' \u20BD</div></td>';
+                                                // Не в матрице — голубой, показываем ВСЕГДА
+                                                if (r.notInMatrix && so) {
+                                                    if (orderVal > 0) {
+                                                        return '<td class="text-center bg-blue-50" title="\u041D\u0435 \u0432 \u043C\u0430\u0442\u0440\u0438\u0446\u0435"><div class="font-bold text-sm">' + orderVal.toFixed(1) + '</div><div class="text-[10px] text-gray-500">' + sumVal.toFixed(0) + ' \u20BD</div></td>';
+                                                    }
+                                                    var bgClass = deliversTomorrow ? 'bg-blue-50' : 'bg-blue-100';
+                                                    var titleText = deliversTomorrow ? '\u041D\u0435 \u0432 \u043C\u0430\u0442\u0440\u0438\u0446\u0435' : '\u041D\u0435 \u0432 \u043C\u0430\u0442\u0440\u0438\u0446\u0435, \u043D\u0435\u0442 \u0434\u043E\u0441\u0442\u0430\u0432\u043A\u0438';
+                                                    return '<td class="text-center ' + bgClass + '" title="' + titleText + '"><span class="text-gray-300">\u2014</span></td>';
                                                 }
                                                 if (!deliversTomorrow) {
                                                     return '<td class="text-center bg-gray-200 opacity-50" title="\u041D\u0435\u0442 \u0434\u043E\u0441\u0442\u0430\u0432\u043A\u0438 \u0437\u0430\u0432\u0442\u0440\u0430"><span class="text-gray-400 text-xs">\u2014</span></td>';
