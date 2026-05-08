@@ -2638,9 +2638,10 @@
                     const markForTT = codeInMatrix ? (matrixMarks[code][store.tt] || 'НЕТ') : null;
                     const matrixDA = markForTT === 'ДА';
                     const notInMatrix = !codeInMatrix; // Товар есть в каталоге, но НЕ в матрице
+                    const matrixNet = codeInMatrix && markForTT === 'НЕТ'; // В матрице, но исключён для этой ТТ
 
-                    // Товары НЕ в матрице — обрабатываем отдельно (ниже)
-                    if (!matrixDA && !notInMatrix) return;
+                    // Все три варианта показываем: ДА, не в матрице, НЕТ
+                    // (НЕТ — тоже показываем для ручного заказа на пробу)
 
                     // Получить всех поставщиков для товара
                     const suppliers = (supplierAssortment[code] && supplierAssortment[code].length > 0)
@@ -2666,8 +2667,9 @@
 
                     const periodArr = Object.values(supplierPeriodMap);
 
-                    // Товар НЕ в матрице — ВСЕГДА показываем если привязан к поставщику
-                    if (notInMatrix) {
+                    // Товар НЕ в матрице ИЛИ с отметкой НЕТ — показываем если привязан к поставщику
+                    if (notInMatrix || matrixNet) {
+                        const isNet = matrixNet; // отмечен НЕТ в матрице
                         // Получить поставщиков товара (уже вычислено выше на строке 2646)
                         const allSuppliers = (supplierAssortment[code] && supplierAssortment[code].length > 0)
                             ? supplierAssortment[code]
@@ -2690,7 +2692,9 @@
                             if (supOrder > 0) allOrderSuppliers.add(sup);
                         });
 
-                        const statusText = hasAnyDeliveryTomorrow ? 'не в матрице' : 'не в матрице, нет доставки завтра';
+                        const statusText = isNet
+                            ? (hasAnyDeliveryTomorrow ? 'НЕТ в матрице (исключён)' : 'НЕТ в матрице, нет доставки завтра')
+                            : (hasAnyDeliveryTomorrow ? 'не в матрице' : 'не в матрице, нет доставки завтра');
 
                         results.push({
                             tt: store.tt, code, nomenclature: p.nomenclature || '',
@@ -2705,7 +2709,8 @@
                             status: statusText,
                             statusType: 'notInMatrix',
                             supplierOrders, hasConflict: false,
-                            notInMatrix: true
+                            notInMatrix: true,
+                            matrixNet: isNet
                         });
                         return;
                     }
@@ -3020,8 +3025,8 @@
                                             let cellBg = '';
                                             let titleAttr = '';
                                             if (r.notInMatrix) {
-                                                rowClass = 'bg-blue-50';
-                                                titleAttr = ' title="Товар не в матрице"';
+                                                rowClass = r.matrixNet ? 'bg-orange-50' : 'bg-blue-50';
+                                                titleAttr = r.matrixNet ? ' title="НЕТ в матрице (исключён, можно заказать на пробу)"' : ' title="Товар не в матрице"';
                                             } else if (r.hasConflict) {
                                                 rowClass = 'bg-amber-50';
                                                 cellBg = 'bg-amber-100';
@@ -3048,19 +3053,20 @@
                                                     const supPrice = (supplierPrices[r.code] && supplierPrices[r.code][sup]) || r.inPrice || 0;
                                                     const sumVal = orderVal * supPrice;
 
-                                                    // Не в матрице — голубая подсветка, инпут ДОСТУПЕН ВСЕГДА (и с доставкой, и без)
+                                                    // Не в матрице или НЕТ в матрице — подсветка, инпут ДОСТУПЕН ВСЕГДА
                                                     if (r.notInMatrix && so) {
+                                                        const netBg = r.matrixNet ? 'bg-orange' : 'bg-blue';
+                                                        const netLabel = r.matrixNet ? 'НЕТ в матрице' : 'Не в матрице';
                                                         if (deliversTomorrow) {
                                                             if (orderVal > 0) {
-                                                                return '<td class="text-center bg-blue-50" title="Не в матрице (ручной заказ)"><input type="number" step="0.5" min="0" value="' + Number(orderVal).toFixed(1) + '" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onchange="editOrder(this)" class="input w-16 text-center text-sm font-bold"><div class="text-[10px] text-gray-500">' + sumVal.toFixed(0) + ' ₽</div></td>';
+                                                                return '<td class="text-center ' + netBg + '-50" title="' + netLabel + ' (ручной заказ)"><input type="number" step="0.5" min="0" value="' + Number(orderVal).toFixed(1) + '" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onchange="editOrder(this)" class="input w-16 text-center text-sm font-bold"><div class="text-[10px] text-gray-500">' + sumVal.toFixed(0) + ' ₽</div></td>';
                                                             }
-                                                            return '<td class="text-center bg-blue-50" title="Не в матрице"><input type="number" step="0.5" min="0" value="' + (hasManualEdit ? '0' : '') + '" placeholder="0" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onchange="editOrder(this)" class="input w-16 text-center text-sm text-gray-400 bg-gray-50"></td>';
+                                                            return '<td class="text-center ' + netBg + '-50" title="' + netLabel + '"><input type="number" step="0.5" min="0" value="' + (hasManualEdit ? '0' : '') + '" placeholder="0" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onchange="editOrder(this)" class="input w-16 text-center text-sm text-gray-400 bg-gray-50"></td>';
                                                         } else {
-                                                            // Нет доставки завтра — всё равно показываем инпут
                                                             if (orderVal > 0) {
-                                                                return '<td class="text-center bg-blue-100" title="Не в матрице, нет доставки завтра"><input type="number" step="0.5" min="0" value="' + Number(orderVal).toFixed(1) + '" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onchange="editOrder(this)" class="input w-16 text-center text-sm font-bold"><div class="text-[10px] text-gray-500">' + sumVal.toFixed(0) + ' ₽</div></td>';
+                                                                return '<td class="text-center ' + netBg + '-100" title="' + netLabel + ', нет доставки завтра"><input type="number" step="0.5" min="0" value="' + Number(orderVal).toFixed(1) + '" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onchange="editOrder(this)" class="input w-16 text-center text-sm font-bold"><div class="text-[10px] text-gray-500">' + sumVal.toFixed(0) + ' ₽</div></td>';
                                                             }
-                                                            return '<td class="text-center bg-blue-100" title="Не в матрице, нет доставки завтра"><input type="number" step="0.5" min="0" value="' + (hasManualEdit ? '0' : '') + '" placeholder="0" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onchange="editOrder(this)" class="input w-16 text-center text-sm text-gray-400 bg-gray-50"></td>';
+                                                            return '<td class="text-center ' + netBg + '-100" title="' + netLabel + ', нет доставки завтра"><input type="number" step="0.5" min="0" value="' + (hasManualEdit ? '0' : '') + '" placeholder="0" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onchange="editOrder(this)" class="input w-16 text-center text-sm text-gray-400 bg-gray-50"></td>';
                                                         }
                                                     }
 
@@ -3078,7 +3084,7 @@
                                                     const inputVal = hasManualEdit ? '0' : '';
                                                     return '<td class="text-center ' + editBg + '"' + editTitle + '><input type="number" step="0.5" min="0" value="' + inputVal + '" placeholder="0" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onchange="editOrder(this)" class="input w-16 text-center text-sm text-gray-400 bg-gray-50"></td>';
                                                 }).join('')}
-                                                <td class="text-left text-xs ${r.notInMatrix ? 'text-blue-600 font-medium italic' : r.hasConflict ? 'text-amber-700 font-medium' : r.order > 0 ? 'text-emerald-700' : 'text-gray-500'}">${r.status}</td>
+                                                <td class="text-left text-xs ${r.notInMatrix ? (r.matrixNet ? 'text-orange-600 font-medium italic' : 'text-blue-600 font-medium italic') : r.hasConflict ? 'text-amber-700 font-medium' : r.order > 0 ? 'text-emerald-700' : 'text-gray-500'}">${r.status}</td>
                                             </tr>`;
                                         }).join('')}
                                     `).join('')}
