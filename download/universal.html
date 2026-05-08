@@ -1476,6 +1476,7 @@
         let filterTT = '';
         let filterStatus = '';
         let filterGroup = '';
+        let filterSupplier = '';
         let collapsedG = {};
         let collapsedTT = {};
         let groupMarkups = {};
@@ -2305,6 +2306,12 @@
             const groups = new Set();
             Object.values(matrix).forEach(p => { if (p.group) groups.add(p.group); });
             return Array.from(groups).sort((a, b) => a.localeCompare(b, 'ru'));
+        }
+
+        function getAllSuppliers() {
+            const sups = new Set();
+            Object.values(matrix).forEach(p => { if (p.supplier) sups.add(p.supplier); });
+            return Array.from(sups).sort((a, b) => a.localeCompare(b, 'ru'));
         }
 
         // === АССОРТИМЕНТ ===
@@ -3571,12 +3578,11 @@
                     const editKey = `${store.tt}_${code}`;
 
                     if (!stockData) {
-                        // Нет данных остатков — минимальный заказ по упаковке
-                        const minOrder = packaging === 'КГ'
-                            ? Math.ceil(minOrderBase / quant) * quant
-                            : Math.max(quant, Math.round(minOrderBase / quant) * quant);
+                        // Нет данных остатков — минимальный заказ: ШТ=2, КГ=0.5
+                        const minOrder = packaging === 'КГ' ? 0.5 : 2;
                         const editedOrder = orderEdits[editKey] !== undefined ? orderEdits[editKey] : minOrder;
-                        results.push({ tt: store.tt, code, nomenclature: p.nomenclature || '', group: p.group || '', currentStock: 0, sales: salesByTTCode[key] || 0, daysPresent: 0, avgSalesPerDay: 0, order: editedOrder, quant, shelf, packaging, inPrice: p.inPrice || 0, sum: editedOrder * (p.inPrice || 0), status: editedOrder > 0 ? `мин. заказ ${editedOrder} ${unitLabel}` : 'достаточно', statusType: 'minOrder', isAssortment: false });
+                        const calcStatus = 'мин. заказ ' + minOrder + ' ' + unitLabel;
+                        results.push({ tt: store.tt, code, nomenclature: p.nomenclature || '', group: p.group || '', supplier: p.supplier || '', currentStock: 0, sales: salesByTTCode[key] || 0, daysPresent: 0, avgSalesPerDay: 0, order: editedOrder, calcOrder: minOrder, quant, shelf, packaging, inPrice: p.inPrice || 0, sum: editedOrder * (p.inPrice || 0), status: calcStatus, statusType: 'minOrder', isAssortment: false });
                         return;
                     }
 
@@ -3586,28 +3592,28 @@
                     const avgSalesPerDay = daysPresent > 0 ? totalSales / daysPresent : 0;
 
                     if (currentStock === 0 && totalSales === 0) {
-                        // Остаток=0 и продажи=0 — минимальный заказ
-                        const minOrder = packaging === 'КГ'
-                            ? Math.ceil(minOrderBase / quant) * quant
-                            : Math.max(quant, Math.round(minOrderBase / quant) * quant);
+                        // Остаток=0 и продажи=0 — минимальный заказ: ШТ=2, КГ=0.5
+                        const minOrder = packaging === 'КГ' ? 0.5 : 2;
                         const editedOrder = orderEdits[editKey] !== undefined ? orderEdits[editKey] : minOrder;
-                        results.push({ tt: store.tt, code, nomenclature: p.nomenclature || stockData.name || '', group: p.group || '', currentStock: 0, sales: 0, daysPresent, avgSalesPerDay: parseFloat(avgSalesPerDay.toFixed(3)), order: editedOrder, quant, shelf, packaging, inPrice: p.inPrice || 0, sum: editedOrder * (p.inPrice || 0), status: editedOrder > 0 ? `мин. заказ ${editedOrder} ${unitLabel}` : 'достаточно', statusType: 'minOrder', isAssortment: false });
+                        const calcStatus = 'мин. заказ ' + minOrder + ' ' + unitLabel;
+                        results.push({ tt: store.tt, code, nomenclature: p.nomenclature || stockData.name || '', group: p.group || '', supplier: p.supplier || '', currentStock: 0, sales: 0, daysPresent, avgSalesPerDay: parseFloat(avgSalesPerDay.toFixed(3)), order: editedOrder, calcOrder: minOrder, quant, shelf, packaging, inPrice: p.inPrice || 0, sum: editedOrder * (p.inPrice || 0), status: calcStatus, statusType: 'minOrder', isAssortment: false });
                         return;
                     }
 
                     if (totalSales === 0) {
                         // Остаток есть, но продаж нет — заказ не делается
-                        results.push({ tt: store.tt, code, nomenclature: p.nomenclature || stockData.name || '', group: p.group || '', currentStock, sales: 0, daysPresent, avgSalesPerDay: 0, order: 0, quant, shelf, packaging, inPrice: p.inPrice || 0, sum: 0, status: 'хватает (нет продаж)', statusType: 'ok', isAssortment: false });
+                        results.push({ tt: store.tt, code, nomenclature: p.nomenclature || stockData.name || '', group: p.group || '', supplier: p.supplier || '', currentStock, sales: 0, daysPresent, avgSalesPerDay: 0, order: 0, calcOrder: 0, quant, shelf, packaging, inPrice: p.inPrice || 0, sum: 0, status: 'хватает (нет продаж)', statusType: 'ok', isAssortment: false });
                         return;
                     }
 
                     // Нормальный расчёт заказа (с учётом полки и округлением до кванта)
-                    let order = calcOrder(currentStock, avgSalesPerDay, period, quant, shelf, packaging);
-                    if (orderEdits[editKey] !== undefined) order = orderEdits[editKey];
-                    order = Math.round(order * 100) / 100; // округление float
+                    let calcOrderVal = calcOrder(currentStock, avgSalesPerDay, period, quant, shelf, packaging);
+                    calcOrderVal = Math.round(calcOrderVal * 100) / 100;
+                    let order = orderEdits[editKey] !== undefined ? orderEdits[editKey] : calcOrderVal;
+                    order = Math.round(order * 100) / 100;
                     const sum = order * (p.inPrice || 0);
-                    const statusText = order > 0 ? `заказ ${order} ${unitLabel}` : 'хватает';
-                    results.push({ tt: store.tt, code, nomenclature: p.nomenclature || stockData.name || '', group: p.group || '', currentStock, sales: totalSales, daysPresent, avgSalesPerDay: parseFloat(avgSalesPerDay.toFixed(3)), order, quant, shelf, packaging, inPrice: p.inPrice || 0, sum, status: statusText, statusType: order > 0 ? 'order' : 'ok', isAssortment: false });
+                    const statusText = calcOrderVal > 0 ? `расчёт ${calcOrderVal} ${unitLabel}` : 'хватает';
+                    results.push({ tt: store.tt, code, nomenclature: p.nomenclature || stockData.name || '', group: p.group || '', supplier: p.supplier || '', currentStock, sales: totalSales, daysPresent, avgSalesPerDay: parseFloat(avgSalesPerDay.toFixed(3)), order, calcOrder: calcOrderVal, quant, shelf, packaging, inPrice: p.inPrice || 0, sum, status: statusText, statusType: calcOrderVal > 0 ? 'order' : 'ok', isAssortment: false });
                 });
             });
 
@@ -3619,6 +3625,7 @@
             }
             if (filterTT) filtered = filtered.filter(r => r.tt === filterTT);
             if (filterGroup) filtered = filtered.filter(r => r.group === filterGroup);
+            if (filterSupplier) filtered = filtered.filter(r => r.supplier === filterSupplier);
             if (filterStatus === 'orders') filtered = filtered.filter(r => r.order > 0);
             else if (filterStatus === 'minOrder') filtered = filtered.filter(r => r.statusType === 'minOrder');
             else if (filterStatus === 'ok') filtered = filtered.filter(r => r.statusType === 'ok');
@@ -3680,6 +3687,7 @@
                     <div class="flex flex-wrap gap-2 items-center">
                         <input id="orderSearchInput" type="text" placeholder="Поиск..." value="${searchResults}" oninput="debounceSearchResults(this)" class="input w-40">
                         <select onchange="filterGroup=this.value;render()" class="input bg-white"><option value="">Все категории</option>${allGroups.map(g => `<option value="${g}" ${filterGroup === g ? 'selected' : ''}>${g}</option>`).join('')}</select>
+                        <select onchange="filterSupplier=this.value;render()" class="input bg-white"><option value="">Все поставщики</option>${getAllSuppliers().map(s => `<option value="${s}" ${filterSupplier === s ? 'selected' : ''}>${s}</option>`).join('')}</select>
                         <select onchange="filterTT=this.value;render()" class="input bg-white"><option value="">Все ТТ</option>${stores.map(s => `<option value="${s.tt}" ${filterTT === s.tt ? 'selected' : ''}>${s.tt}</option>`).join('')}</select>
                         <select onchange="filterStatus=this.value;render()" class="input bg-white">
                             <option value="">Все статусы</option>
@@ -3697,6 +3705,7 @@
                                 <tr>
                                     <th class="text-left sticky left-0 bg-gray-50 z-20">Наименование</th>
                                     <th class="text-center">Код</th>
+                                    <th class="text-center">Поставщик</th>
                                     <th class="text-center cursor-pointer" title="Нажмите для расчёта">Продажи</th>
                                     <th class="text-center">Дней</th>
                                     <th class="text-center">Ср./день</th>
@@ -3708,11 +3717,11 @@
                             <tbody>
                                 ${Object.entries(groupedTT).map(([tt, groups]) => `
                                     <tr class="bg-sky-50 cursor-pointer hover:bg-sky-100" onclick="collapsedTT['${esc(tt)}']=!collapsedTT['${esc(tt)}'];render()">
-                                        <td colspan="8" class="text-left font-semibold text-sky-800"><span class="inline-flex items-center gap-1">${collapsedTT[tt] ? icons.chevronRight : icons.chevronDown}${icons.mapPin}${tt}<span class="font-normal text-sky-600">(${Object.values(groups).reduce((s, items) => s + items.length, 0)} поз.)</span></span></td>
+                                        <td colspan="9" class="text-left font-semibold text-sky-800"><span class="inline-flex items-center gap-1">${collapsedTT[tt] ? icons.chevronRight : icons.chevronDown}${icons.mapPin}${tt}<span class="font-normal text-sky-600">(${Object.values(groups).reduce((s, items) => s + items.length, 0)} поз.)</span></span></td>
                                     </tr>
                                     ${collapsedTT[tt] ? '' : Object.entries(groups).map(([gr, items]) => `
                                         <tr class="group-header cursor-pointer" onclick="collapsedG['order_${esc(tt)}_${esc(gr)}']=!collapsedG['order_${esc(tt)}_${esc(gr)}'];render()">
-                                            <td colspan="8" class="text-left py-1 px-2">
+                                            <td colspan="9" class="text-left py-1 px-2">
                                                 <div class="flex items-center gap-2">
                                                     ${collapsedG['order_' + tt + '_' + gr] ? icons.chevronRight : icons.chevronDown}
                                                     <span class="font-semibold text-indigo-800">${gr}</span>
@@ -3730,7 +3739,8 @@
                                             <tr class="${rowClass} hover:bg-gray-100">
                                                 <td class="sticky left-0 bg-white text-left">${r.nomenclature}</td>
                                                 <td class="text-center font-mono text-xs text-gray-600">${r.code}</td>
-                                                <td class="text-center cursor-pointer hover:underline hover:text-blue-600" onclick="event.stopPropagation();showCalcDetail(this, ${JSON.stringify(r).replace(/"/g, '&quot;')})">${r.sales.toFixed(0)}</td>
+                                                <td class="text-center text-xs text-purple-700">${r.supplier || '—'}</td>
+                                                <td class="text-center cursor-pointer hover:underline hover:text-blue-600" onclick="event.stopPropagation();showCalcDetail(this, ${JSON.stringify(r).replace(/"/g, '&quot;')})">${r.sales}</td>
                                                 <td class="text-center text-xs text-gray-600">${r.daysPresent || '-'}</td>
                                                 <td class="text-center">${r.avgSalesPerDay.toFixed(2)}</td>
                                                 <td class="text-center">${r.currentStock.toFixed(2)}</td>
@@ -3755,27 +3765,22 @@
             const code = input.dataset.code;
             const editKey = `${tt}_${code}`;
             orderEdits[editKey] = newOrder;
-            const p = matrix[code];
-            const newSum = newOrder * (p ? p.inPrice || 0 : 0);
+            // Статус НЕ меняем — он показывает исходный расчёт программы
             const row = input.closest('tr');
             if (row) {
-                const statusTd = row.querySelector('td:last-child');
-                if (statusTd) {
-                    const packaging = p ? p.packaging || 'ШТ' : 'ШТ';
-                    const unitLabel = packaging === 'КГ' ? 'кг' : 'шт';
-                    const key = `${tt}_${code}`;
-                    const stockMapLocal = new Map();
-                    stocks.forEach(s => stockMapLocal.set(`${s.tt}_${s.code}`, s));
-                    const stockData = stockMapLocal.get(key);
-                    const totalSales = 0;
-                    const isMinOrder = !stockData || (stockData.currentStock === 0 && totalSales === 0);
-                    if (newOrder > 0) {
-                        statusTd.textContent = isMinOrder ? `мин. заказ ${newOrder} ${unitLabel}` : `заказ ${newOrder} ${unitLabel}`;
+                // Подсветить ручное изменение — если отличается от расчёта
+                const orderInput = row.querySelector('input[type="number"]');
+                if (orderInput) {
+                    // Найти исходный расчёт из calcOrder
+                    const r = savedOrderResults?.find(x => x.tt === tt && x.code === code);
+                    if (r && r.calcOrder !== undefined && newOrder !== r.calcOrder) {
+                        orderInput.style.color = '#dc2626'; // красный — отличается от расчёта
                     } else {
-                        statusTd.textContent = 'хватает';
+                        orderInput.style.color = '';
                     }
                 }
             }
+            render();
         }
 
         // === Сохранение заказа (множественное) ===
@@ -3798,73 +3803,159 @@
                 return;
             }
 
-            // Формируем сводку по поставщикам
-            var supplierGroups = {};
-            var totalOrderItems = 0, totalSum = 0;
+            // Убираем предыдущий модал если есть
+            var existing = document.getElementById('placeOrderModal');
+            if (existing) existing.remove();
+
+            // Собираем уникальные значения для фильтров
+            var allSuppliers = new Set();
+            var allGroups = new Set();
+            var allProducts = new Set();
+            var allTTs = new Set();
             savedOrderResults.forEach(function(r) {
                 if (r.order <= 0) return;
-                var sup = (matrix[r.code] || {}).supplier || '—';
-                if (!supplierGroups[sup]) supplierGroups[sup] = { count: 0, sum: 0 };
-                supplierGroups[sup].count++;
-                supplierGroups[sup].sum += r.sum;
-                totalOrderItems++;
-                totalSum += r.sum;
+                allSuppliers.add(r.supplier || '—');
+                allGroups.add(r.group || 'Без группы');
+                allProducts.add(r.code + ' — ' + r.nomenclature);
+                allTTs.add(r.tt);
             });
 
-            // Формируем имя из поставщиков
-            var supNames = Object.keys(supplierGroups);
-            var defaultName = supNames.length > 0 ? supNames.join(', ') : 'Заказ';
-            if (defaultName.length > 50) defaultName = defaultName.substring(0, 47) + '...';
+            var modal = document.createElement('div');
+            modal.id = 'placeOrderModal';
+            modal.style.cssText = 'position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.4);';
+            modal.innerHTML = `
+                <div style="background:white;border-radius:12px;padding:24px;width:420px;max-height:85vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+                    <div style="font-size:16px;font-weight:700;margin-bottom:16px;color:#1f2937;">${icons.order} Сформировать заказ</div>
 
-            // Спрашиваем название заказа
-            var orderName = prompt('Название заказа:', defaultName);
-            if (orderName === null) return; // Отмена
-            if (!orderName.trim()) orderName = 'Заказ';
-            orderName = orderName.trim();
+                    <div style="margin-bottom:16px;">
+                        <div style="font-size:12px;font-weight:600;color:#6b7280;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">Группировка при экспорте</div>
 
-            // Спрашиваем дату ожидаемой доставки
+                        <label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;cursor:pointer;border:1px solid #e5e7eb;margin-bottom:6px;background:#f0fdf4;">
+                            <input type="checkbox" id="groupByTT" checked style="width:16px;height:16px;accent-color:#10b981;">
+                            <span style="font-size:13px;font-weight:600;color:#065f46;">По ТТ</span>
+                            <span style="font-size:11px;color:#6b7280;margin-left:auto;">${allTTs.size} ТТ</span>
+                        </label>
+
+                        <label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;cursor:pointer;border:1px solid #e5e7eb;margin-bottom:6px;">
+                            <input type="checkbox" id="groupByOverall" checked style="width:16px;height:16px;accent-color:#3b82f6;">
+                            <span style="font-size:13px;font-weight:600;color:#1e40af;">Общий</span>
+                            <span style="font-size:11px;color:#6b7280;margin-left:auto;">все позиции</span>
+                        </label>
+
+                        <label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;cursor:pointer;border:1px solid #e5e7eb;margin-bottom:6px;">
+                            <input type="checkbox" id="groupBySupplier" checked style="width:16px;height:16px;accent-color:#8b5cf6;">
+                            <span style="font-size:13px;font-weight:600;color:#5b21b6;">По поставщику</span>
+                            <span style="font-size:11px;color:#6b7280;margin-left:auto;">${allSuppliers.size} пост.</span>
+                        </label>
+
+                        <label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;cursor:pointer;border:1px solid #e5e7eb;margin-bottom:6px;">
+                            <input type="checkbox" id="groupByCategory" checked style="width:16px;height:16px;accent-color:#f59e0b;">
+                            <span style="font-size:13px;font-weight:600;color:#92400e;">По категории</span>
+                            <span style="font-size:11px;color:#6b7280;margin-left:auto;">${allGroups.size} кат.</span>
+                        </label>
+
+                        <label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;cursor:pointer;border:1px solid #e5e7eb;margin-bottom:6px;">
+                            <input type="checkbox" id="groupByProduct" style="width:16px;height:16px;accent-color:#ef4444;">
+                            <span style="font-size:13px;font-weight:600;color:#991b1b;">По товару</span>
+                            <span style="font-size:11px;color:#6b7280;margin-left:auto;">${allProducts.size} тов.</span>
+                        </label>
+                    </div>
+
+                    <div style="margin-bottom:16px;">
+                        <label style="font-size:12px;font-weight:600;color:#6b7280;display:block;margin-bottom:4px;">Название заказа:</label>
+                        <input type="text" id="orderNameInput" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;" placeholder="Введите название...">
+                    </div>
+
+                    <div style="margin-bottom:16px;">
+                        <label style="font-size:12px;font-weight:600;color:#6b7280;display:block;margin-bottom:4px;">Ожидаемая дата доставки:</label>
+                        <input type="date" id="orderDateInput" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;">
+                    </div>
+
+                    <div style="display:flex;gap:8px;justify-content:flex-end;">
+                        <button id="placeOrderCancel" style="padding:8px 16px;border-radius:6px;border:1px solid #d1d5db;background:white;color:#6b7280;font-size:13px;cursor:pointer;">Отмена</button>
+                        <button id="placeOrderSave" style="padding:8px 20px;border-radius:6px;border:none;background:#10b981;color:white;font-size:13px;font-weight:600;cursor:pointer;">Сохранить заказ</button>
+                    </div>
+                </div>
+            `;
+
+            document.body.appendChild(modal);
+
+            // Установить дату по умолчанию
             var tomorrow = new Date();
             tomorrow.setDate(tomorrow.getDate() + 1);
-            var defDateStr = tomorrow.toISOString().split('T')[0];
-            var expectedDateStr = prompt('Ожидаемая дата доставки (ГГГГ-ММ-ДД):', defDateStr);
-            var expectedDate = '';
-            if (expectedDateStr !== null && expectedDateStr.trim()) {
-                var d = new Date(expectedDateStr.trim());
-                if (!isNaN(d.getTime())) {
-                    expectedDate = d.toISOString().split('T')[0];
-                } else {
-                    alert('Неверный формат даты — дата доставки не сохранена.\nМожете указать позже в "График доставок".');
+            document.getElementById('orderDateInput').value = tomorrow.toISOString().split('T')[0];
+
+            // Имя по умолчанию
+            var supArr = Array.from(allSuppliers);
+            var defName = supArr.length > 0 ? supArr.join(', ') : 'Заказ';
+            if (defName.length > 50) defName = defName.substring(0, 47) + '...';
+            document.getElementById('orderNameInput').value = defName;
+
+            // Закрытие по фону
+            modal.addEventListener('click', function(e) { if (e.target === modal) modal.remove(); });
+            document.getElementById('placeOrderCancel').addEventListener('click', function() { modal.remove(); });
+
+            // Сохранение
+            document.getElementById('placeOrderSave').addEventListener('click', function() {
+                var orderName = document.getElementById('orderNameInput').value.trim() || 'Заказ';
+                var expectedDateStr = document.getElementById('orderDateInput').value;
+                var expectedDate = '';
+                if (expectedDateStr) {
+                    var d = new Date(expectedDateStr);
+                    if (!isNaN(d.getTime())) expectedDate = expectedDateStr;
                 }
-            }
 
-            var orderData = {
-                name: orderName,
-                createdAt: new Date().toISOString(),
-                date: new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
-                items: savedOrderResults,
-                stats: savedOrderStats,
-                supplierGroups: supplierGroups,
-                totalOrderItems: totalOrderItems,
-                totalSum: totalSum,
-                orderEdits: Object.assign({}, orderEdits),
-                expectedDate: expectedDate
-            };
+                var groupBy = {
+                    byTT: document.getElementById('groupByTT').checked,
+                    overall: document.getElementById('groupByOverall').checked,
+                    bySupplier: document.getElementById('groupBySupplier').checked,
+                    byCategory: document.getElementById('groupByCategory').checked,
+                    byProduct: document.getElementById('groupByProduct').checked
+                };
 
-            // Проверяем — может это перезапись просматриваемого заказа?
-            if (viewingOrderIdx !== null && savedOrdersList[viewingOrderIdx]) {
-                if (!confirm('Перезаписать заказ "' + esc(savedOrdersList[viewingOrderIdx].name) + '" от ' + savedOrdersList[viewingOrderIdx].date + '?\nДля нового нажмите "Отмена" и задайте другое название.')) return;
-                orderData.id = savedOrdersList[viewingOrderIdx].id;
-                savedOrdersList[viewingOrderIdx] = orderData;
-            } else {
-                orderData.id = Date.now();
-                savedOrdersList.push(orderData);
-            }
+                // Формируем сводку по поставщикам
+                var supplierGroups = {};
+                var totalOrderItems = 0, totalSum = 0;
+                savedOrderResults.forEach(function(r) {
+                    if (r.order <= 0) return;
+                    var sup = r.supplier || '—';
+                    if (!supplierGroups[sup]) supplierGroups[sup] = { count: 0, sum: 0 };
+                    supplierGroups[sup].count++;
+                    supplierGroups[sup].sum += r.sum;
+                    totalOrderItems++;
+                    totalSum += r.sum;
+                });
 
-            save(KEYS.SAVED_ORDERS_LIST, savedOrdersList);
-            savedOrderDate = new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-            viewingOrderIdx = null;
-            alert('Заказ "' + orderName + '" сохранён!\n' + totalOrderItems + ' поз. на сумму ' + totalSum.toFixed(0) + ' ₽' + (expectedDate ? '\nДоставка: ' + expectedDate : ''));
-            render();
+                var orderData = {
+                    name: orderName,
+                    createdAt: new Date().toISOString(),
+                    date: new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+                    items: savedOrderResults,
+                    stats: savedOrderStats,
+                    supplierGroups: supplierGroups,
+                    totalOrderItems: totalOrderItems,
+                    totalSum: totalSum,
+                    orderEdits: Object.assign({}, orderEdits),
+                    expectedDate: expectedDate,
+                    groupBy: groupBy
+                };
+
+                if (viewingOrderIdx !== null && savedOrdersList[viewingOrderIdx]) {
+                    if (!confirm('Перезаписать заказ "' + esc(savedOrdersList[viewingOrderIdx].name) + '" от ' + savedOrdersList[viewingOrderIdx].date + '?\nДля нового нажмите "Отмена".')) return;
+                    orderData.id = savedOrdersList[viewingOrderIdx].id;
+                    savedOrdersList[viewingOrderIdx] = orderData;
+                } else {
+                    orderData.id = Date.now();
+                    savedOrdersList.push(orderData);
+                }
+
+                save(KEYS.SAVED_ORDERS_LIST, savedOrdersList);
+                savedOrderDate = new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+                viewingOrderIdx = null;
+                modal.remove();
+                alert('Заказ "' + orderName + '" сохранён!\n' + totalOrderItems + ' поз. на сумму ' + totalSum.toFixed(0) + ' ₽' + (expectedDate ? '\nДоставка: ' + expectedDate : ''));
+                render();
+            });
         }
 
         function clearSavedOrder() {
@@ -3979,9 +4070,9 @@
         function exportSavedOrder(idx) {
             var o = savedOrdersList[idx];
             if (!o || !o.items) { alert('Заказ не найден'); return; }
-            var rows = [['№ Маг.', 'ТТ', 'Код', 'Наименование', 'Группа', 'Продажи', 'Дней', 'Ср./день', 'Остаток', 'Заказ', 'Сумма', 'Статус']];
+            var rows = [['№ Маг.', 'ТТ', 'Код', 'Поставщик', 'Наименование', 'Группа', 'Продажи', 'Дней', 'Ср./день', 'Остаток', 'Заказ', 'Расчёт', 'Сумма', 'Статус']];
             o.items.forEach(function(r) {
-                rows.push([r.storeNumber || '', r.tt || '', r.code || '', r.nomenclature || '', r.group || '', (r.sales || 0).toFixed(0), r.daysPresent || 0, (r.avgSalesPerDay || 0).toFixed(3), (r.currentStock || 0).toFixed(2), r.order || 0, (r.sum || 0).toFixed(2), r.status || '']);
+                rows.push([r.storeNumber || '', r.tt || '', r.code || '', r.supplier || '', r.nomenclature || '', r.group || '', r.sales || 0, r.daysPresent || 0, (r.avgSalesPerDay || 0).toFixed(3), (r.currentStock || 0).toFixed(2), r.order || 0, r.calcOrder !== undefined ? r.calcOrder : '', (r.sum || 0).toFixed(2), r.status || '']);
             });
             var headers = rows.shift();
             var ws = SharedUtils.createStyledSheet(rows, headers, [0, 1, 2, 3, 11]);
@@ -4520,7 +4611,7 @@
                 }
             });
             
-            const rows = [['№ Маг.', 'ТТ', 'Код', 'Наименование', 'Группа', 'Продажи', 'Дней', 'Ср./день', 'Остаток', 'Заказ', 'Сумма', 'Статус']];
+            const rows = [['№ Маг.', 'ТТ', 'Код', 'Поставщик', 'Наименование', 'Группа', 'Продажи', 'Дней', 'Ср./день', 'Остаток', 'Заказ', 'Расчёт', 'Сумма', 'Статус']];
             
             stores.forEach(store => {
                 Object.entries(matrix).forEach(([code, p]) => {
@@ -4541,12 +4632,9 @@
                     const editKey = `${store.tt}_${code}`;
 
                     if (!stockData) {
-                        // Нет данных остатков — минимальный заказ по упаковке
-                        const minOrder = packaging === 'КГ'
-                            ? Math.ceil(minOrderBase / quant) * quant
-                            : Math.max(quant, Math.round(minOrderBase / quant) * quant);
+                        const minOrder = packaging === 'КГ' ? 0.5 : 2;
                         const expOrder = orderEdits[editKey] !== undefined ? orderEdits[editKey] : minOrder;
-                        rows.push([store.storeNumber || store.tt2 || '', store.tt, code, p.nomenclature || '', p.group || '', salesByTTCode[key] || 0, 0, 0, 0, expOrder, (expOrder * (p.inPrice || 0)).toFixed(2), `мин. заказ ${expOrder} ${unitLabel}`]);
+                        rows.push([store.storeNumber || store.tt2 || '', store.tt, code, p.supplier || '', p.nomenclature || '', p.group || '', salesByTTCode[key] || 0, 0, 0, 0, expOrder, minOrder, (expOrder * (p.inPrice || 0)).toFixed(2), `мин. заказ ${minOrder} ${unitLabel}`]);
                         return;
                     }
 
@@ -4556,27 +4644,24 @@
                     const avgSalesPerDay = daysPresent > 0 ? totalSales / daysPresent : 0;
 
                     if (currentStock === 0 && totalSales === 0) {
-                        // Остаток=0 и продажи=0 — минимальный заказ
-                        const minOrder = packaging === 'КГ'
-                            ? Math.ceil(minOrderBase / quant) * quant
-                            : Math.max(quant, Math.round(minOrderBase / quant) * quant);
+                        const minOrder = packaging === 'КГ' ? 0.5 : 2;
                         const expOrder = orderEdits[editKey] !== undefined ? orderEdits[editKey] : minOrder;
-                        rows.push([store.storeNumber || store.tt2 || '', store.tt, code, p.nomenclature || '', p.group || '', 0, daysPresent, 0, 0, expOrder, (expOrder * (p.inPrice || 0)).toFixed(2), `мин. заказ ${expOrder} ${unitLabel}`]);
+                        rows.push([store.storeNumber || store.tt2 || '', store.tt, code, p.supplier || '', p.nomenclature || '', p.group || '', 0, daysPresent, 0, 0, expOrder, minOrder, (expOrder * (p.inPrice || 0)).toFixed(2), `мин. заказ ${minOrder} ${unitLabel}`]);
                         return;
                     }
 
                     if (totalSales === 0) {
                         // Остаток есть, но продаж нет — заказ не делается
-                        rows.push([store.storeNumber || store.tt2 || '', store.tt, code, p.nomenclature || '', p.group || '', 0, daysPresent, 0, currentStock.toFixed(2), 0, '0.00', 'хватает (нет продаж)']);
+                        rows.push([store.storeNumber || store.tt2 || '', store.tt, code, p.supplier || '', p.nomenclature || '', p.group || '', 0, daysPresent, 0, currentStock.toFixed(2), 0, 0, '0.00', 'хватает (нет продаж)']);
                         return;
                     }
 
-                    // Нормальный расчёт заказа
-                    let order = calcOrder(currentStock, avgSalesPerDay, period, quant, shelf, packaging);
-                    if (orderEdits[editKey] !== undefined) order = orderEdits[editKey];
+                    let calcOrderVal = calcOrder(currentStock, avgSalesPerDay, period, quant, shelf, packaging);
+                    calcOrderVal = Math.round(calcOrderVal * 100) / 100;
+                    let order = orderEdits[editKey] !== undefined ? orderEdits[editKey] : calcOrderVal;
                     order = Math.round(order * 100) / 100;
-                    const status = order > 0 ? `заказ ${order} ${unitLabel}` : 'хватает';
-                    rows.push([store.storeNumber || store.tt2 || '', store.tt, code, p.nomenclature || '', p.group || '', totalSales.toFixed(0), daysPresent, avgSalesPerDay.toFixed(3), currentStock.toFixed(2), order, (order * (p.inPrice || 0)).toFixed(2), status]);
+                    const status = calcOrderVal > 0 ? `расчёт ${calcOrderVal} ${unitLabel}` : 'хватает';
+                    rows.push([store.storeNumber || store.tt2 || '', store.tt, code, p.supplier || '', p.nomenclature || '', p.group || '', totalSales, daysPresent, avgSalesPerDay.toFixed(3), currentStock.toFixed(2), order, calcOrderVal, (order * (p.inPrice || 0)).toFixed(2), status]);
                 });
             });
             
