@@ -2640,7 +2640,7 @@
                     const notInMatrix = !codeInMatrix; // Товар есть в каталоге, но НЕ в матрице
                     const matrixNet = codeInMatrix && markForTT === 'НЕТ'; // В матрице, но исключён для этой ТТ
 
-                    // Все три варианта показываем: ДА, не в матрице, НЕТ
+                    // Все три варианта показываем: ДА, вне ассортимента, НЕТ
                     // (НЕТ — тоже показываем для ручного заказа на пробу)
 
                     // Получить всех поставщиков для товара
@@ -2694,7 +2694,7 @@
 
                         const statusText = isNet
                             ? (hasAnyDeliveryTomorrow ? 'НЕТ в матрице (исключён)' : 'НЕТ в матрице, нет доставки завтра')
-                            : (hasAnyDeliveryTomorrow ? 'не в матрице' : 'не в матрице, нет доставки завтра');
+                            : (hasAnyDeliveryTomorrow ? 'вне ассортимента' : 'вне ассортимента, нет доставки завтра');
 
                         results.push({
                             tt: store.tt, code, nomenclature: p.nomenclature || '',
@@ -3026,7 +3026,7 @@
                                             let titleAttr = '';
                                             if (r.notInMatrix) {
                                                 rowClass = r.matrixNet ? 'bg-orange-50' : 'bg-blue-50';
-                                                titleAttr = r.matrixNet ? ' title="НЕТ в матрице (исключён, можно заказать на пробу)"' : ' title="Товар не в матрице"';
+                                                titleAttr = r.matrixNet ? ' title="НЕТ в матрице (исключён, можно заказать на пробу)"' : ' title="Товар вне ассортимента"';
                                             } else if (r.hasConflict) {
                                                 rowClass = 'bg-amber-50';
                                                 cellBg = 'bg-amber-100';
@@ -3053,10 +3053,10 @@
                                                     const supPrice = (supplierPrices[r.code] && supplierPrices[r.code][sup]) || r.inPrice || 0;
                                                     const sumVal = orderVal * supPrice;
 
-                                                    // Не в матрице или НЕТ в матрице — подсветка, инпут ДОСТУПЕН ВСЕГДА
+                                                    // Вне ассортимента или НЕТ в матрице — подсветка, инпут ДОСТУПЕН ВСЕГДА
                                                     if (r.notInMatrix && so) {
                                                         const netBg = r.matrixNet ? 'bg-orange' : 'bg-blue';
-                                                        const netLabel = r.matrixNet ? 'НЕТ в матрице' : 'Не в матрице';
+                                                        const netLabel = r.matrixNet ? 'НЕТ в матрице' : 'Вне ассортимента';
                                                         if (deliversTomorrow) {
                                                             if (orderVal > 0) {
                                                                 return '<td class="text-center ' + netBg + '-50" title="' + netLabel + ' (ручной заказ)"><input type="number" step="0.5" min="0" value="' + Number(orderVal).toFixed(1) + '" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onchange="editOrder(this)" class="input w-16 text-center text-sm font-bold"><div class="text-[10px] text-gray-500">' + sumVal.toFixed(0) + ' ₽</div></td>';
@@ -3120,7 +3120,7 @@
 
                     // 1) Матрица
                     const inMatrix = !!matrixMarks[code];
-                    const mark = inMatrix ? (matrixMarks[code][store.tt] || 'НЕТ') : 'не в матрице';
+                    const mark = inMatrix ? (matrixMarks[code][store.tt] || 'НЕТ') : 'вне ассортимента';
                     const matrixOk = mark === 'ДА' || !inMatrix;
 
                     // 2) Поставщики товара
@@ -3719,7 +3719,7 @@
                         if (orderQty <= 0 && (so.order || 0) <= 0) return;
                         const supPrice = so.inPrice || r.inPrice || 0;
                         const statusText = r.notInMatrix
-                            ? (orderQty > 0 ? 'не в матрице (заказ)' : 'не в матрице')
+                            ? (orderQty > 0 ? 'вне ассортимента (заказ)' : 'вне ассортимента')
                             : (orderQty > 0 ? 'заказ' : '');
                         const daysText = so.daysUntil === null ? 'нет доставки' : (r.daysUntil >= 99 ? '∞' : (r.daysUntil || '—'));
                         rows.push([
@@ -3926,7 +3926,7 @@
                                                 var orderVal = so ? so.order : 0;
                                                 var supPrice = (supplierPrices[r.code] && supplierPrices[r.code][sup]) || r.inPrice || 0;
                                                 var sumVal = orderVal * supPrice;
-                                                // Не в матрице — голубой, показываем ВСЕГДА
+                                                // Вне ассортимента — голубой, показываем ВСЕГДА
                                                 if (r.notInMatrix && so) {
                                                     if (orderVal > 0) {
                                                         return '<td class="text-center bg-blue-50" title="\u041D\u0435 \u0432 \u043C\u0430\u0442\u0440\u0438\u0446\u0435"><div class="font-bold text-sm">' + orderVal.toFixed(1) + '</div><div class="text-[10px] text-gray-500">' + sumVal.toFixed(0) + ' \u20BD</div></td>';
