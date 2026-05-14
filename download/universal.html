@@ -3293,6 +3293,7 @@
             const markup = product.markup ?? groupMarkups[product.group || ''] ?? defaultMarkup;
             product.shelfPrice = Math.round(val * (1 + markup / 100));
             save(KEYS.ASSORTMENT, matrix);
+            syncToSavedAssortment();
             inputEl.value = '';
             render();
         }
@@ -3429,9 +3430,10 @@
                     const headers = rows[0].map(h => String(h || '').trim().toLowerCase());
                     const codeIdx = headers.findIndex(h => h === 'код');
                     const inPriceIdx = headers.findIndex(h => h.includes('вход'));
+                    const shelfPriceIdx = headers.findIndex(h => h.includes('полк'));
                     const markupIdx = headers.findIndex(h => h.includes('наценка'));
                     if (codeIdx < 0) { alert('Не найдена колонка "Код" в файле'); return; }
-                    let updated = 0;
+                    let updated = 0, priceChanged = 0, shelfChanged = 0;
                     for (let i = 1; i < rows.length; i++) {
                         const r = rows[i];
                         if (!r[codeIdx]) continue;
@@ -3439,29 +3441,51 @@
                         const normC = normCode(code);
                         const product = matrix[normC] || matrix[code];
                         if (!product) continue;
+                        let changed = false;
+                        // Входящая цена
                         if (inPriceIdx >= 0 && r[inPriceIdx] !== undefined && r[inPriceIdx] !== '') {
-                            product.inPrice = parseFloat(r[inPriceIdx]) || 0;
-                            product.price = product.inPrice;
-                            // Пересчитать цену на полку
-                            const markup = product.markup ?? groupMarkups[product.group || ''] ?? defaultMarkup;
-                            if (product.inPrice > 0) {
-                                product.shelfPrice = Math.round(product.inPrice * (1 + markup / 100));
+                            const newInPrice = parseFloat(r[inPriceIdx]) || 0;
+                            if (product.inPrice !== newInPrice) {
+                                product.inPrice = newInPrice;
+                                product.price = newInPrice;
+                                priceChanged++;
+                                changed = true;
                             }
                         }
+                        // Наценка
                         if (markupIdx >= 0 && r[markupIdx] !== undefined && r[markupIdx] !== '') {
                             const val = parseFloat(r[markupIdx]);
-                            if (!isNaN(val)) {
+                            if (!isNaN(val) && product.markup !== val) {
                                 product.markup = val;
-                                if (product.inPrice > 0) {
-                                    product.shelfPrice = Math.round(product.inPrice * (1 + val / 100));
-                                }
+                                changed = true;
                             }
                         }
-                        updated++;
+                        // Цена на полке — ПРЯМО ИЗ ФАЙЛА (приоритет выше пересчёта)
+                        if (shelfPriceIdx >= 0 && r[shelfPriceIdx] !== undefined && r[shelfPriceIdx] !== '') {
+                            const newShelfPrice = parseFloat(r[shelfPriceIdx]) || 0;
+                            if (product.shelfPrice !== newShelfPrice) {
+                                product.shelfPrice = newShelfPrice;
+                                shelfChanged++;
+                                changed = true;
+                            }
+                        } else if (changed && product.inPrice > 0) {
+                            // Если колонки "цена на полке" нет в файле — пересчитываем по наценке
+                            const markup = product.markup ?? groupMarkups[product.group || ''] ?? defaultMarkup;
+                            product.shelfPrice = Math.round(product.inPrice * (1 + markup / 100));
+                            shelfChanged++;
+                        }
+                        if (changed) updated++;
                     }
+                    // Сохраняем ассортимент (входящая цена + цена на полке + наценка)
                     save(KEYS.ASSORTMENT, matrix);
+                    syncToSavedAssortment();
+                    // Также сохраняем наценки по группам
+                    save(KEYS.GROUP_MARKUPS, groupMarkups);
                     render();
-                    alert('Обновлено ' + updated + ' товаров');
+                    let msg = 'Обновлено ' + updated + ' товаров';
+                    if (priceChanged > 0) msg += '\nВход. цены: ' + priceChanged;
+                    if (shelfChanged > 0) msg += '\nЦены на полке: ' + shelfChanged;
+                    alert(msg);
                 } catch (err) { alert('Ошибка: ' + err.message); }
             };
             reader.readAsArrayBuffer(file);
