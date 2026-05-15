@@ -89,6 +89,7 @@
         let inTransitOrders = [];  // [{id, createdAt, supplier, store, expectedDate, items: [{code,name,qty,sum}], status}]
         let supplierAssortment = {}; // {"code": ["supplier1", "supplier2"]}
         let supplierPrices = {}; // {"code": {"Supplier1": 150, "Supplier2": 200}}
+        let storeSupplierPrefs = {}; // {"code": {"store_tt": "SupplierName"}} — предпочтения магазинов по поставщикам
         let weekendSales = {};     // {"tt_code": totalWeekendQty}
         let weekdaySales = {};     // {"tt_code": totalWeekdayQty}
         let weekendDays = {};      // {"tt_code": countOfWeekendDays}
@@ -108,6 +109,7 @@
             INTRANSIT: 'fish_intransit_v1',
             SUPPLIER_ASSORTMENT: 'fish_supplier_assortment_v1',
             SUPPLIER_PRICES: 'fish_supplier_prices_v1',
+            STORE_SUPPLIER_PREFS: 'fish_store_supplier_prefs_v1',
             STOCK_CONSUMPTION: 'fish_stock_consumption_v1',
             SAVED_ORDER: 'fish_saved_order_v1'
         };
@@ -405,6 +407,7 @@
             inTransitOrders = load(KEYS.INTRANSIT, []);
             supplierAssortment = load(KEYS.SUPPLIER_ASSORTMENT, {});
             supplierPrices = load(KEYS.SUPPLIER_PRICES, {});
+            storeSupplierPrefs = load(KEYS.STORE_SUPPLIER_PREFS, {});
             stockConsumptionData = load(KEYS.STOCK_CONSUMPTION, {});
             // Загрузка сохранённого заказа (автоудаление после 14 дней)
             var saved = load(KEYS.SAVED_ORDER, null);
@@ -910,6 +913,111 @@
             render();
         }
 
+        // === МАГАЗИНЫ → Поставщик (предпочтения) ===
+        function openStoreSupplierModal(code, productName) {
+            if (!storeSupplierPrefs[code]) storeSupplierPrefs[code] = {};
+            const prefs = storeSupplierPrefs[code];
+            const productSuppliers = supplierAssortment[code] || [];
+            const supplierNames = Object.keys(deliverySchedule);
+
+            if (productSuppliers.length === 0) {
+                alert('Сначала привяжите товар к поставщикам (галочки)');
+                return;
+            }
+
+            const modalId = 'storeSupplierModal';
+            let overlay = document.getElementById(modalId);
+            if (overlay) overlay.remove();
+
+            const storeRows = stores.map(s => {
+                const currentPref = prefs[s.tt] || '';
+                const options = supplierNames.map(sup => {
+                    if (!productSuppliers.includes(sup)) return '';
+                    return `<option value="${esc(sup)}" ${currentPref === sup ? 'selected' : ''}>${esc(sup)}</option>`;
+                }).join('');
+                return `<tr class="hover:bg-gray-50">
+                    <td class="py-1.5 px-2 text-sm font-medium text-gray-700">${esc(s.tt)}</td>
+                    <td class="py-1.5 px-2">
+                        <select class="w-full text-sm border border-gray-300 rounded px-2 py-1" id="ssp_${CSS.escape(code)}_${CSS.escape(s.tt)}">
+                            <option value="">— авто —</option>
+                            ${options}
+                        </select>
+                    </td>
+                </tr>`;
+            }).join('');
+
+            const html = `<div id="${modalId}" class="fixed inset-0 z-50 flex items-center justify-center p-4" style="background:rgba(0,0,0,0.4)" onclick="if(event.target===this)closeStoreSupplierModal()">
+                <div class="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[80vh] flex flex-col" onclick="event.stopPropagation()">
+                    <div class="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+                        <div>
+                            <div class="text-sm font-semibold text-gray-800">Предпочтения магазинов</div>
+                            <div class="text-xs text-gray-500">${esc(code)} — ${esc(productName)}</div>
+                        </div>
+                        <button onclick="closeStoreSupplierModal()" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer">&times;</button>
+                    </div>
+                    <div class="px-4 py-2 bg-violet-50 border-b border-violet-100">
+                        <p class="text-xs text-violet-700">Укажите поставщика для каждого магазина. «Авто» — система сама распределит по графику доставок.</p>
+                    </div>
+                    <div class="overflow-y-auto flex-1 px-4 py-2">
+                        <table class="w-full">
+                            <thead>
+                                <tr class="text-xs text-gray-500 border-b">
+                                    <th class="text-left py-1 px-2">Магазин</th>
+                                    <th class="text-left py-1 px-2">Поставщик</th>
+                                </tr>
+                            </thead>
+                            <tbody>${storeRows}</tbody>
+                        </table>
+                    </div>
+                    <div class="px-4 py-3 border-t border-gray-200 flex items-center gap-2">
+                        <button onclick="saveStoreSupplierPrefs('${esc(code)}')" class="flex-1 py-2 text-sm font-medium text-white bg-violet-600 rounded-lg hover:bg-violet-700 transition-colors cursor-pointer">Сохранить</button>
+                        <button onclick="clearStoreSupplierPrefs('${esc(code)}')" class="px-3 py-2 text-sm font-medium text-red-600 bg-white border border-red-200 rounded-lg hover:bg-red-50 transition-colors cursor-pointer">Сбросить</button>
+                        <button onclick="closeStoreSupplierModal()" class="px-3 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer">Отмена</button>
+                    </div>
+                </div>
+            </div>`;
+
+            document.body.insertAdjacentHTML('beforeend', html);
+        }
+
+        function closeStoreSupplierModal() {
+            const el = document.getElementById('storeSupplierModal');
+            if (el) el.remove();
+        }
+
+        function saveStoreSupplierPrefs(code) {
+            if (!storeSupplierPrefs[code]) storeSupplierPrefs[code] = {};
+            const prefs = storeSupplierPrefs[code];
+            const productSuppliers = supplierAssortment[code] || [];
+
+            stores.forEach(s => {
+                const sel = document.getElementById(`ssp_${CSS.escape(code)}_${CSS.escape(s.tt)}`);
+                if (!sel) return;
+                const val = sel.value.trim();
+                if (val && productSuppliers.includes(val)) {
+                    prefs[s.tt] = val;
+                } else {
+                    delete prefs[s.tt];
+                }
+            });
+
+            // Удаляем пустой объект
+            if (Object.keys(prefs).length === 0) {
+                delete storeSupplierPrefs[code];
+            }
+
+            save(KEYS.STORE_SUPPLIER_PREFS, storeSupplierPrefs);
+            closeStoreSupplierModal();
+            render();
+        }
+
+        function clearStoreSupplierPrefs(code) {
+            delete storeSupplierPrefs[code];
+            save(KEYS.STORE_SUPPLIER_PREFS, storeSupplierPrefs);
+            closeStoreSupplierModal();
+            render();
+        }
+
         function renderSuppliers() {
             ensureSupplierAssortment();
 
@@ -967,7 +1075,11 @@
                         </div>
                         <div class="flex items-center gap-2">
                             <span id="scheduleSaveIndicator" class="text-xs text-gray-300 transition-opacity" style="opacity:0"></span>
-                            <button onclick="event.stopPropagation();exportSchedule()" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer">
+                            <button onclick="event.stopPropagation();document.getElementById('supplierImportInput').click()" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition-colors cursor-pointer">
+                                ${icons.import} Импорт
+                            </button>
+                            <input type="file" id="supplierImportInput" accept=".xlsx,.xls" onchange="importSupplierData(this)" class="hidden">
+                            <button onclick="event.stopPropagation();exportSupplierData()" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer">
                                 ${icons.download} Экспорт
                             </button>
                             <button onclick="event.stopPropagation();addSupplier()" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-sky-600 rounded-lg hover:bg-sky-700 transition-colors cursor-pointer">
@@ -979,6 +1091,14 @@
                     ${collapsedG['schedule_block'] ? '' : `<div class="p-3 space-y-3">${renderScheduleCards()}</div>`}
                 </div>
                 <div class="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                    <div class="flex items-center justify-between px-3 py-1.5 bg-gray-50 border-b border-gray-200">
+                        <div class="flex items-center gap-2">
+                            <span class="text-xs font-semibold text-gray-700">Ассортимент поставщиков</span>
+                            ${Object.keys(storeSupplierPrefs).filter(c => Object.keys(storeSupplierPrefs[c]).length > 0).length > 0
+                                ? '<span class="text-[10px] bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded font-medium">' + Object.keys(storeSupplierPrefs).filter(c => Object.keys(storeSupplierPrefs[c]).length > 0).length + ' поз. с предпочтениями</span>'
+                                : ''}
+                        </div>
+                    </div>
                     <div class="table-container">
                         <table class="table-modern">
                             <thead>
@@ -987,6 +1107,10 @@
                                     <th class="text-left" style="min-width:55px">Код</th>
                                     <th class="text-left" style="min-width:180px">Наименование</th>
                                     <th class="text-left" style="min-width:65px">Вес. код</th>
+                                    <th class="text-center" style="min-width:70px">
+                                        <div class="text-[9px] leading-tight text-gray-500">Магазины</div>
+                                        <div class="text-[8px] text-gray-400">поставщик</div>
+                                    </th>
                                     ${supplierNames.map(s => `
                                         <th class="text-center" style="min-width:80px">
                                             <div class="flex flex-col items-center gap-0.5">
@@ -1003,7 +1127,7 @@
                             <tbody>
                                 ${sortedGroups.map(gr => `
                                     <tr class="group-header cursor-pointer" onclick="collapsedG['sa_${esc(gr)}']=!collapsedG['sa_${esc(gr)}'];render()">
-                                        <td colspan="${4 + supplierNames.length}" class="text-left py-1 px-2">
+                                        <td colspan="${5 + supplierNames.length}" class="text-left py-1 px-2">
                                             <div class="flex items-center gap-2">
                                                 ${collapsedG['sa_' + gr] ? icons.chevronRight : icons.chevronDown}
                                                 <span class="font-semibold">${gr}</span>
@@ -1013,11 +1137,19 @@
                                     </tr>
                                     ${collapsedG['sa_' + gr] ? '' : grouped[gr].map(p => {
                                         const suppliers = supplierAssortment[p.code] || [];
+                                        const prefs = storeSupplierPrefs[p.code] || {};
+                                        const prefCount = Object.keys(prefs).length;
+                                        const prefBtnClass = prefCount > 0
+                                            ? 'text-xs px-1.5 py-0.5 rounded font-medium cursor-pointer bg-violet-100 text-violet-700 hover:bg-violet-200 transition-colors'
+                                            : 'text-xs px-1.5 py-0.5 rounded font-medium cursor-pointer bg-gray-100 text-gray-400 hover:bg-gray-200 transition-colors';
                                         return `<tr class="hover:bg-gray-50">
                                             <td class="text-left text-xs text-gray-600 sticky left-0 bg-white z-10 whitespace-nowrap">${esc(p.group || '')}</td>
                                             <td class="font-mono text-xs text-gray-600 text-left">${p.code}</td>
                                             <td class="font-medium text-gray-700 text-left whitespace-nowrap max-w-[200px] truncate" title="${esc(p.nomenclature || '')}">${esc(p.nomenclature || '')}</td>
                                             <td class="font-mono text-xs text-gray-500 text-left">${p.weightCode || ''}</td>
+                                            <td class="px-1 py-0.5 text-center">
+                                                <button onclick="event.stopPropagation();openStoreSupplierModal('${esc(p.code)}','${esc(p.nomenclature || '')}')" class="${prefBtnClass}" title="Настроить предпочтения магазинов">${prefCount > 0 ? prefCount + ' ТТ' : '—'}</button>
+                                            </td>
                                             ${supplierNames.map(s => {
                                                 const checked = suppliers.includes(s);
                                                 return `<td class="px-1 py-0.5">
@@ -2123,33 +2255,277 @@
             SharedUtils.exportAssortmentUnified(Object.values(matrix));
         }
 
-        function exportSchedule() {
+        function exportSupplierData() {
             const supplierNames = Object.keys(deliverySchedule);
             if (supplierNames.length === 0) { alert('Нет поставщиков для экспорта'); return; }
 
-            const headers = ['Магазин', ...DAY_NAMES, 'Итого дней'];
-            const data = [];
+            const wb = XLSX.utils.book_new();
+
+            // === Лист 1: График доставок ===
+            const schedHeaders = ['Магазин', ...DAY_NAMES, 'Итого дней'];
+            const schedData = [];
             supplierNames.forEach(supplier => {
-                data.push([]); // пустая строка-разделитель
-                data.push([supplier]); // название поставщика
+                schedData.push([]); // разделитель
+                schedData.push([supplier]); // название поставщика
                 const supplierData = deliverySchedule[supplier] || {};
                 stores.forEach(s => {
                     const days = supplierData[s.tt] || [];
                     const activeCount = days.filter(Boolean).length;
-                    data.push([
+                    schedData.push([
                         s.tt,
                         ...days.map(d => d ? 'Да' : ''),
                         activeCount > 0 ? activeCount + ' дн.' : ''
                     ]);
                 });
             });
+            const ws1 = SharedUtils.createStyledSheet(schedData, schedHeaders, [0]);
+            XLSX.utils.book_append_sheet(wb, ws1, 'График доставок');
 
-            const ws = SharedUtils.createStyledSheet(data, headers, [0]);
-            const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, 'График доставок');
+            // === Лист 2: Ассортимент поставщиков (галочки) ===
+            const saHeaders = ['Код', 'Наименование', 'Группа', ...supplierNames];
+            const saData = [];
+            Object.keys(matrix).forEach(code => {
+                const p = matrix[code];
+                const sups = supplierAssortment[code] || [];
+                saData.push([
+                    code,
+                    p.nomenclature || '',
+                    p.group || '',
+                    ...supplierNames.map(s => sups.includes(s) ? 'Да' : '')
+                ]);
+            });
+            const ws2 = SharedUtils.createStyledSheet(saData, saHeaders, []);
+            XLSX.utils.book_append_sheet(wb, ws2, 'Ассортимент поставщиков');
+
+            // === Лист 3: Цены поставщиков ===
+            const spHeaders = ['Код', 'Наименование', ...supplierNames];
+            const spData = [];
+            Object.keys(matrix).forEach(code => {
+                const p = matrix[code];
+                const prices = supplierPrices[code] || {};
+                const hasAny = supplierNames.some(s => prices[s] > 0);
+                if (hasAny) {
+                    spData.push([
+                        code,
+                        p.nomenclature || '',
+                        ...supplierNames.map(s => prices[s] || '')
+                    ]);
+                }
+            });
+            if (spData.length > 0) {
+                const ws3 = SharedUtils.createStyledSheet(spData, spHeaders, []);
+                XLSX.utils.book_append_sheet(wb, ws3, 'Цены поставщиков');
+            }
+
+            // === Лист 4: Предпочтения магазинов ===
+            const prefCodes = Object.keys(storeSupplierPrefs).filter(c => Object.keys(storeSupplierPrefs[c]).length > 0);
+            if (prefCodes.length > 0) {
+                const allStoresInPrefs = new Set();
+                prefCodes.forEach(code => Object.keys(storeSupplierPrefs[code]).forEach(tt => allStoresInPrefs.add(tt)));
+                const storeList = stores.map(s => s.tt).filter(tt => allStoresInPrefs.has(tt));
+
+                const prefHeaders = ['Код', 'Наименование', ...storeList];
+                const prefData = [];
+                prefCodes.forEach(code => {
+                    const p = matrix[code];
+                    const prefs = storeSupplierPrefs[code] || {};
+                    prefData.push([
+                        code,
+                        p ? (p.nomenclature || '') : '',
+                        ...storeList.map(tt => prefs[tt] || '')
+                    ]);
+                });
+                const ws4 = SharedUtils.createStyledSheet(prefData, prefHeaders, []);
+                XLSX.utils.book_append_sheet(wb, ws4, 'Предпочтения магазинов');
+            }
 
             const d = new Date();
-            XLSX.writeFile(wb, 'график_доставок_' + d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') + '.xlsx');
+            XLSX.writeFile(wb, 'поставщики_' + d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') + '.xlsx');
+        }
+
+        function importSupplierData(input) {
+            if (!input || !input.files || !input.files[0]) return;
+            const file = input.files[0];
+            input.value = ''; // сброс для повторного выбора
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const wb = XLSX.read(e.target.result, { type: 'array' });
+                    let updatedSchedule = false;
+                    let updatedAssortment = 0;
+                    let updatedPrices = 0;
+
+                    // === Лист 1: График доставок ===
+                    const ws1 = wb.Sheets['График доставок'];
+                    if (ws1) {
+                        const rows = XLSX.utils.sheet_to_json(ws1, { header: 1 });
+                        let currentSupplier = '';
+                        rows.forEach(row => {
+                            if (!row || row.length === 0) { currentSupplier = ''; return; }
+                            // Если первая ячейка — не число дней и не магазин, это название поставщика
+                            const firstVal = String(row[0] || '').trim();
+                            if (firstVal && !stores.some(s => s.tt === firstVal)) {
+                                // Проверяем: если дальше есть Да/'' — это магазин, иначе — поставщик
+                                const hasDayMarks = row.slice(1, 8).some(c => c === 'Да');
+                                if (!hasDayMarks) {
+                                    currentSupplier = firstVal;
+                                    if (!deliverySchedule[currentSupplier]) {
+                                        deliverySchedule[currentSupplier] = {};
+                                    }
+                                    return;
+                                }
+                            }
+                            // Строка магазина
+                            if (currentSupplier && firstVal) {
+                                const tt = firstVal;
+                                const emptyWeek = [false, false, false, false, false, false, false];
+                                const days = [];
+                                for (let i = 0; i < 7; i++) {
+                                    days.push(row[1 + i] === 'Да');
+                                }
+                                deliverySchedule[currentSupplier][tt] = days;
+                                updatedSchedule = true;
+                            }
+                        });
+                        if (updatedSchedule) save(KEYS.SCHEDULE, deliverySchedule);
+                    }
+
+                    // Обновляем список магазинов если нужно
+                    const allStoresInSchedule = new Set();
+                    Object.values(deliverySchedule).forEach(supData => {
+                        Object.keys(supData).forEach(tt => allStoresInSchedule.add(tt));
+                    });
+                    // Добавляем новые магазины из графика в stores
+                    allStoresInSchedule.forEach(tt => {
+                        if (!stores.some(s => s.tt === tt)) {
+                            stores.push({ tt: tt });
+                        }
+                    });
+
+                    // Обновляем knownFishSuppliers после импорта графика
+                    const supplierNamesNow = Object.keys(deliverySchedule);
+
+                    // === Лист 2: Ассортимент поставщиков (галочки) ===
+                    const ws2 = wb.Sheets['Ассортимент поставщиков'];
+                    if (ws2) {
+                        const rows = XLSX.utils.sheet_to_json(ws2, { header: 1 });
+                        if (rows.length > 0) {
+                            const fileHeaders = rows[0].map(h => String(h || '').trim());
+                            // Ищем колонки поставщиков (начиная с 4-го индекса)
+                            const supplierCols = {};
+                            fileHeaders.forEach((h, idx) => {
+                                if (idx >= 3 && supplierNamesNow.includes(h)) {
+                                    supplierCols[h] = idx;
+                                }
+                            });
+
+                            rows.slice(1).forEach(row => {
+                                const code = String(row[0] || '').trim();
+                                if (!code || !matrix[code]) return;
+
+                                if (!supplierAssortment[code]) supplierAssortment[code] = [];
+
+                                Object.entries(supplierCols).forEach(([supName, colIdx]) => {
+                                    const val = String(row[colIdx] || '').trim();
+                                    if (val === 'Да') {
+                                        if (!supplierAssortment[code].includes(supName)) {
+                                            supplierAssortment[code].push(supName);
+                                            updatedAssortment++;
+                                        }
+                                    } else {
+                                        // Если в файле стоит пусто — убираем поставщика
+                                        const idx = supplierAssortment[code].indexOf(supName);
+                                        if (idx >= 0) {
+                                            supplierAssortment[code].splice(idx, 1);
+                                        }
+                                    }
+                                });
+                            });
+                            save(KEYS.SUPPLIER_ASSORTMENT, supplierAssortment);
+                        }
+                    }
+
+                    // === Лист 3: Цены поставщиков ===
+                    const ws3 = wb.Sheets['Цены поставщиков'];
+                    if (ws3) {
+                        const rows = XLSX.utils.sheet_to_json(ws3, { header: 1 });
+                        if (rows.length > 0) {
+                            const fileHeaders = rows[0].map(h => String(h || '').trim());
+                            const supplierCols = {};
+                            fileHeaders.forEach((h, idx) => {
+                                if (idx >= 2 && supplierNamesNow.includes(h)) {
+                                    supplierCols[h] = idx;
+                                }
+                            });
+
+                            rows.slice(1).forEach(row => {
+                                const code = String(row[0] || '').trim();
+                                if (!code) return;
+
+                                Object.entries(supplierCols).forEach(([supName, colIdx]) => {
+                                    const val = parseFloat(row[colIdx]);
+                                    if (!isNaN(val) && val > 0) {
+                                        if (!supplierPrices[code]) supplierPrices[code] = {};
+                                        supplierPrices[code][supName] = val;
+                                        updatedPrices++;
+                                    }
+                                });
+                            });
+                            save(KEYS.SUPPLIER_PRICES, supplierPrices);
+                        }
+                    }
+
+                    ensureSupplierAssortment();
+
+                    // === Лист 4: Предпочтения магазинов ===
+                    let updatedPrefs = 0;
+                    const ws4 = wb.Sheets['Предпочтения магазинов'];
+                    if (ws4) {
+                        const rows = XLSX.utils.sheet_to_json(ws4, { header: 1 });
+                        if (rows.length > 0) {
+                            const fileHeaders = rows[0].map(h => String(h || '').trim());
+                            // Колонки магазинов (начиная с индекса 2)
+                            const storeCols = {};
+                            fileHeaders.forEach((h, idx) => {
+                                if (idx >= 2) storeCols[h] = idx;
+                            });
+
+                            rows.slice(1).forEach(row => {
+                                const code = String(row[0] || '').trim();
+                                if (!code) return;
+
+                                Object.entries(storeCols).forEach(([tt, colIdx]) => {
+                                    const val = String(row[colIdx] || '').trim();
+                                    if (val) {
+                                        if (!storeSupplierPrefs[code]) storeSupplierPrefs[code] = {};
+                                        storeSupplierPrefs[code][tt] = val;
+                                        updatedPrefs++;
+                                    }
+                                });
+                            });
+                            save(KEYS.STORE_SUPPLIER_PREFS, storeSupplierPrefs);
+                        }
+                    }
+
+                    render();
+
+                    let msg = 'Данные поставщиков импортированы!\n\n';
+                    if (updatedSchedule) msg += '• График доставок: обновлён\n';
+                    if (updatedAssortment > 0) msg += '• Ассортимент поставщиков: ' + updatedAssortment + ' связей\n';
+                    if (updatedPrices > 0) msg += '• Цены поставщиков: ' + updatedPrices + ' цен\n';
+                    if (updatedPrefs > 0) msg += '• Предпочтения магазинов: ' + updatedPrefs + ' настроек\n';
+                    if (!updatedSchedule && updatedAssortment === 0 && updatedPrices === 0 && updatedPrefs === 0) {
+                        msg += 'Изменений не найдено.';
+                    }
+                    alert(msg);
+
+                } catch (err) {
+                    alert('Ошибка при импорте: ' + err.message);
+                    console.error('Import error:', err);
+                }
+            };
+            reader.readAsArrayBuffer(file);
         }
 
         // === МАТРИЦА ===
@@ -2796,10 +3172,24 @@
                     const supplierOrders = {};
                     const primarySupplier = p.supplier || '';
 
+                    // Проверяем: есть ли у магазина предпочтение по поставщику для данного товара
+                    const codePrefs = storeSupplierPrefs[code] || {};
+                    const preferredSupplier = codePrefs[store.tt] || '';
+                    const hasStorePref = preferredSupplier && supplierPeriodMap[preferredSupplier];
+
                     suppliers.forEach(sup => {
                         if (!(sup in supplierPeriodMap)) return;
                         const editKey = `${store.tt}_${code}_${sup}`;
                         let supOrder = 0;
+
+                        // Если у магазина есть предпочтение — заказываем ТОЛЬКО у предпочитаемого поставщика
+                        if (hasStorePref && sup !== preferredSupplier) {
+                            // Этот поставщик НЕ является предпочитаемым — пропускаем
+                            // Но добавляем ячейку (с order=0) чтобы она была видна/редактируема
+                            const supSpecificPrice = (supplierPrices[code] && supplierPrices[code][sup]) || p.inPrice || 0;
+                            supplierOrders[sup] = { order: 0, inPrice: supSpecificPrice, sum: 0, daysUntil: 1, skippedByPref: true };
+                            return;
+                        }
 
                         if (hasSales) {
                             supOrder = rawOrder > 0 ? Math.ceil(rawOrder / quant) * quant : 0;
@@ -2817,8 +3207,7 @@
                         // Цена конкретного поставщика (не максимальная из всех!)
                         const supSpecificPrice = (supplierPrices[code] && supplierPrices[code][sup]) || p.inPrice || 0;
                         const supSum = supOrder * supSpecificPrice;
-                        // Всегда добавляем запись (даже при order=0), чтобы ячейка была редактируемой
-                        supplierOrders[sup] = { order: supOrder, inPrice: supSpecificPrice, sum: supSum, daysUntil: 1 };
+                        supplierOrders[sup] = { order: supOrder, inPrice: supSpecificPrice, sum: supSum, daysUntil: 1, isPreferred: hasStorePref && sup === preferredSupplier };
                         if (supOrder > 0) allOrderSuppliers.add(sup);
                     });
 
@@ -2828,7 +3217,9 @@
 
                     // Статус
                     let statusText = orderReason;
-                    if (hasConflict && order > 0) {
+                    if (hasStorePref && order > 0) {
+                        statusText += ` → ${preferredSupplier}`;
+                    } else if (hasConflict && order > 0) {
                         const supNames = Object.keys(supplierPeriodMap).join('/');
                         statusText += ` | пересечение: ${supNames}`;
                     }
@@ -3072,17 +3463,25 @@
 
                                                     // Серая колонка: поставщик не доставляет завтра в эту ТТ (только для товаров В матрице)
                                                     if (!deliversTomorrow) {
-                                                        return '<td class="text-center bg-gray-200 opacity-50 cursor-not-allowed" title="Нет доставки завтра от ' + esc(sup) + '"><span class="text-gray-400 text-xs">—</span></td>';
+                                                        // Но если это предпочитаемый поставщик без доставки — показываем пометку
+                                                        const prefMark = (so && so.isPreferred) ? ' ★' : '';
+                                                        return '<td class="text-center bg-gray-200 opacity-50 cursor-not-allowed" title="Нет доставки завтра от ' + esc(sup) + prefMark + '"><span class="text-gray-400 text-xs">—</span></td>';
                                                     }
+                                                    // Поставщик пропущен из-за предпочтения магазина
+                                                    if (so && so.skippedByPref) {
+                                                        return '<td class="text-center bg-gray-50 opacity-40" title="Магазин предпочитает другого поставщика"><span class="text-gray-300 text-[10px]">авто</span></td>';
+                                                    }
+                                                    // Предпочитаемый поставщик — подсветка
+                                                    const prefBg = (so && so.isPreferred) ? 'ring-2 ring-violet-300 bg-violet-50' : '';
                                                     if (orderVal > 0) {
                                                         const editBg = hasManualEdit ? 'bg-amber-100 ring-1 ring-amber-300' : '';
-                                                        const editTitle = hasManualEdit ? ' title="Ручная правка"' : '';
-                                                        return '<td class="text-center ' + (cellBg || '') + ' ' + editBg + '"' + editTitle + '><input type="number" step="0.5" min="0" value="' + Number(orderVal).toFixed(1) + '" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onchange="editOrder(this)" class="input w-16 text-center text-sm font-bold"><div class="text-[10px] text-gray-500">' + sumVal.toFixed(0) + ' ₽</div></td>';
+                                                        const editTitle = hasManualEdit ? ' title="Ручная правка"' : ((so && so.isPreferred) ? ' title="Предпочтение магазина ★"' : '');
+                                                        return '<td class="text-center ' + (cellBg || '') + ' ' + editBg + ' ' + prefBg + '"' + editTitle + '><input type="number" step="0.5" min="0" value="' + Number(orderVal).toFixed(1) + '" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onchange="editOrder(this)" class="input w-16 text-center text-sm font-bold"><div class="text-[10px] text-gray-500">' + sumVal.toFixed(0) + ' ₽</div></td>';
                                                     }
                                                     const editBg = hasManualEdit ? 'bg-amber-50 ring-1 ring-amber-200' : '';
-                                                    const editTitle = hasManualEdit ? ' title="Ручная правка (очистите поле для авто)"' : '';
+                                                    const editTitle = hasManualEdit ? ' title="Ручная правка (очистите поле для авто)"' : ((so && so.isPreferred) ? ' title="Предпочтение магазина ★"' : '');
                                                     const inputVal = hasManualEdit ? '0' : '';
-                                                    return '<td class="text-center ' + editBg + '"' + editTitle + '><input type="number" step="0.5" min="0" value="' + inputVal + '" placeholder="0" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onchange="editOrder(this)" class="input w-16 text-center text-sm text-gray-400 bg-gray-50"></td>';
+                                                    return '<td class="text-center ' + editBg + ' ' + prefBg + '"' + editTitle + '><input type="number" step="0.5" min="0" value="' + inputVal + '" placeholder="0" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onchange="editOrder(this)" class="input w-16 text-center text-sm text-gray-400 bg-gray-50"></td>';
                                                 }).join('')}
                                                 <td class="text-left text-xs ${r.notInMatrix ? (r.matrixNet ? 'text-orange-600 font-medium italic' : 'text-blue-600 font-medium italic') : r.hasConflict ? 'text-amber-700 font-medium' : r.order > 0 ? 'text-emerald-700' : 'text-gray-500'}">${r.status}</td>
                                             </tr>`;
@@ -3936,12 +4335,17 @@
                                                     return '<td class="text-center ' + bgClass + '" title="' + titleText + '"><span class="text-gray-300">\u2014</span></td>';
                                                 }
                                                 if (!deliversTomorrow) {
-                                                    return '<td class="text-center bg-gray-200 opacity-50" title="\u041D\u0435\u0442 \u0434\u043E\u0441\u0442\u0430\u0432\u043A\u0438 \u0437\u0430\u0432\u0442\u0440\u0430"><span class="text-gray-400 text-xs">\u2014</span></td>';
+                                                    var prefMark2 = (so && so.isPreferred) ? ' ★' : '';
+                                                    return '<td class="text-center bg-gray-200 opacity-50" title="\u041D\u0435\u0442 \u0434\u043E\u0441\u0442\u0430\u0432\u043A\u0438 \u0437\u0430\u0432\u0442\u0440\u0430' + prefMark2 + '"><span class="text-gray-400 text-xs">\u2014</span></td>';
                                                 }
+                                                if (so && so.skippedByPref) {
+                                                    return '<td class="text-center bg-gray-50 opacity-40" title="\u041C\u0430\u0433\u0430\u0437\u0438\u043D \u043F\u0440\u0435\u0434\u043F\u043E\u0447\u0438\u0442\u0430\u0435\u0442 \u0434\u0440\u0443\u0433\u043E\u0433\u043E"><span class="text-gray-300 text-[10px]">\u0430\u0432\u0442\u043E</span></td>';
+                                                }
+                                                var prefBg2 = (so && so.isPreferred) ? 'ring-2 ring-violet-300 bg-violet-50' : '';
                                                 if (orderVal > 0) {
-                                                    return '<td class="text-center ' + cellBg + '"><div class="font-bold text-sm">' + orderVal.toFixed(1) + '</div><div class="text-[10px] text-gray-500">' + sumVal.toFixed(0) + ' \u20BD</div></td>';
+                                                    return '<td class="text-center ' + cellBg + ' ' + prefBg2 + '"><div class="font-bold text-sm">' + orderVal.toFixed(1) + '</div><div class="text-[10px] text-gray-500">' + sumVal.toFixed(0) + ' \u20BD</div></td>';
                                                 }
-                                                return '<td class="text-center"><span class="text-gray-300">\u2014</span></td>';
+                                                return '<td class="text-center ' + prefBg2 + '"><span class="text-gray-300">\u2014</span></td>';
                                             }).join('');
                                             return '<tr class="' + rowClass + ' hover:bg-gray-100">' +
                                                 '<td class="sticky left-0 bg-white text-left cell-wrap">' + esc(r.nomenclature || '') + '</td>' +
@@ -4047,9 +4451,9 @@
         }
 
         function clearAll() {
-            [KEYS.ASSORTMENT, KEYS.MATRIX_MARKS, KEYS.SALES, KEYS.STOCKS, KEYS.SCHEDULE, KEYS.INTRANSIT, KEYS.SUPPLIER_ASSORTMENT].forEach(k => localStorage.removeItem(k));
+            [KEYS.ASSORTMENT, KEYS.MATRIX_MARKS, KEYS.SALES, KEYS.STOCKS, KEYS.SCHEDULE, KEYS.INTRANSIT, KEYS.SUPPLIER_ASSORTMENT, KEYS.STORE_SUPPLIER_PREFS].forEach(k => localStorage.removeItem(k));
             matrix = {}; matrixMarks = {}; sales = []; stocks = [];
-            deliverySchedule = {}; inTransitOrders = []; supplierAssortment = {};
+            deliverySchedule = {}; inTransitOrders = []; supplierAssortment = {}; storeSupplierPrefs = {};
             currentLoadedAssortment = null;
             resetSavedOrders();
             render();
@@ -4073,6 +4477,7 @@
             if (sk.length > 0 && !sk.includes(selectedScheduleSupplier)) selectedScheduleSupplier = sk[0];
             inTransitOrders = load(KEYS.INTRANSIT, []);
             supplierAssortment = load(KEYS.SUPPLIER_ASSORTMENT, {});
+            storeSupplierPrefs = load(KEYS.STORE_SUPPLIER_PREFS, {});
             render();
         });
     </script>
