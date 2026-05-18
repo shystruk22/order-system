@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Заказ рыбы</title>
-    <!-- Version: 3.23 -->
+    <!-- Version: 3.27 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -1097,6 +1097,15 @@
                             ${Object.keys(storeSupplierPrefs).filter(c => Object.keys(storeSupplierPrefs[c]).length > 0).length > 0
                                 ? '<span class="text-[10px] bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded font-medium">' + Object.keys(storeSupplierPrefs).filter(c => Object.keys(storeSupplierPrefs[c]).length > 0).length + ' поз. с предпочтениями</span>'
                                 : ''}
+                        </div>
+                        <div class="flex items-center gap-1.5">
+                            <input type="file" id="assortmentImportInput" accept=".xlsx,.xls" onchange="importAssortmentData(this)" class="hidden">
+                            <button onclick="event.stopPropagation();document.getElementById('assortmentImportInput').click()" class="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-green-700 bg-green-50 border border-green-200 rounded hover:bg-green-100 transition-colors cursor-pointer" title="Загрузить ассортимент и предпочтения из файла">
+                                ${icons.import} Импорт
+                            </button>
+                            <button onclick="event.stopPropagation();exportAssortmentData()" class="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-gray-600 bg-white border border-gray-300 rounded hover:bg-gray-50 transition-colors cursor-pointer" title="Сохранить ассортимент и предпочтения в файл">
+                                ${icons.download} Экспорт
+                            </button>
                         </div>
                     </div>
                     <div class="table-container">
@@ -2253,6 +2262,169 @@
 
         function exportAssortment() {
             SharedUtils.exportAssortmentUnified(Object.values(matrix));
+        }
+
+        // === Экспорт/Импорт ТОЛЬКО ассортимента и предпочтений магазинов ===
+        function exportAssortmentData() {
+            const supplierNames = Object.keys(deliverySchedule);
+            if (supplierNames.length === 0) { alert('Нет поставщиков. Сначала добавьте поставщиков в графике доставок.'); return; }
+
+            const wb = XLSX.utils.book_new();
+
+            // Лист 1: Ассортимент поставщиков (галочки)
+            const saHeaders = ['Код', 'Наименование', 'Группа', ...supplierNames];
+            const saData = [];
+            Object.keys(matrix).forEach(code => {
+                const p = matrix[code];
+                const sups = supplierAssortment[code] || [];
+                const hasAny = sups.length > 0;
+                if (hasAny) {
+                    saData.push([
+                        code,
+                        p.nomenclature || '',
+                        p.group || '',
+                        ...supplierNames.map(s => sups.includes(s) ? 'Да' : '')
+                    ]);
+                }
+            });
+            if (saData.length === 0) {
+                alert('Ассортимент поставщиков пуст — нет ни одной выбранной позиции. Сначала расставьте галочки.');
+                return;
+            }
+            const ws1 = SharedUtils.createStyledSheet(saData, saHeaders, []);
+            XLSX.utils.book_append_sheet(wb, ws1, 'Ассортимент поставщиков');
+
+            // Лист 2: Предпочтения магазинов
+            const prefCodes = Object.keys(storeSupplierPrefs).filter(c => Object.keys(storeSupplierPrefs[c]).length > 0);
+            if (prefCodes.length > 0) {
+                const allStoresInPrefs = new Set();
+                prefCodes.forEach(code => Object.keys(storeSupplierPrefs[code]).forEach(tt => allStoresInPrefs.add(tt)));
+                const storeList = stores.map(s => s.tt).filter(tt => allStoresInPrefs.has(tt));
+
+                const prefHeaders = ['Код', 'Наименование', ...storeList];
+                const prefData = [];
+                prefCodes.forEach(code => {
+                    const p = matrix[code];
+                    const prefs = storeSupplierPrefs[code] || {};
+                    prefData.push([
+                        code,
+                        p ? (p.nomenclature || '') : '',
+                        ...storeList.map(tt => prefs[tt] || '')
+                    ]);
+                });
+                const ws2 = SharedUtils.createStyledSheet(prefData, prefHeaders, []);
+                XLSX.utils.book_append_sheet(wb, ws2, 'Предпочтения магазинов');
+            }
+
+            const d = new Date();
+            XLSX.writeFile(wb, 'ассортимент_поставщиков_' + d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') + '.xlsx');
+        }
+
+        function importAssortmentData(input) {
+            if (!input || !input.files || !input.files[0]) return;
+            const file = input.files[0];
+            input.value = '';
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const wb = XLSX.read(e.target.result, { type: 'array' });
+                    const supplierNamesNow = Object.keys(deliverySchedule);
+                    let updatedAssortment = 0;
+                    let updatedPrefs = 0;
+
+                    // Лист 1: Ассортимент поставщиков
+                    const ws1 = wb.Sheets['Ассортимент поставщиков'];
+                    if (ws1) {
+                        const rows = XLSX.utils.sheet_to_json(ws1, { header: 1 });
+                        if (rows.length > 0) {
+                            const fileHeaders = rows[0].map(h => String(h || '').trim());
+                            const supplierCols = {};
+                            fileHeaders.forEach((h, idx) => {
+                                if (idx >= 3 && supplierNamesNow.includes(h)) {
+                                    supplierCols[h] = idx;
+                                }
+                            });
+
+                            if (Object.keys(supplierCols).length === 0) {
+                                // Если не нашли поставщиков по имени — пробуем все колонки после 3-й
+                                fileHeaders.forEach((h, idx) => {
+                                    if (idx >= 3) supplierCols[h] = idx;
+                                });
+                            }
+
+                            rows.slice(1).forEach(row => {
+                                const code = String(row[0] || '').trim();
+                                if (!code || !matrix[code]) return;
+
+                                if (!supplierAssortment[code]) supplierAssortment[code] = [];
+
+                                Object.entries(supplierCols).forEach(([supName, colIdx]) => {
+                                    if (!supplierNamesNow.includes(supName)) return;
+                                    const val = String(row[colIdx] || '').trim();
+                                    if (val === 'Да') {
+                                        if (!supplierAssortment[code].includes(supName)) {
+                                            supplierAssortment[code].push(supName);
+                                            updatedAssortment++;
+                                        }
+                                    } else {
+                                        const idx2 = supplierAssortment[code].indexOf(supName);
+                                        if (idx2 >= 0) {
+                                            supplierAssortment[code].splice(idx2, 1);
+                                        }
+                                    }
+                                });
+                            });
+                            save(KEYS.SUPPLIER_ASSORTMENT, supplierAssortment);
+                        }
+                    } else {
+                        alert('В файле не найден лист "Ассортимент поставщиков". Убедитесь что это правильный файл.');
+                        return;
+                    }
+
+                    // Лист 2: Предпочтения магазинов
+                    const ws2 = wb.Sheets['Предпочтения магазинов'];
+                    if (ws2) {
+                        const rows = XLSX.utils.sheet_to_json(ws2, { header: 1 });
+                        if (rows.length > 0) {
+                            const fileHeaders = rows[0].map(h => String(h || '').trim());
+                            const storeCols = {};
+                            fileHeaders.forEach((h, idx) => {
+                                if (idx >= 2) storeCols[h] = idx;
+                            });
+
+                            rows.slice(1).forEach(row => {
+                                const code = String(row[0] || '').trim();
+                                if (!code) return;
+
+                                Object.entries(storeCols).forEach(([tt, colIdx]) => {
+                                    const val = String(row[colIdx] || '').trim();
+                                    if (val) {
+                                        if (!storeSupplierPrefs[code]) storeSupplierPrefs[code] = {};
+                                        storeSupplierPrefs[code][tt] = val;
+                                        updatedPrefs++;
+                                    }
+                                });
+                            });
+                            save(KEYS.STORE_SUPPLIER_PREFS, storeSupplierPrefs);
+                        }
+                    }
+
+                    ensureSupplierAssortment();
+                    render();
+
+                    let msg = 'Ассортимент импортирован!\n\n';
+                    if (updatedAssortment > 0) msg += '• Галочки ассортимента: ' + updatedAssortment + ' связей обновлено\n';
+                    if (updatedPrefs > 0) msg += '• Предпочтения магазинов: ' + updatedPrefs + ' настроек\n';
+                    if (updatedAssortment === 0 && updatedPrefs === 0) msg += 'Изменений не найдено (возможно данные уже актуальны).';
+                    alert(msg);
+
+                } catch (err) {
+                    alert('Ошибка при импорте ассортимента: ' + err.message);
+                    console.error('Import assortment error:', err);
+                }
+            };
+            reader.readAsArrayBuffer(file);
         }
 
         function exportSupplierData() {
