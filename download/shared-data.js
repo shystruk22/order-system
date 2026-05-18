@@ -152,8 +152,9 @@
                 quant: p.quant || 1,
                 price: p.price || 0,
                 inPrice: p.inPrice || 0,
+                shelfPrice: p.shelfPrice || 0,
                 shelf: p.shelf || 0,
-                markup: p.markup
+                markup: p.markup || 0
             }));
         },
 
@@ -171,8 +172,9 @@
                     quant: p.quant || 1,
                     price: p.price || 0,
                     inPrice: p.inPrice || p.price || 0,
+                    shelfPrice: p.shelfPrice || 0,
                     shelf: p.shelf || 0,
-                    markup: p.markup
+                    markup: p.markup || 0
                 };
             });
             return map;

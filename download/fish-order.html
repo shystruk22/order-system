@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Заказ рыбы</title>
-    <!-- Version: 3.29 -->
+    <!-- Version: 3.30 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -486,10 +486,12 @@
                         const fresh = SharedData.getProducts();
                         if (fresh && fresh.length > 0) {
                             // Convert array to object format and merge
+                            let updatedCount = 0;
                             fresh.forEach(function(p) {
                                 if (!p.code) return;
                                 const nc = SharedUtils.normCode(p.code);
                                 if (!matrix[nc]) {
+                                    // Новый товар — создаём
                                     matrix[nc] = {
                                         code: nc, nomenclature: p.nomenclature || p.name || '',
                                         group: p.group || '', packaging: p.packaging || 'ШТ',
@@ -498,11 +500,21 @@
                                         shelf: p.shelf || 0, quant: p.quant || 1, volume: p.volume || 0,
                                         markup: p.markup || 0
                                     };
+                                    updatedCount++;
+                                } else {
+                                    // Существующий товар — обновляем shelfPrice и другие поля
+                                    const existing = matrix[nc];
+                                    if (p.shelfPrice && p.shelfPrice > 0 && p.shelfPrice !== existing.shelfPrice) {
+                                        existing.shelfPrice = p.shelfPrice;
+                                        updatedCount++;
+                                    }
                                 }
                             });
-                            syncFishAssortment();
-                            render();
-                            console.log('[FishOrder] Synced from ' + info.source + ': ' + Object.keys(matrix).length + ' products');
+                            if (updatedCount > 0) {
+                                syncFishAssortment();
+                                render();
+                                console.log('[FishOrder] Synced from ' + info.source + ': ' + updatedCount + ' products updated');
+                            }
                         }
                     }
                 });
@@ -2252,7 +2264,7 @@
             if (!product) return;
             product[field] = value;
             syncFishAssortment();
-            if (['inPrice', 'markup', 'group'].includes(field)) render();
+            if (['inPrice', 'markup', 'group', 'shelfPrice'].includes(field)) render();
         }
 
         function deleteProduct(code) {
