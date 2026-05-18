@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Заказ рыбы</title>
-    <!-- Version: 3.27 -->
+    <!-- Version: 3.28 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -85,6 +85,8 @@
 
         // Новые глобальные переменные для fish-order
         let deliverySchedule = {}; // {"supplierName": {"storeName": [mon,tue,wed,thu,fri,sat,sun]}}
+        let _priceRenderTimeout = null; // debounce для обновления таблицы цен
+        let _skipRenderFromSharedData = false; // флаг чтобы SharedData не сбивал ввод цен
         let selectedScheduleSupplier = ''; // текущий выбранный поставщик в графике
         let inTransitOrders = [];  // [{id, createdAt, supplier, store, expectedDate, items: [{code,name,qty,sum}], status}]
         let supplierAssortment = {}; // {"code": ["supplier1", "supplier2"]}
@@ -479,6 +481,8 @@
                 // Listen for changes from other tabs (assortment.html, sneki.html)
                 SharedData.onChange(function(info) {
                     if (info.source !== 'fish-order') {
+                        // Проверяем: если пользователь сейчас вводит цены — не сбрасываем DOM
+                        if (_priceRenderTimeout) return; // цена только что вводилась, ждём debounce
                         const fresh = SharedData.getProducts();
                         if (fresh && fresh.length > 0) {
                             // Convert array to object format and merge
@@ -1854,13 +1858,13 @@
                                 const val = sp[s] || 0;
                                 const isMax = val > 0 && val === maxInP && priceVals.filter(v => v === val).length <= 1;
                                 const cellClass = isMax ? 'text-amber-700 font-semibold bg-amber-50' : '';
-                                return `<td class="text-right"><input type="number" step="0.01" value="${val}" onchange="updateSupplierPrice('${esc(code)}','${esc(s)}', parseFloat(this.value)||0)" class="input w-20 text-right text-xs ${cellClass}" title="Цена от ${esc(s)}"></td>`;
+                                return `<td class="text-right"><input type="number" step="0.01" value="${val}" data-sprice="${esc(code)}_${esc(s)}" onchange="updateSupplierPrice('${esc(code)}','${esc(s)}', parseFloat(this.value)||0)" onblur="updateSupplierPrice('${esc(code)}','${esc(s)}', parseFloat(this.value)||0)" class="input w-20 text-right text-xs ${cellClass}" title="Цена от ${esc(s)}"></td>`;
                             }).join('')}
-                            <td class="text-right text-xs font-bold text-amber-700 bg-amber-50">${maxInP > 0 ? maxInP.toFixed(2) : '—'}</td>
+                            <td class="text-right text-xs font-bold text-amber-700 bg-amber-50" data-max-price="${esc(code)}">${maxInP > 0 ? maxInP.toFixed(2) : '—'}</td>
                             <td class="text-right"><input type="number" step="0.01" value="${shP}" onchange="updatePrice('${esc(code)}', 'shelfPrice', parseFloat(this.value)||0)" class="input w-20 text-right text-xs"></td>
-                            <td class="text-right text-xs font-medium ${incomeClass}">${shP > 0 && maxInP > 0 ? (income > 0 ? '+' : '') + income.toFixed(2) : '—'}</td>
-                            <td class="text-right text-xs font-medium ${markupClass}">${maxInP > 0 && shP > 0 ? markup.toFixed(1) + '%' : '—'}</td>
-                            <td class="text-right text-xs font-medium ${marginClass}">${maxInP > 0 && shP > 0 ? margin.toFixed(1) + '%' : '—'}</td>
+                            <td class="text-right text-xs font-medium ${incomeClass}" data-income="${esc(code)}">${shP > 0 && maxInP > 0 ? (income > 0 ? '+' : '') + income.toFixed(2) : '—'}</td>
+                            <td class="text-right text-xs font-medium ${markupClass}" data-markup="${esc(code)}">${maxInP > 0 && shP > 0 ? markup.toFixed(1) + '%' : '—'}</td>
+                            <td class="text-right text-xs font-medium ${marginClass}" data-margin="${esc(code)}">${maxInP > 0 && shP > 0 ? margin.toFixed(1) + '%' : '—'}</td>
                         </tr>`;
                     });
                 }
@@ -1873,27 +1877,98 @@
         function updateSupplierPrice(code, supplierName, value) {
             const nc = normCode(code);
             if (!supplierPrices[nc]) supplierPrices[nc] = {};
+
+            // Защита от двойного вызова (onchange + onblur на одном элементе)
+            const currentVal = supplierPrices[nc][supplierName] || 0;
+            if (value === currentVal) return; // значение не изменилось — ничего не делаем
+
             if (value > 0) {
                 supplierPrices[nc][supplierName] = value;
             } else {
                 delete supplierPrices[nc][supplierName];
                 if (Object.keys(supplierPrices[nc]).length === 0) delete supplierPrices[nc];
             }
-            // НЕ перезаписываем inPrice максимальной ценой!
-            // inPrice — это входящая цена товара (основного поставщика), не максимум.
-            // Сохраняем supplierPrices — они используются в расчёте заказа напрямую.
             const product = matrix[nc] || matrix[code];
             if (product) {
-                // Обновляем inPrice ТОЛЬКО если он ещё не был установлен
-                // (берём минимальную цену из поставщиков как базовую)
                 if (!product.inPrice || product.inPrice === 0) {
                     const minP = getSupplierMinPrice(nc);
                     if (minP > 0) product.inPrice = minP;
                 }
                 syncFishAssortment();
             }
+            // Сразу сохраняем в localStorage — это самое важное!
             save(KEYS.SUPPLIER_PRICES, supplierPrices);
-            render();
+
+            // НЕ делаем полный render() сразу — это уничтожит все input-поля
+            // и сбросит фокус пользователя при быстром вводе цен.
+            // Вместо этого обновляем только расчётные ячейки в текущей строке.
+            updatePriceRowCells(nc);
+
+            // Debounce: полный render() через 2 сек бездействия (для обновления статистики)
+            if (_priceRenderTimeout) clearTimeout(_priceRenderTimeout);
+            _priceRenderTimeout = setTimeout(() => {
+                _priceRenderTimeout = null;
+                render();
+            }, 2000);
+        }
+
+        // Обновляет только расчётные ячейки (Макс, Доход, Наценка, Маржа) в строке товара
+        // без полного перестроения DOM — чтобы не терять фокус при вводе цен
+        function updatePriceRowCells(code) {
+            const product = matrix[code];
+            if (!product) return;
+            const supplierNames = Object.keys(deliverySchedule);
+            const sp = supplierPrices[code] || {};
+            const shP = product.shelfPrice || 0;
+            let maxInP = getSupplierMaxPrice(code);
+            if (!maxInP) {
+                const inP = product.inPrice || 0;
+                if (inP > 0 && inP < shP) maxInP = inP;
+                else maxInP = 0;
+            }
+            const income = shP - maxInP;
+            const markup = maxInP > 0 ? (shP - maxInP) / maxInP * 100 : 0;
+            const margin = shP > 0 ? (shP - maxInP) / shP * 100 : 0;
+
+            // Обновляем ячейку "Макс" — ищем по data-атрибуту
+            const maxCell = document.querySelector(`[data-max-price="${CSS.escape(code)}"]`);
+            if (maxCell) {
+                maxCell.textContent = maxInP > 0 ? maxInP.toFixed(2) : '—';
+            }
+
+            // Обновляем расчётные ячейки
+            const incomeCell = document.querySelector(`[data-income="${CSS.escape(code)}"]`);
+            if (incomeCell) {
+                incomeCell.textContent = shP > 0 && maxInP > 0 ? (income > 0 ? '+' : '') + income.toFixed(2) : '—';
+                incomeCell.className = incomeCell.className.replace(/text-(emerald|red)-\d+/g, '');
+                incomeCell.classList.add(income < 0 ? 'text-red-600' : income > 0 ? 'text-emerald-600' : '');
+                if (income < 0) incomeCell.classList.add('font-semibold');
+                if (income > 0) incomeCell.classList.add('font-medium');
+            }
+
+            const markupCell = document.querySelector(`[data-markup="${CSS.escape(code)}"]`);
+            if (markupCell) {
+                markupCell.textContent = maxInP > 0 && shP > 0 ? markup.toFixed(1) + '%' : '—';
+            }
+
+            const marginCell = document.querySelector(`[data-margin="${CSS.escape(code)}"]`);
+            if (marginCell) {
+                marginCell.textContent = maxInP > 0 && shP > 0 ? margin.toFixed(1) + '%' : '—';
+            }
+
+            // Обновляем стиль у ячеек цен поставщиков (подсветка максимальной цены)
+            const priceVals = Object.values(sp).filter(v => v > 0);
+            supplierNames.forEach(s => {
+                const input = document.querySelector(`[data-sprice="${CSS.escape(code)}_${CSS.escape(s)}"]`);
+                if (!input) return;
+                const val = sp[s] || 0;
+                const isMax = val > 0 && val === maxInP && priceVals.filter(v => v === val).length <= 1;
+                if (isMax) {
+                    input.classList.add('text-amber-700', 'font-semibold', 'bg-amber-50');
+                } else {
+                    input.classList.remove('text-amber-700', 'font-semibold', 'bg-amber-50');
+                }
+            });
         }
 
         function getSupplierMinPrice(code) {
