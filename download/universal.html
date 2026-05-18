@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Универсальный расчёт</title>
-    <!-- Version: 2.1 -->
+    <!-- Version: 2.2 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -1542,6 +1542,10 @@
                         if (window.SharedData) SharedData.saveProducts(arr, 'universal');
                     } catch(e) { console.error('Assortment sync error:', e); }
                 }
+                // АВТО-СОХРАНЕНИЕ профиля текущего поставщика при изменении данных
+                if (currentSupplier && (key === KEYS.ASSORTMENT || key === KEYS.MATRIX_MARKS || key === KEYS.SALES || key === KEYS.STOCKS || key === KEYS.GROUP_MARKUPS)) {
+                    autoSaveCurrentSupplier();
+                }
             } catch (e) { console.error('Save error:', e); }
         };
 
@@ -2228,6 +2232,27 @@
                         </div>
                     </div>
                 </div>`;
+        }
+
+        // Автоматическое обновление профиля текущего поставщика
+        // Вызывается каждый раз при сохранении ASSORTMENT
+        // Используем debounce чтобы не сохранять при каждом маленьком изменении
+        let _autoSaveTimeout = null;
+        function autoSaveCurrentSupplier() {
+            if (!currentSupplier) return;
+            if (_autoSaveTimeout) clearTimeout(_autoSaveTimeout);
+            _autoSaveTimeout = setTimeout(() => {
+                _autoSaveTimeout = null;
+                const idx = suppliers.findIndex(s => s.name === currentSupplier);
+                if (idx < 0) return;
+                suppliers[idx].matrix = JSON.parse(JSON.stringify(matrix));
+                suppliers[idx].matrixMarks = JSON.parse(JSON.stringify(matrixMarks));
+                suppliers[idx].sales = JSON.parse(JSON.stringify(sales));
+                suppliers[idx].stocks = JSON.parse(JSON.stringify(stocks));
+                suppliers[idx].groupMarkups = JSON.parse(JSON.stringify(groupMarkups));
+                suppliers[idx].date = new Date().toLocaleDateString('ru-RU');
+                SharedUtils.save(KEYS.SUPPLIERS, suppliers);
+            }, 500);
         }
 
         function saveCurrentSupplier() {
