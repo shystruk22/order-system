@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Универсальный расчёт</title>
-    <!-- Version: 2.2 -->
+    <!-- Version: 2.3 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -1487,7 +1487,7 @@
         let orderEdits = {};          // Ручные правки заказа: {"tt_code": value}
         let newMarkupEdits = {};      // Временные «новые наценки» для вкладки Цены: {"code": value}
         let savedOrderDate = null;    // Дата сохранённого заказа
-        let ndsRate = 20;             // Стандартная ставка НДС %
+        let ndsRate = 22;             // Стандартная ставка НДС %
         let ndflRate = 6;             // Ставка НДФЛ %
         let onlineFeeRate = 1;        // 1% за онлайн-обслуживание
         let savedOrdersList = [];     // Список всех сохранённых заказов
@@ -1820,6 +1820,7 @@
             suppliers = load(KEYS.SUPPLIERS, []);
             currentSupplier = load(KEYS.CURRENT_SUPPLIER, '');
             defaultMarkup = load(KEYS.DEFAULT_MARKUP, 25);
+            ndsRate = load('univ_ndsRate_v1', 22);
             groupMarkups = load(KEYS.GROUP_MARKUPS, {});
 
             // Загрузка списка сохранённых заказов (автоудаление после 14 дней)
@@ -3028,7 +3029,7 @@
                             <div class="flex items-center justify-between bg-yellow-50 px-2 py-1.5 rounded-lg border border-yellow-200">
                                 <label class="text-[10px] text-gray-600">НДС %</label>
                                 <div class="flex items-center gap-1">
-                                    <input type="number" value="${ndsRate}" onchange="ndsRate=parseFloat(this.value)||0;render()" class="input w-12 text-center text-xs font-bold text-yellow-700" step="0.1">
+                                    <input type="number" value="${ndsRate}" onchange="ndsRate=parseFloat(this.value)||0;SharedUtils.save('univ_ndsRate_v1',ndsRate);render()" class="input w-12 text-center text-xs font-bold text-yellow-700" step="0.1">
                                     <span class="text-[10px] text-gray-400">%</span>
                                 </div>
                             </div>

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Заказ рыбы</title>
-    <!-- Version: 3.28 -->
+    <!-- Version: 3.29 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -2102,23 +2102,30 @@
 
                     // Заголовки из файла
                     const headers = json[0].map(h => String(h || '').trim());
-                    const supplierNamesInFile = headers
-                        .filter(h => h.startsWith('Цена '))
-                        .map(h => h.replace('Цена ', '').trim());
+                    const knownSuppliers = Object.keys(deliverySchedule);
 
-                    // Находим индексы колонок
+                    // Ищем колонки поставщиков: по шаблону "Цена Имя" ИЛИ просто по имени поставщика
+                    const supplierNamesInFile = [];
+                    const supplierIdxMap = {};
+                    headers.forEach((h, idx) => {
+                        let supName = '';
+                        if (h.startsWith('Цена ')) {
+                            supName = h.replace('Цена ', '').trim();
+                        } else if (knownSuppliers.includes(h)) {
+                            supName = h;
+                        }
+                        if (supName && !supplierIdxMap[supName]) {
+                            supplierNamesInFile.push(supName);
+                            supplierIdxMap[supName] = idx;
+                        }
+                    });
+
+                    // Находим индексы остальных колонок
                     const idxGroup = headers.indexOf('Группа');
                     const idxName = headers.indexOf('Наименование');
                     const idxCode = headers.indexOf('Код');
                     const idxMaxIn = headers.indexOf('Макс. вх.');
                     const idxShelfPrice = headers.indexOf('Цена полки');
-
-                    // Индексы цен поставщиков
-                    const supplierIdxMap = {};
-                    supplierNamesInFile.forEach(s => {
-                        const colIdx = headers.indexOf('Цена ' + s);
-                        if (colIdx >= 0) supplierIdxMap[s] = colIdx;
-                    });
 
                     if (idxCode < 0) {
                         alert('Не найдена колонка "Код" в файле. Проверьте что это файл экспорта цен.');
@@ -2141,16 +2148,29 @@
                     let updatedSupplierPrices = 0;
                     let notFound = 0;
                     let newSuppliersFound = 0;
+                    let totalRows = 0;
+
+                    // Диагностика
+                    const notFoundCodes = [];
 
                     for (let i = 1; i < json.length; i++) {
                         const r = json[i];
                         if (!r || r.length < 2) continue;
 
-                        const code = normCode(String(r[idxCode] || '').trim());
+                        const rawCode = String(r[idxCode] || '').trim();
+                        const code = normCode(rawCode);
                         if (!code || code === '0') continue;
+                        totalRows++;
 
-                        const product = matrix[code];
-                        if (!product) { notFound++; continue; }
+                        let product = matrix[code];
+                        // Если не нашли по нормализованному — пробуем оригинальный код
+                        if (!product && rawCode !== code) product = matrix[rawCode];
+                        // Если не нашли — пробуем с ведущими нулями
+                        if (!product) {
+                            const padded = String(code).padStart(5, '0');
+                            product = matrix[padded];
+                        }
+                        if (!product) { notFound++; notFoundCodes.push(rawCode); continue; }
 
                         // Обновляем цену полки
                         if (idxShelfPrice >= 0 && r[idxShelfPrice] !== undefined && r[idxShelfPrice] !== '') {
@@ -2210,10 +2230,12 @@
                     render();
 
                     const msg = `Импорт цен завершён:
+• Строк в файле: ${totalRows}
+• Найдено в каталоге: ${totalRows - notFound}
 • Обновлено товаров (цена полки): ${updatedProducts}
 • Обновлено цен поставщиков: ${updatedSupplierPrices}
 • Новых связей товар↔поставщик: ${newSuppliersFound}
-• Не найдено в каталоге: ${notFound}`;
+• Не найдено в каталоге: ${notFound}${notFoundCodes.length > 0 ? '\n\nНе найденные коды: ' + notFoundCodes.slice(0, 10).join(', ') + (notFoundCodes.length > 10 ? ' и ещё ' + (notFoundCodes.length - 10) : '') : ''}${supplierNamesInFile.length === 0 ? '\n\n⚠ ВНИМАНИЕ: В файле не найдены колонки поставщиков!\nУбедитесь что названия колонок совпадают с именами поставщиков (например "Цена Дзюба" или просто "Дзюба").' : ''}`;
                     alert(msg);
                 } catch (err) {
                     console.error('Import prices error:', err);
