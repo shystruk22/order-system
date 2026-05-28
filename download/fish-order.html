@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Заказ рыбы</title>
-    <!-- Version: 3.30 -->
+    <!-- Version: 3.31 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -2463,23 +2463,24 @@
                             }
 
                             rows.slice(1).forEach(row => {
-                                const code = String(row[0] || '').trim();
-                                if (!code || !matrix[code]) return;
+                                const code = normCode(String(row[0] || ''));
+                                if (!code || code === '0') return;
+                                const matrixKey = matrix[code] ? code : (matrix[String(row[0] || '').trim()] ? String(row[0] || '').trim() : null);
+                                if (!matrixKey) return;
 
-                                if (!supplierAssortment[code]) supplierAssortment[code] = [];
+                                if (!supplierAssortment[matrixKey]) supplierAssortment[matrixKey] = [];
 
                                 Object.entries(supplierCols).forEach(([supName, colIdx]) => {
-                                    if (!supplierNamesNow.includes(supName)) return;
-                                    const val = String(row[colIdx] || '').trim();
-                                    if (val === 'Да') {
-                                        if (!supplierAssortment[code].includes(supName)) {
-                                            supplierAssortment[code].push(supName);
+                                    const val = String(row[colIdx] || '').trim().toLowerCase();
+                                    if (val === 'да' || val === 'yes' || val === '1' || val === 'true') {
+                                        if (!supplierAssortment[matrixKey].includes(supName)) {
+                                            supplierAssortment[matrixKey].push(supName);
                                             updatedAssortment++;
                                         }
                                     } else {
-                                        const idx2 = supplierAssortment[code].indexOf(supName);
+                                        const idx2 = supplierAssortment[matrixKey].indexOf(supName);
                                         if (idx2 >= 0) {
-                                            supplierAssortment[code].splice(idx2, 1);
+                                            supplierAssortment[matrixKey].splice(idx2, 1);
                                         }
                                     }
                                 });
@@ -2648,7 +2649,7 @@
                             const firstVal = String(row[0] || '').trim();
                             if (firstVal && !stores.some(s => s.tt === firstVal)) {
                                 // Проверяем: если дальше есть Да/'' — это магазин, иначе — поставщик
-                                const hasDayMarks = row.slice(1, 8).some(c => c === 'Да');
+                                const hasDayMarks = row.slice(1, 8).some(c => String(c || '').trim().toLowerCase() === 'да');
                                 if (!hasDayMarks) {
                                     currentSupplier = firstVal;
                                     if (!deliverySchedule[currentSupplier]) {
@@ -2663,7 +2664,7 @@
                                 const emptyWeek = [false, false, false, false, false, false, false];
                                 const days = [];
                                 for (let i = 0; i < 7; i++) {
-                                    days.push(row[1 + i] === 'Да');
+                                    days.push(String(row[1 + i] || '').trim().toLowerCase() === 'да');
                                 }
                                 deliverySchedule[currentSupplier][tt] = days;
                                 updatedSchedule = true;
@@ -2702,23 +2703,24 @@
                             });
 
                             rows.slice(1).forEach(row => {
-                                const code = String(row[0] || '').trim();
-                                if (!code || !matrix[code]) return;
+                                const code = normCode(String(row[0] || ''));
+                                if (!code || code === '0') return;
+                                const matrixKey = matrix[code] ? code : (matrix[String(row[0] || '').trim()] ? String(row[0] || '').trim() : null);
+                                if (!matrixKey) return;
 
-                                if (!supplierAssortment[code]) supplierAssortment[code] = [];
+                                if (!supplierAssortment[matrixKey]) supplierAssortment[matrixKey] = [];
 
                                 Object.entries(supplierCols).forEach(([supName, colIdx]) => {
-                                    const val = String(row[colIdx] || '').trim();
-                                    if (val === 'Да') {
-                                        if (!supplierAssortment[code].includes(supName)) {
-                                            supplierAssortment[code].push(supName);
+                                    const val = String(row[colIdx] || '').trim().toLowerCase();
+                                    if (val === 'да' || val === 'yes' || val === '1' || val === 'true') {
+                                        if (!supplierAssortment[matrixKey].includes(supName)) {
+                                            supplierAssortment[matrixKey].push(supName);
                                             updatedAssortment++;
                                         }
                                     } else {
-                                        // Если в файле стоит пусто — убираем поставщика
-                                        const idx = supplierAssortment[code].indexOf(supName);
-                                        if (idx >= 0) {
-                                            supplierAssortment[code].splice(idx, 1);
+                                        const idx2 = supplierAssortment[matrixKey].indexOf(supName);
+                                        if (idx2 >= 0) {
+                                            supplierAssortment[matrixKey].splice(idx2, 1);
                                         }
                                     }
                                 });
