@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Заказ рыбы</title>
-    <!-- Version: 3.31 -->
+    <!-- Version: 3.32 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -98,6 +98,7 @@
         let weekdayDays = {};      // {"tt_code": countOfWeekdayDays}
         let stockConsumptionData = {}; // {"tt_code": {weekendSales, weekendDays, weekdaySales, weekdayDays}} — из файла остатков (постоянное)
         let savedOrderDate = null; // Дата сохранённого заказа (для отображения в заголовке)
+        let storeWishes = []; // Пожелания магазинов: [{tt, supplier, code, name, qty}]
 
         function resetSavedOrders() { savedOrderResults = null; savedOrderStats = null; orderEdits = {}; weekendSales = {}; weekdaySales = {}; weekendDays = {}; weekdayDays = {}; /* stockConsumptionData НЕ очищаем — постоянные данные из остатков */ }
 
@@ -113,7 +114,8 @@
             SUPPLIER_PRICES: 'fish_supplier_prices_v1',
             STORE_SUPPLIER_PREFS: 'fish_store_supplier_prefs_v1',
             STOCK_CONSUMPTION: 'fish_stock_consumption_v1',
-            SAVED_ORDER: 'fish_saved_order_v1'
+            SAVED_ORDER: 'fish_saved_order_v1',
+            STORE_WISHES: 'fish_store_wishes_v1'
         };
 
         // Поля каталога товаров (не ДА/НЕТ)
@@ -411,6 +413,7 @@
             supplierPrices = load(KEYS.SUPPLIER_PRICES, {});
             storeSupplierPrefs = load(KEYS.STORE_SUPPLIER_PREFS, {});
             stockConsumptionData = load(KEYS.STOCK_CONSUMPTION, {});
+            storeWishes = load(KEYS.STORE_WISHES, []);
             // Загрузка сохранённого заказа (автоудаление после 14 дней)
             var saved = load(KEYS.SAVED_ORDER, null);
             if (saved && saved.createdAt && (Date.now() - new Date(saved.createdAt).getTime()) < 14 * 86400000) {
@@ -2373,6 +2376,90 @@
             SharedUtils.exportAssortmentUnified(Object.values(matrix));
         }
 
+        // === ИМПОРТ ПОЖЕЛАНИЙ МАГАЗИНОВ ===
+        function importStoreWishes(input) {
+            if (!input || !input.files || !input.files[0]) return;
+            const file = input.files[0];
+            input.value = '';
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const wb = XLSX.read(e.target.result, { type: 'array' });
+                    const ws = wb.Sheets[wb.SheetNames[0]];
+                    const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
+                    if (rows.length < 2) { alert('Файл пуст или нет данных'); return; }
+
+                    const headers = rows[0].map(h => String(h || '').trim());
+                    let colTT = -1, colSupplier = -1, colCode = -1, colName = -1, colQty = -1;
+
+                    headers.forEach(function(h, idx) {
+                        const lh = h.toLowerCase();
+                        if (lh.includes('магазин') || lh.includes('тт') || lh === 'торг' || lh === 'точка') colTT = idx;
+                        if (lh.includes('поставщик') || lh.includes('пост')) colSupplier = idx;
+                        if (lh.includes('код') || lh === 'code') colCode = idx;
+                        if (lh.includes('наимен') || lh.includes('товар') || lh.includes('имя') || lh.includes('name')) colName = idx;
+                        if (lh.includes('кол') || lh.includes('qty') || lh.includes('кол-во') || lh === 'количество') colQty = idx;
+                    });
+
+                    if (colTT < 0) { alert('Не найдена колонка "Магазин/ТТ" в файле'); return; }
+                    if (colCode < 0) { alert('Не найдена колонка "Код" в файле'); return; }
+                    if (colQty < 0) { alert('Не найдена колонка "Количество" в файле'); return; }
+
+                    storeWishes = [];
+                    let imported = 0, notFound = 0;
+
+                    rows.slice(1).forEach(function(row) {
+                        const tt = String(row[colTT] || '').trim();
+                        const code = normCode(String(row[colCode] || ''));
+                        if (!tt || !code || code === '0') return;
+
+                        const supplier = colSupplier >= 0 ? String(row[colSupplier] || '').trim() : '';
+                        const name = colName >= 0 ? String(row[colName] || '').trim() : (matrix[code] ? matrix[code].nomenclature : '');
+                        const qty = parseFloat(row[colQty]);
+                        if (isNaN(qty) || qty <= 0) return;
+
+                        storeWishes.push({ tt: tt, supplier: supplier, code: code, name: name, qty: qty });
+                        imported++;
+                    });
+
+                    save(KEYS.STORE_WISHES, storeWishes);
+                    render();
+                    alert('Импортировано пожеланий: ' + imported);
+                } catch (err) {
+                    alert('Ошибка при импорте пожеланий: ' + err.message);
+                    console.error(err);
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        // Получить пожелание для конкретной ТТ + кода
+        function getStoreWish(tt, code) {
+            if (!storeWishes || storeWishes.length === 0) return null;
+            return storeWishes.find(function(w) {
+                return w.tt === tt && w.code === code;
+            }) || null;
+        }
+
+        // Удалить пожелание
+        function removeStoreWish(tt, code) {
+            storeWishes = storeWishes.filter(function(w) {
+                return !(w.tt === tt && w.code === code);
+            });
+            save(KEYS.STORE_WISHES, storeWishes);
+            render();
+        }
+
+        // Очистить все пожелания
+        function clearStoreWishes() {
+            if (storeWishes.length === 0) return;
+            if (!confirm('Очистить все пожелания магазинов (' + storeWishes.length + ' шт.)?')) return;
+            storeWishes = [];
+            save(KEYS.STORE_WISHES, storeWishes);
+            render();
+        }
+
         // === Экспорт/Импорт ТОЛЬКО ассортимента и предпочтений магазинов ===
         function exportAssortmentData() {
             const supplierNames = Object.keys(deliverySchedule);
@@ -3589,7 +3676,8 @@
                 });
             });
             const supplierColumns = [...allOrderSuppliers].concat([...allScheduledSuppliers].filter(function(s) { return !allOrderSuppliers.has(s); })).sort();
-            const colCount = 7 + supplierColumns.length;
+            const hasWishes = storeWishes && storeWishes.length > 0;
+            const colCount = 7 + supplierColumns.length + (hasWishes ? 1 : 0);
 
             // In-transit stats
             const inTransitCount = inTransitOrders.filter(o => o.status === 'in_transit').length;
@@ -3645,6 +3733,9 @@
                             ${minD < Infinity ? `<div class="bg-amber-100 text-amber-800 rounded-md px-3 py-1.5"><div class="text-[10px] opacity-70">БЛИЖ. ДОСТАВКА</div><div class="text-sm font-bold">${nextDelivStr}</div></div>` : ''}
                         </div>
                         <div class="flex gap-2">
+                            <input type="file" id="wishesImportInput" accept=".xlsx,.xls,.csv" onchange="importStoreWishes(this)" class="hidden">
+                            <button onclick="event.stopPropagation();document.getElementById('wishesImportInput').click()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium ${storeWishes.length > 0 ? 'text-violet-700 bg-violet-100 border border-violet-300' : 'text-gray-600 bg-gray-50 border border-gray-200'} rounded-lg hover:bg-violet-200 transition-colors" title="Загрузить файл пожеланий магазинов">📋 Пожелания${storeWishes.length > 0 ? ' (' + storeWishes.length + ')' : ''}</button>
+                            ${storeWishes.length > 0 ? '<button onclick="event.stopPropagation();clearStoreWishes()" class="btn inline-flex items-center gap-1.5 px-2 py-1.5 text-[10px] font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100" title="Очистить пожелания">✕</button>' : ''}
                             <button onclick="placeOrders()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700">${icons.order} Сформировать заказ</button>
                             <button onclick="exportOrder()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">${icons.export} Экспорт</button>
                             <button onclick="debugOrderEditability()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-orange-700 bg-orange-50 border border-orange-200 rounded-lg hover:bg-orange-100" title="Показать почему ячейки заблокированы">🔍 Диагностика</button>
@@ -3677,6 +3768,7 @@
                                     <th class="text-center" style="min-width:55px">Остаток, кг</th>
                                     ${supplierColumns.map(sup => `<th class="text-center bg-emerald-50" style="min-width:100px" title="${esc(sup)}">${esc(sup)}<br><span class="text-[10px] font-normal opacity-70">заказ / сумма</span></th>`).join('')}
                                     <th class="text-left" style="min-width:180px">Статус</th>
+                                    ${hasWishes ? '<th class="text-center bg-violet-50" style="min-width:90px" title="Пожелания магазинов из загруженного файла"><span class="text-violet-700">Пожелания</span><br><span class="text-[10px] font-normal opacity-70">магазин / кол-во</span></th>' : ''}
                                 </tr>
                             </thead>
                             <tbody>
@@ -3767,6 +3859,11 @@
                                                     return '<td class="text-center ' + editBg + ' ' + prefBg + '"' + editTitle + '><input type="number" step="0.5" min="0" value="' + inputVal + '" placeholder="0" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onchange="editOrder(this)" class="input w-16 text-center text-sm text-gray-400 bg-gray-50"></td>';
                                                 }).join('')}
                                                 <td class="text-left text-xs ${r.notInMatrix ? (r.matrixNet ? 'text-orange-600 font-medium italic' : 'text-blue-600 font-medium italic') : r.hasConflict ? 'text-amber-700 font-medium' : r.order > 0 ? 'text-emerald-700' : 'text-gray-500'}">${r.status}</td>
+                                                ${hasWishes ? (() => {
+                                                    const wish = getStoreWish(r.tt, r.code);
+                                                    if (!wish) return '<td class="text-center"></td>';
+                                                    return '<td class="text-center bg-violet-50"><div class="text-[10px] text-violet-500">' + esc(wish.tt) + (wish.supplier ? ' → ' + esc(wish.supplier) : '') + '</div><div class="font-bold text-violet-700">' + wish.qty + '</div><button onclick="event.stopPropagation();removeStoreWish(\'' + esc(r.tt) + '\',\'' + esc(r.code) + '\')" class="text-red-300 hover:text-red-500 text-[10px]" title="Удалить">✕</button></td>';
+                                                })()() : ''}
                                             </tr>`;
                                         }).join('')}
                                     `).join('')}
@@ -4466,7 +4563,89 @@
             };
             save(KEYS.SAVED_ORDER, data);
             savedOrderDate = data.date;
+            // === Создать записи "В пути" из подтверждённого заказа ===
+            createInTransitFromOrder(data);
             render();
+        }
+
+        // === Создать записи "В пути" на основе подтверждённого заказа ===
+        function createInTransitFromOrder(orderData) {
+            if (!orderData || !orderData.items) return;
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+
+            // Сначала очищаем старые записи "В пути" по правилу:
+            // Удаляем записи поставщиков, чья дата доставки уже прошла (deliveryDate < сегодня)
+            cleanupExpiredInTransit(today);
+
+            // Группируем товары по (поставщик, магазин)
+            const groups = {};
+            orderData.items.forEach(function(r) {
+                if (!r.supplierOrders) return;
+                Object.keys(r.supplierOrders).forEach(function(sup) {
+                    const so = r.supplierOrders[sup];
+                    if (!so || so.order <= 0) return;
+                    const key = sup + '|||' + r.tt;
+                    if (!groups[key]) groups[key] = { supplier: sup, store: r.tt, items: [] };
+                    groups[key].items.push({ code: r.code, name: r.nomenclature || r.code, qty: so.order, sum: so.sum || 0 });
+                });
+            });
+
+            Object.keys(groups).forEach(function(key) {
+                const g = groups[key];
+                // Определяем дату доставки — следующий день доставки этого поставщика в этот магазин
+                const nextDate = getNextDeliveryDate(g.supplier, g.store);
+                const expectedDate = nextDate ? nextDate.toISOString().split('T')[0] : today.toISOString().split('T')[0];
+
+                const newOrder = {
+                    id: Date.now() + Math.random(),
+                    createdAt: orderData.date || new Date().toLocaleString('ru-RU'),
+                    supplier: g.supplier,
+                    store: g.store,
+                    expectedDate: expectedDate,
+                    items: g.items,
+                    status: 'in_transit'
+                };
+
+                // Проверяем: есть ли уже "В пути" от этого же поставщика в этот магазин
+                const existingIdx = inTransitOrders.findIndex(function(o) {
+                    return o.status === 'in_transit' && o.supplier === g.supplier && o.store === g.store;
+                });
+
+                if (existingIdx >= 0) {
+                    // Обновляем существующую запись
+                    inTransitOrders[existingIdx] = newOrder;
+                } else {
+                    inTransitOrders.push(newOrder);
+                }
+            });
+
+            save(KEYS.INTRANSIT, inTransitOrders);
+        }
+
+        // Очистка просроченных записей "В пути" —deliveryDate < сегодня
+        function cleanupExpiredInTransit(today) {
+            if (!today) {
+                today = new Date();
+                today.setHours(0, 0, 0, 0);
+            }
+            let cleaned = 0;
+            inTransitOrders = inTransitOrders.filter(function(o) {
+                if (o.status !== 'in_transit') return true; // delivered записи не трогаем
+                if (!o.expectedDate) return true; // без даты оставляем
+                const exp = new Date(o.expectedDate);
+                exp.setHours(0, 0, 0, 0);
+                if (exp < today) {
+                    // Доставка уже была — удаляем
+                    cleaned++;
+                    return false;
+                }
+                return true;
+            });
+            if (cleaned > 0) {
+                console.log('[FishOrder] Очищено ' + cleaned + ' просроченных записей В пути');
+                save(KEYS.INTRANSIT, inTransitOrders);
+            }
         }
 
         function clearSavedOrder() {
@@ -4534,7 +4713,8 @@
             var supplierColumns = Array.from(allOrderSuppliers).concat(
                 Array.from(allScheduledSuppliers).filter(function(s) { return !allOrderSuppliers.has(s); })
             ).sort();
-            var colCount = 7 + supplierColumns.length;
+            var hasWishesSaved = storeWishes && storeWishes.length > 0;
+            var colCount = 7 + supplierColumns.length + (hasWishesSaved ? 1 : 0);
 
             var supplierGroupsHTML = '';
             var saved = load(KEYS.SAVED_ORDER, null);
@@ -4585,6 +4765,7 @@
                             return '<th class="text-center bg-emerald-50" style="min-width:100px" title="' + esc(sup) + '">' + esc(sup) + '<br><span class="text-[10px] font-normal opacity-70">\u0437\u0430\u043A\u0430\u0437 / \u0441\u0443\u043C\u043C\u0430</span></th>';
                         }).join('') +
                         '<th class="text-left" style="min-width:180px">\u0421\u0442\u0430\u0442\u0443\u0441</th>' +
+                        (hasWishesSaved ? '<th class="text-center bg-violet-50" style="min-width:90px"><span class="text-violet-700">\u041F\u043E\u0436\u0435\u043B\u0430\u043D\u0438\u044F</span></th>' : '') +
                     '</tr></thead><tbody>' +
                         Object.entries(groupedTT).map(function(entry) {
                             var tt = entry[0], groups = entry[1];
@@ -4641,8 +4822,13 @@
                                                         (r.avgSalesPerDay > 0 ? r.avgSalesPerDay.toFixed(3) : '\u2014')) + '</td>' +
                                                 '<td class="text-center">' + (r.currentStock || 0).toFixed(2) + '</td>' +
                                                 supplierCells +
-                                                '<td class="text-left text-xs ' + (r.notInMatrix ? 'text-blue-600 font-medium italic' : r.hasConflict ? 'text-amber-700 font-medium' : r.order > 0 ? 'text-emerald-700' : 'text-gray-500') + '">' + esc(r.status || '') + '</td></tr>';
-                                        }).join(''));
+                                                '<td class="text-left text-xs ' + (r.notInMatrix ? 'text-blue-600 font-medium italic' : r.hasConflict ? 'text-amber-700 font-medium' : r.order > 0 ? 'text-emerald-700' : 'text-gray-500') + '">' + esc(r.status || '') + '</td>' +
+                                                (hasWishesSaved ? (() => {
+                                                    var wish = getStoreWish(r.tt, r.code);
+                                                    if (!wish) return '<td class="text-center"></td>';
+                                                    return '<td class="text-center bg-violet-50"><div class="text-[10px] text-violet-500">' + esc(wish.tt) + (wish.supplier ? ' &rarr; ' + esc(wish.supplier) : '') + '</div><div class="font-bold text-violet-700">' + wish.qty + '</div></td>';
+                                                })() : '') +
+                                            '</tr>';
                                 }).join(''));
                         }).join('') +
                     '</tbody></table></div></div></div>';
