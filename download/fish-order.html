@@ -2386,38 +2386,70 @@
             reader.onload = function(e) {
                 try {
                     const wb = XLSX.read(e.target.result, { type: 'array' });
-                    const ws = wb.Sheets[wb.SheetNames[0]];
+
+                    // Ищем лист "Заказ" или берём первый
+                    const ws = wb.Sheets['Заказ'] || wb.Sheets[wb.SheetNames[0]];
                     const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
                     if (rows.length < 2) { alert('Файл пуст или нет данных'); return; }
 
                     const headers = rows[0].map(h => String(h || '').trim());
                     let colTT = -1, colSupplier = -1, colCode = -1, colName = -1, colQty = -1;
 
+                    // Специальная обработка: колонка "Код" может быть первой с числовыми данными
+                    // а "Код весовой" — не та что нужна. Берём первую колонку с "код" (без "весовой")
+                    let codeCols = [];
                     headers.forEach(function(h, idx) {
                         const lh = h.toLowerCase();
-                        if (lh.includes('магазин') || lh.includes('тт') || lh === 'торг' || lh === 'точка') colTT = idx;
+                        if (lh === 'магазин' || lh.includes('магазин') || lh.includes('тт') || lh === 'торг' || lh === 'точка' || lh === 'склад') colTT = idx;
                         if (lh.includes('поставщик') || lh.includes('пост')) colSupplier = idx;
-                        if (lh.includes('код') || lh === 'code') colCode = idx;
-                        if (lh.includes('наимен') || lh.includes('товар') || lh.includes('имя') || lh.includes('name')) colName = idx;
-                        if (lh.includes('кол') || lh.includes('qty') || lh.includes('кол-во') || lh === 'количество') colQty = idx;
+                        if (lh.includes('код') && !lh.includes('весов')) codeCols.push(idx);
+                        if (lh.includes('наимен') || lh.includes('товар') || lh.includes('имя') || lh === 'name') colName = idx;
+                        // Колонка количества: "Вес, кг", "Количество", "Кол-во", "Qty" и т.д.
+                        if (lh.includes('вес') || lh.includes('кол') || lh.includes('qty') || lh === 'количество' || lh === 'кг') colQty = idx;
+                    });
+                    // Берём первую колонку "Код" (не весовой)
+                    colCode = codeCols.length > 0 ? codeCols[0] : -1;
+
+                    console.log('[Wishes] Колонки:', { colTT, colSupplier, colCode, colName, colQty, headers });
+
+                    if (colTT < 0) { alert('Не найдена колонка "Магазин/ТТ/Склад" в файле.\n\nЗаголовки: ' + headers.join(', ')); return; }
+                    if (colCode < 0) { alert('Не найдена колонка "Код" в файле.\n\nЗаголовки: ' + headers.join(', ')); return; }
+                    if (colQty < 0) { alert('Не найдена колонка с количеством (Вес/Количество) в файле.\n\nЗаголовки: ' + headers.join(', ')); return; }
+
+                    // Сопоставляем полное название магазина из файла с коротким ТТ из stores
+                    const storeMapping = {};
+                    stores.forEach(function(s) {
+                        storeMapping[s.tt.toLowerCase()] = s.tt;
                     });
 
-                    if (colTT < 0) { alert('Не найдена колонка "Магазин/ТТ" в файле'); return; }
-                    if (colCode < 0) { alert('Не найдена колонка "Код" в файле'); return; }
-                    if (colQty < 0) { alert('Не найдена колонка "Количество" в файле'); return; }
+                    function matchStore(fileStoreName) {
+                        const lower = fileStoreName.toLowerCase();
+                        // Точное совпадение
+                        if (storeMapping[lower]) return storeMapping[lower];
+                        // Проверяем вхождение: название ТТ содержится в названии из файла
+                        for (var key in storeMapping) {
+                            if (lower.includes(key) || key.includes(lower)) return storeMapping[key];
+                        }
+                        return fileStoreName; // возвращаем как есть если не нашли
+                    }
 
                     storeWishes = [];
-                    let imported = 0, notFound = 0;
+                    let imported = 0, notMatched = [];
 
                     rows.slice(1).forEach(function(row) {
-                        const tt = String(row[colTT] || '').trim();
+                        const rawTT = String(row[colTT] || '').trim();
                         const code = normCode(String(row[colCode] || ''));
-                        if (!tt || !code || code === '0') return;
+                        if (!rawTT || !code || code === '0') return;
 
+                        const tt = matchStore(rawTT);
                         const supplier = colSupplier >= 0 ? String(row[colSupplier] || '').trim() : '';
                         const name = colName >= 0 ? String(row[colName] || '').trim() : (matrix[code] ? matrix[code].nomenclature : '');
                         const qty = parseFloat(row[colQty]);
                         if (isNaN(qty) || qty <= 0) return;
+
+                        // Проверяем: не duplicруем если уже есть такая же ТТ+код
+                        const exists = storeWishes.some(function(w) { return w.tt === tt && w.code === code; });
+                        if (exists) return;
 
                         storeWishes.push({ tt: tt, supplier: supplier, code: code, name: name, qty: qty });
                         imported++;
@@ -2425,7 +2457,9 @@
 
                     save(KEYS.STORE_WISHES, storeWishes);
                     render();
-                    alert('Импортировано пожеланий: ' + imported);
+                    let msg = 'Импортировано пожеланий: ' + imported;
+                    if (notMatched.length > 0) msg += '\n\nНе найдены в справочнике:\n' + notMatched.slice(0, 5).join('\n');
+                    alert(msg);
                 } catch (err) {
                     alert('Ошибка при импорте пожеланий: ' + err.message);
                     console.error(err);
