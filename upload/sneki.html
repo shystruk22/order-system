@@ -13,6 +13,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="storage.js"></script>
+  <script src="shared-data.js"></script>
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f7fa; min-height: 100vh; }
@@ -136,6 +137,42 @@
     const RulerIcon = () => <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M21.3 8.7L8.7 21.3c-.4.4-1 .4-1.4 0l-4.6-4.6c-.4-.4-.4-1 0-1.4L15.3 2.7c.4-.4 1-.4 1.4 0l4.6 4.6c.4.4.4 1 0 1.4z"/></svg>;
     const PlusIcon = () => <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>;
     const ScaleIcon = () => <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M16 6l3 12H5l3-12" /><path d="M12 6v12" /><circle cx="12" cy="6" r="2" /></svg>;
+
+    // Калькулятор цены для РЦ
+    function RCPriceCalc({ warehouseMarkup, vatRate }) {
+      const [inputPrice, setInputPrice] = useState('');
+      const [inputVat, setInputVat] = useState(vatRate);
+      const vat = parseFloat(inputVat) || 0;
+      const markup = parseFloat(warehouseMarkup) || 0;
+      const rcPrice = inputPrice && parseFloat(inputPrice) > 0 && vat > 0
+        ? Math.round(parseFloat(inputPrice) * (1 + markup / 100) / (1 + vat / 100) * 100) / 100
+        : null;
+      return (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between bg-gray-50 px-3 py-2 rounded-lg border">
+            <label className="text-sm font-medium text-gray-600">Входящая цена:</label>
+            <input type="number" value={inputPrice} onChange={e => setInputPrice(e.target.value)} placeholder="0.00" className="input w-24 text-right text-sm font-bold text-emerald-700" step="0.01" />
+          </div>
+          <div className="flex items-center justify-between bg-blue-50 px-3 py-2 rounded-lg border border-blue-200">
+            <label className="text-sm font-medium text-blue-700">НДС:</label>
+            <div className="flex items-center gap-1">
+              <input type="number" value={inputVat} onChange={e => setInputVat(parseFloat(e.target.value) || 0)} className="input w-14 text-center text-sm font-bold text-blue-700" step="0.1" />
+              <span className="text-sm text-gray-500">%</span>
+            </div>
+          </div>
+          <div className="border-t border-dashed border-gray-300 my-2"></div>
+          <div className="flex items-center justify-between bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-200">
+            <label className="text-sm font-semibold text-emerald-800">Цена для РЦ:</label>
+            <span className="text-base font-bold text-emerald-700 min-w-[80px] text-right">
+              {rcPrice !== null ? rcPrice.toFixed(2) + ' ₽' : '—'}
+            </span>
+          </div>
+          <div className="text-[10px] text-gray-400 leading-tight px-1">
+            Формула: (Вх. цена x (1 + Наценка РЦ % / 100)) / (1 + НДС % / 100)
+          </div>
+        </div>
+      );
+    }
 
     function createStyledSheet(data, headers, leftAlignCols) {
         leftAlignCols = leftAlignCols || [];
@@ -362,7 +399,11 @@
       }, []);
 
       // Save on change
-      useEffect(() => { if (mounted && products.length) save(KEYS.PRODUCTS, products); }, [products, mounted]);
+      useEffect(() => { if (mounted && products.length) {
+        save(KEYS.PRODUCTS, products);
+        // Sync to SharedData for cross-tab real-time sync
+        if (window.SharedData) { try { SharedData.saveProducts(products, 'sneki'); } catch(e) {} }
+      } }, [products, mounted]);
       useEffect(() => { if (mounted && Object.keys(matrix).length) save(KEYS.MATRIX, matrix); }, [matrix, mounted]);
       useEffect(() => { if (mounted && sales.length) save(KEYS.SALES, sales); }, [sales, mounted]);
       useEffect(() => { if (mounted && stocks.length) save(KEYS.STOCKS, stocks); }, [stocks, mounted]);
@@ -378,6 +419,22 @@
       useEffect(() => { if (mounted && results.length > 0) save(KEYS.RESULTS, results); }, [results, mounted]);
       useEffect(() => { if (mounted && rcResults.length > 0) save(KEYS.RC_RESULTS, rcResults); }, [rcResults, mounted]);
       useEffect(() => { if (mounted && Object.keys(groupDays).length) save(KEYS.GROUP_DAYS, groupDays); }, [groupDays, mounted]);
+
+      // Cross-tab sync: listen for product changes from other files (assortment.html, fish-order.html)
+      useEffect(() => {
+        if (!window.SharedData) return;
+        const handler = (info) => {
+          if (info.source !== 'sneki') {
+            const fresh = SharedData.getProducts();
+            if (fresh && fresh.length > 0 && fresh.length !== products.length) {
+              setProducts(fresh);
+              console.log('[Sneki] Synced from ' + info.source + ': ' + fresh.length + ' products');
+            }
+          }
+        };
+        SharedData.onChange(handler);
+        return () => { /* cleanup not needed for SharedData */ };
+      }, [mounted]);
 
       // Parse assortment file
       // Структура: Да | Группа | Код | Упаковка | Номенклатура | Код(повтор) | Код весовой | Вход пивной | Вход РЦ | Цена | Полка
@@ -815,17 +872,25 @@
 
       const exportPrices = useCallback(() => {
         if (Object.keys(matrix).length === 0) { alert('Нет данных!'); return; }
-        const headers = ['Группа', 'Наименование', 'Код', 'НДС %', 'Вход. цена', 'Выход с РЦ', 'Наценка %', 'Полка'];
-        const data = Object.entries(matrix).map(([code, p]) => { 
+        const headers = ['Группа', 'Наименование', 'Код', 'НДС %', 'Вх. цена', 'Выход РЦ', 'Полка', 'Доход', 'Доход с РЦ', 'Наценка %', 'Новая наценка %', 'Новая полка', 'Новый доход'];
+        const R = v => Math.round(v * 100) / 100;
+        const data = Object.entries(matrix).map(([code, p]) => {
           const productMarkup = p.markup ?? groupMarkups[p.group || ''] ?? warehouseMarkup;
-          const rcOutput = (p.inPrice || 0) * (1 + warehouseMarkup / 100);
-          const shelfPrice = Math.round((p.inPrice || 0) * (1 + productMarkup / 100));
-          return [p.group || '', p.nomenclature || '', code, p.vat ?? vatRate, p.inPrice || 0, rcOutput.toFixed(2), productMarkup, shelfPrice]; 
+          const inPrice = p.inPrice || 0;
+          const rcOutput = R(inPrice * (1 + warehouseMarkup / 100));
+          const shelfPrice = R(rcOutput * (1 + productMarkup / 100));
+          const income = R(shelfPrice - inPrice);
+          const incomeRC = R(shelfPrice - rcOutput);
+          const calcMarkup = rcOutput > 0 ? R((shelfPrice / rcOutput - 1) * 100) : 0;
+          const newMarkup = p.newMarkup ?? '';
+          const newShelfPrice = newMarkup !== '' && newMarkup !== undefined ? R(rcOutput * (1 + newMarkup / 100)) : '';
+          const newIncome = newShelfPrice !== '' ? R(newShelfPrice - rcOutput) : '';
+          return [p.group || '', p.nomenclature || '', code, p.vat ?? vatRate, R(inPrice), rcOutput, shelfPrice, income, incomeRC, calcMarkup, newMarkup, newShelfPrice, newIncome];
         });
         const ws = createStyledSheet(data, headers, [0, 1]);
         const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, 'Цены');
-        XLSX.writeFile(wb, `sneki_prices_${new Date().toISOString().slice(0, 10)}.xlsx`);
+        XLSX.utils.book_append_sheet(wb, ws, 'Наценки');
+        XLSX.writeFile(wb, 'Наценки ' + new Date().toISOString().slice(0, 10) + '.xlsx');
       }, [matrix, vatRate, groupMarkups, warehouseMarkup]);
 
       const exportShelf = useCallback(() => {
@@ -1099,25 +1164,21 @@
 
             // TT-колонки: после Код, кроме известных не-TT — сопоставляем с stores
             const knownNonTT = new Set(['группа', 'упак', 'вес. код', 'вес.код', 'упаковка', 'наименование товара', 'наименование', 'наим', 'код товара', 'код']);
-            // Собираем ВСЕ строковые значения из каждого store для сопоставления (точное + нормализованное)
+            // Собираем ВСЕ строковые значения из каждого store для сопоставления
             const existingTTSet = new Set();
             const storeTTMap = {}; // name -> canonical tt
-            // Нормализация: нижний регистр, убираем лишние пробелы
-            const normalizeTT = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
             stores.forEach(s => {
               const canonical = String(s.tt || '').trim();
               if (canonical) {
                 existingTTSet.add(canonical);
                 storeTTMap[canonical] = canonical;
-                storeTTMap[normalizeTT(canonical)] = canonical;
               }
+              // Все остальные строковые поля тоже добавляем
               Object.values(s).forEach(v => {
                 if (typeof v === 'string' && v.trim()) {
                   const val = v.trim();
                   existingTTSet.add(val);
                   if (!storeTTMap[val]) storeTTMap[val] = canonical;
-                  const nVal = normalizeTT(val);
-                  if (!storeTTMap[nVal]) storeTTMap[nVal] = canonical;
                 }
               });
             });
@@ -1125,98 +1186,68 @@
             for (let c = codeCol + 1; c < headers.length; c++) {
               if (headers[c] && !knownNonTT.has(headers[c])) {
                 const ttName = String(headersRaw[c] || '').trim();
-                // Сначала точное совпадение, потом нормализованное
-                const canonicalTT = storeTTMap[ttName] || storeTTMap[normalizeTT(ttName)];
-                if (canonicalTT) {
-                  ttColumns.push({ col: c, name: canonicalTT });
+                if (existingTTSet.has(ttName)) {
+                  ttColumns.push({ col: c, name: ttName });
                 }
               }
             }
 
             if (ttColumns.length === 0) {
-              const storeTTs = stores.slice(0, 5).map(s => s.tt).join('\n');
+              const storeTTs = [...existingTTSet].slice(0, 5).join(', ');
               const fileTTs = [];
               for (let c = codeCol + 1; c < headers.length; c++) {
                 if (headers[c] && !knownNonTT.has(headers[c])) fileTTs.push(String(headersRaw[c] || '').trim());
               }
-              alert(`Ни одна ТТ из файла не найдена в списке магазинов.\n\nМагазины в системе (${stores.length}):\n${storeTTs}${stores.length > 5 ? '\n...' : ''}\n\nТТ из файла (${fileTTs.length}):\n${fileTTs.slice(0, 5).join('\n')}${fileTTs.length > 5 ? '\n...' : ''}`);
+              alert(`Ни одна ТТ из файла не найдена в списке магазинов.\n\nМагазины в системе (${existingTTSet.size}):\n${storeTTs}${existingTTSet.size > 5 ? '...' : ''}\n\nТТ из файла (${fileTTs.length}):\n${fileTTs.slice(0, 5).join(', ')}${fileTTs.length > 5 ? '...' : ''}`);
               return;
             }
-
-            // Диагностика: покажем что нашли
-            console.log('[Matrix Import] stores count:', stores.length);
-            console.log('[Matrix Import] storeTT keys sample:', Object.keys(storeTTMap).slice(0, 10));
-            console.log('[Matrix Import] ttColumns matched:', ttColumns.length, ttColumns.map(t => t.name).slice(0, 5));
 
             // Батч-обновление матрицы
             const newMatrix = { ...matrix };
             let updated = 0, added = 0;
-            const fileCodes = [];
-            let skipNoName = 0;
-
-            // Диагностика
-            let diagInfo = [];
-            let daCountInFile = 0;
 
             for (let i = 1; i < json.length; i++) {
               const row = json[i];
               if (!row || !row[codeCol]) continue;
               const code = normCode(String(row[codeCol]));
               if (!code) continue;
-              fileCodes.push(code);
 
               const nomenclature = nameCol >= 0 ? String(row[nameCol] || '').trim() : '';
               const group = groupCol >= 0 ? String(row[groupCol] || '').trim() : '';
-              if (!nomenclature) { skipNoName++; continue; }
-
-              // Для новых товаров — создаём один раз, потом перезаписываем TT
-              if (!newMatrix[code]) {
-                const newEntry = {
-                  code, nomenclature, group,
-                  packaging: 'ШТ', weightCode: '', inPrice: 0, outPrice: 0,
-                  shelf: 0, quant: 1
-                };
-                stores.forEach(s => { newEntry[s.tt] = 'НЕТ'; });
-                newMatrix[code] = newEntry;
-                added++;
-              }
+              if (!nomenclature) continue;
 
               ttColumns.forEach(({ name: tt, col }) => {
-                const rawVal = row[col];
-                const val = String(rawVal || '').trim().toUpperCase();
+                const val = String(row[col] || '').trim().toUpperCase();
                 const inMatrix = (val === 'ДА' || val === 'YES' || val === '1') ? 'ДА' : 'НЕТ';
-                const currentVal = newMatrix[code][tt];
 
-                if (inMatrix === 'ДА') daCountInFile++;
-                // Собираем диагностику для первых 5 строк с ДА
-                if (inMatrix === 'ДА' && diagInfo.length < 5) {
-                  diagInfo.push(`Код:${code} ТТ:${tt} | файл="${String(rawVal).substring(0,15)}" → inMatrix="${inMatrix}" | матрица="${currentVal}" | ${currentVal !== inMatrix ? 'ИЗМЕНЕНО' : 'БЕЗ ИЗМЕНЕНИЙ'}`);
-                }
-
-                if (currentVal !== inMatrix) {
-                  updated++;
-                  newMatrix[code][tt] = inMatrix;
+                if (!newMatrix[code]) {
+                  // Добавляем новый товар из файла
+                  const newEntry = {
+                    code, nomenclature, group,
+                    packaging: 'ШТ', weightCode: '', inPrice: 0, outPrice: 0,
+                    shelf: 0, quant: 1
+                  };
+                  stores.forEach(s => { newEntry[s.tt] = 'НЕТ'; });
+                  newEntry[tt] = inMatrix;
+                  newMatrix[code] = newEntry;
+                  added++;
+                } else {
+                  if (newMatrix[code][tt] !== inMatrix) updated++;
+                  newMatrix[code] = { ...newMatrix[code], [tt]: inMatrix };
                 }
               });
-
-              // (диагностика собирается без прерывания цикла)
             }
-
-            console.log('[Matrix Import] DIAGNOSTIC:');
-            diagInfo.forEach(d => console.log('  ', d));
-            console.log('[Matrix Import] skipNoName:', skipNoName);
 
             setMatrix(newMatrix);
             save(KEYS.MATRIX, newMatrix);
 
-            // Подробный отчёт
-            const matrixCodes = Object.keys(newMatrix);
-            const matchedCodes = fileCodes.filter(c => matrixCodes.includes(c));
+            console.log('[Matrix Import] codes in file:', [...new Set(Object.keys(marks))].slice(0, 10));
+            console.log('[Matrix Import] codes in matrix:', Object.keys(newMatrix).slice(0, 10));
+            console.log('[Matrix Import] ttColumns:', ttColumns.map(t => t.name));
+            console.log('[Matrix Import] sample entry:', newMatrix[Object.keys(newMatrix)[0]]);
 
             const addedMsg = added > 0 ? `\nДобавлено новых товаров: ${added}` : '';
-            const daInfo = diagInfo.length > 0 ? `\n\n--- Строки с ДА ---\n${diagInfo.join('\n')}` : '\n\n(В файле нет значений ДА)';
-            const diagMsg = `\n\n--- Диагностика ---\nТоваров в файле: ${fileCodes.length}\nПропущено (нет имени): ${skipNoName}\nСовпадение по коду: ${matchedCodes.length}\nТТ сопоставлено: ${ttColumns.length}\nДА в файле: ${daCountInFile}\nЗначений изменено: ${updated}${daInfo}`;
-            alert(`Обновлено ${updated} значений матрицы${addedMsg}\nВсего товаров в матрице: ${matrixCodes.length}${diagMsg}`);
+            alert(`Обновлено ${updated} значений матрицы${addedMsg}\nВсего товаров в матрице: ${Object.keys(newMatrix).length}`);
           } catch (err) { alert('Ошибка: ' + err.message); }
         };
         reader.readAsArrayBuffer(file);
@@ -1296,17 +1327,16 @@
         let currentRevenue = 0;
         let newRevenue = 0;
         let individualMarkups = 0;
-        sales.forEach(s => { 
-          const product = matrix[s.code]; 
-          if (!product) return; 
-          const inPrice = product.inPrice || 0; 
-          // Приоритет наценки: индивидуальная → групповая → глобальная
+        sales.forEach(s => {
+          const product = matrix[s.code];
+          if (!product) return;
+          const inPrice = product.inPrice || 0;
           const productMarkup = product.markup ?? groupMarkups[product.group || ''] ?? warehouseMarkup;
-          const outPrice = inPrice * (1 + productMarkup / 100);
-          currentRevenue += s.quantity * (product.outPrice || inPrice); 
-          newRevenue += s.quantity * outPrice; 
+          const rcOutput = Math.round(inPrice * (1 + warehouseMarkup / 100) * 100) / 100;
+          const shelfPrice = Math.round(rcOutput * (1 + productMarkup / 100) * 100) / 100;
+          currentRevenue += s.quantity * (product.outPrice || shelfPrice);
+          newRevenue += s.quantity * shelfPrice;
         });
-        // Считаем количество индивидуальных наценок
         Object.values(matrix).forEach(p => {
           if (p.markup !== undefined && p.markup !== null) individualMarkups++;
         });
@@ -1725,27 +1755,35 @@
                         <div className="bg-white rounded-lg p-2 border border-violet-100 text-center"><div className="text-[10px] text-gray-500">С наценками</div><div className="text-base font-bold text-gray-800">{priceStats.newRevenue.toLocaleString('ru-RU')} ₽</div></div>
                       </div>
                     </div>
-                    {/* Настройки наценок */}
-                    <div className="bg-white rounded-lg border border-gray-200 p-3">
-                      <h3 className="text-sm font-semibold text-gray-800 mb-3 flex items-center gap-2"><DollarIcon />Настройки наценок</h3>
-                      <div className="flex gap-3">
-                        <div className="flex-1 flex items-center justify-between bg-gray-50 px-3 py-2 rounded-lg border">
-                          <label className="text-sm font-medium text-gray-600">Наценка склада (РЦ):</label>
-                          <div className="flex items-center gap-1">
-                            <input type="number" value={warehouseMarkup} onChange={e => setWarehouseMarkup(parseFloat(e.target.value) || 0)} className="input w-16 text-center text-sm font-bold text-blue-700" step="0.1" />
-                            <span className="text-sm text-gray-500">%</span>
+                    {/* Настройки наценок + Калькулятор РЦ */}
+                    <div className="grid grid-cols-2 gap-3">
+                      {/* Левая часть: Настройки наценок */}
+                      <div className="bg-white rounded-lg border border-gray-200 p-3">
+                        <h3 className="text-sm font-semibold text-gray-800 mb-3 flex items-center gap-2"><DollarIcon />Настройки наценок</h3>
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between bg-gray-50 px-3 py-2 rounded-lg border">
+                            <label className="text-sm font-medium text-gray-600">Наценка склада (РЦ):</label>
+                            <div className="flex items-center gap-1">
+                              <input type="number" value={warehouseMarkup} onChange={e => setWarehouseMarkup(parseFloat(e.target.value) || 0)} className="input w-16 text-center text-sm font-bold text-blue-700" step="0.1" />
+                              <span className="text-sm text-gray-500">%</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between bg-blue-50 px-3 py-2 rounded-lg border border-blue-200">
+                            <label className="text-sm font-medium text-blue-700">НДС (по умолчанию):</label>
+                            <div className="flex items-center gap-1">
+                              <input type="number" value={vatRate} onChange={e => {
+                                const newVat = parseFloat(e.target.value) || 22;
+                                setVatRate(newVat);
+                              }} className="input w-14 text-center text-sm font-bold text-blue-700" />
+                              <span className="text-sm text-gray-500">%</span>
+                            </div>
                           </div>
                         </div>
-                        <div className="flex-1 flex items-center justify-between bg-blue-50 px-3 py-2 rounded-lg border border-blue-200">
-                          <label className="text-sm font-medium text-blue-700">НДС (по умолчанию):</label>
-                          <div className="flex items-center gap-1">
-                            <input type="number" value={vatRate} onChange={e => {
-                              const newVat = parseFloat(e.target.value) || 22;
-                              setVatRate(newVat);
-                            }} className="input w-14 text-center text-sm font-bold text-blue-700" />
-                            <span className="text-sm text-gray-500">%</span>
-                          </div>
-                        </div>
+                      </div>
+                      {/* Правая часть: Расчёт цены для РЦ */}
+                      <div className="bg-white rounded-lg border border-gray-200 p-3">
+                        <h3 className="text-sm font-semibold text-gray-800 mb-3 flex items-center gap-2"><WarehouseIcon />Расчёт цены для РЦ</h3>
+                        <RCPriceCalc warehouseMarkup={warehouseMarkup} vatRate={vatRate} />
                       </div>
                     </div>
                   </div>
@@ -1788,7 +1826,12 @@
                           <th className="text-right bg-yellow-50">Вх. цена</th>
                           <th className="text-right bg-emerald-100">Выход РЦ</th>
                           <th className="text-right bg-green-100">Полка ₽</th>
+                          <th className="text-right bg-green-50">Доход</th>
+                          <th className="text-right bg-green-50">Доход с РЦ</th>
                           <th className="text-right bg-orange-100">Наценка %</th>
+                          <th className="text-right bg-amber-100">Новая наценка %</th>
+                          <th className="text-right bg-amber-100">Новая полка</th>
+                          <th className="text-right bg-amber-100">Новый доход</th>
                           <th className="text-right">Ост. РЦ</th>
                         </tr>
                       </thead>
@@ -1798,16 +1841,22 @@
                           return (
                             <React.Fragment key={group}>
                               <tr className="bg-amber-50 cursor-pointer hover:bg-amber-100 transition-colors" onClick={() => setCollapsedGroups(p => ({ ...p, [group]: !p[group] }))}>
-                                <td colSpan={9} className="font-semibold text-amber-800"><span className="flex items-center gap-2">{isCollapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}{group} ({items.length})</span></td>
+                                <td colSpan={14} className="font-semibold text-amber-800"><span className="flex items-center gap-2">{isCollapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}{group} ({items.length})</span></td>
                               </tr>
                               {!isCollapsed && items.map(p => {
-                                // Приоритет наценки: индивидуальная → групповая → глобальная
                                 const productMarkup = p.markup ?? groupMarkups[p.group || ''] ?? warehouseMarkup;
-                                const rcOutput = (p.inPrice || 0) * (1 + warehouseMarkup / 100);
-                                const shelfPrice = Math.round((p.inPrice || 0) * (1 + productMarkup / 100));
+                                const inPrice = p.inPrice || 0;
+                                const rcOutput = Math.round(inPrice * (1 + warehouseMarkup / 100) * 100) / 100;
+                                const shelfPrice = Math.round(rcOutput * (1 + productMarkup / 100) * 100) / 100;
+                                const income = Math.round((shelfPrice - inPrice) * 100) / 100;
+                                const incomeRC = Math.round((shelfPrice - rcOutput) * 100) / 100;
+                                const calcMarkup = rcOutput > 0 ? Math.round((shelfPrice / rcOutput - 1) * 10000) / 100 : 0;
                                 const rcStock = rcStocks[p.code] || 0;
                                 const productVat = p.vat ?? vatRate;
-                                const hasIndividualMarkup = p.markup !== undefined && p.markup !== null;
+                                const hasNewMarkup = p.newMarkup !== undefined && p.newMarkup !== null && p.newMarkup !== '';
+                                const newMarkupVal = p.newMarkup !== undefined && p.newMarkup !== null ? p.newMarkup : '';
+                                const newShelfPrice = hasNewMarkup ? Math.round(rcOutput * (1 + newMarkupVal / 100) * 100) / 100 : '';
+                                const newIncome = hasNewMarkup ? Math.round((newShelfPrice - rcOutput) * 100) / 100 : '';
                                 return (
                                   <tr key={p.code} className="hover:bg-gray-50 transition-colors">
                                     <td className="sticky left-0 bg-white text-xs text-gray-500">{p.group || ''}</td>
@@ -1818,27 +1867,16 @@
                                     </td>
                                     <td className="text-right bg-yellow-50"><input type="number" value={p.inPrice || 0} onChange={e => updateProduct(p.code, 'inPrice', parseFloat(e.target.value) || 0)} className="input w-20 text-right text-xs font-mono" min="0" step="0.01" /></td>
                                     <td className="text-right bg-emerald-100 font-mono text-sm font-medium text-emerald-700">{rcOutput.toFixed(2)}</td>
-                                    <td className="text-right bg-green-100 font-mono text-sm font-bold text-green-700">{shelfPrice}</td>
-                                    <td className="text-right bg-orange-100">
-                                      <input 
-                                        type="number" 
-                                        value={hasIndividualMarkup ? p.markup : (groupMarkups[p.group || ''] ?? '')} 
-                                        onChange={e => { 
-                                          const v = e.target.value;
-                                          if (v === '' || v === null) {
-                                            // Удаляем индивидуальную наценку
-                                            updateProduct(p.code, 'markup', undefined);
-                                          } else {
-                                            // Устанавливаем индивидуальную наценку
-                                            updateProduct(p.code, 'markup', parseFloat(v) || 0);
-                                          }
-                                        }} 
-                                        placeholder={String(groupMarkups[p.group || ''] ?? warehouseMarkup)} 
-                                        className={`input w-14 text-right text-xs font-bold ${hasIndividualMarkup ? 'text-purple-700 bg-purple-50' : 'text-orange-700'}`} 
-                                        step="0.1" 
-                                      />
+                                    <td className="text-right bg-green-100 font-mono text-sm font-bold text-green-700">{shelfPrice.toFixed(2)}</td>
+                                    <td className="text-right bg-green-50 font-mono text-sm">{income.toFixed(2)}</td>
+                                    <td className="text-right bg-green-50 font-mono text-sm">{incomeRC.toFixed(2)}</td>
+                                    <td className="text-right bg-orange-100 font-mono text-sm font-bold text-orange-700">{calcMarkup.toFixed(2)}</td>
+                                    <td className="text-right bg-amber-100">
+                                      <input type="number" value={newMarkupVal} onChange={e => { const v = e.target.value; if (v === '' || v === null) { updateProduct(p.code, 'newMarkup', undefined); } else { updateProduct(p.code, 'newMarkup', parseFloat(v) || 0); } }} placeholder={'—'} className="input w-14 text-right text-xs font-bold text-amber-700" step="0.1" />
                                     </td>
-                                    <td className={`text-right font-mono text-sm ${rcStock > 0 ? 'text-emerald-600' : 'text-rose-500'}`}>{rcStock}</td>
+                                    <td className="text-right bg-amber-100 font-mono text-sm text-amber-700">{hasNewMarkup ? newShelfPrice.toFixed(2) : '—'}</td>
+                                    <td className="text-right bg-amber-100 font-mono text-sm font-bold text-amber-700">{hasNewMarkup ? newIncome.toFixed(2) : '—'}</td>
+                                    <td className={'text-right font-mono text-sm ' + (rcStock > 0 ? 'text-emerald-600' : 'text-rose-500')}>{rcStock}</td>
                                   </tr>
                                 );
                               })}
