@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Заказ рыбы</title>
-    <!-- Version: 3.32 -->
+    <!-- Version: 3.34 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -122,6 +122,17 @@
         const CATALOG_FIELDS = ['code','nomenclature','name','group','packaging','supplier','weightCode','quant','volume','price','inPrice','shelfPrice','shelf','markup'];
 
         const normCode = (code) => String(code || '').trim().replace(/^0+/, '') || '0';
+
+        // Умное округление: убирает мусорные знаки после запятой (1.000000004 → 1, 0.5 → 0.5, 0.23 → 0.23)
+        const smartRound = (val) => {
+            if (val === 0 || val === undefined || val === null) return 0;
+            const n = parseFloat(val);
+            if (isNaN(n)) return 0;
+            if (n === Math.round(n)) return Math.round(n); // целое число
+            // Округляем до 2 знаков и убираем trailing zeros
+            const rounded = Math.round(n * 100) / 100;
+            return rounded;
+        };
 
         const load = (key, def) => SharedUtils.load(key, def);
 
@@ -861,11 +872,13 @@
                         });
                         newSuppliersAdded = true;
                     }
-                    // Заполняем supplierPrices из inPrice
+                    // Заполняем supplierPrices из inPrice ТОЛЬКО если цена для этого поставщика ещё НИКОГДА не устанавливалась
+                    // Используем hasOwnProperty чтобы не перезаписывать явно заданные (или импортированные) цены,
+                    // даже если они равны 0 — пользователь мог очистить цену вручную
                     const inPrice = matrix[code].inPrice || 0;
                     if (inPrice > 0) {
                         if (!supplierPrices[code]) supplierPrices[code] = {};
-                        if (!supplierPrices[code][supplier] || supplierPrices[code][supplier] === 0) {
+                        if (!supplierPrices[code].hasOwnProperty(supplier)) {
                             supplierPrices[code][supplier] = inPrice;
                         }
                     }
@@ -1276,8 +1289,8 @@
                                     ${(o.items || []).map((item, idx) => `<tr class="hover:bg-gray-50">
                                         <td class="text-left px-3 py-1 font-mono text-gray-600">${item.code || ''}</td>
                                         <td class="text-left px-3 py-1 text-gray-700">${esc(item.name || '')}</td>
-                                        <td class="text-center px-3 py-1 font-medium">${item.qty || 0}</td>
-                                        <td class="text-center px-3 py-1 text-gray-600">${(item.sum || 0).toFixed(2)} ₽</td>
+                                        <td class="text-center px-3 py-1 font-medium">${smartRound(item.qty)}</td>
+                                        <td class="text-center px-3 py-1 text-gray-600">${smartRound(item.sum || 0).toFixed(2)} ₽</td>
                                         <td class="text-center px-3 py-1"><button onclick="deleteInTransitItem(${o.id}, ${idx})" class="text-red-400 hover:text-red-600 hover:bg-red-50 rounded p-1 transition-colors cursor-pointer" title="Удалить позицию">${icons.trash}</button></td>
                                     </tr>`).join('')}
                                 </tbody>
@@ -1322,7 +1335,7 @@
                                         <tr class="hover:bg-gray-50 ${item.arrived === false ? 'bg-red-50' : ''}">
                                             <td class="text-left px-3 py-1 font-mono text-gray-600">${item.code || ''}</td>
                                             <td class="text-left px-3 py-1 text-gray-700">${esc(item.name || '')}</td>
-                                            <td class="text-center px-3 py-1 font-medium">${item.qty || 0}</td>
+                                            <td class="text-center px-3 py-1 font-medium">${smartRound(item.qty)}</td>
                                             <td class="text-center px-3 py-1">
                                                 ${item.arrived === false
                                                     ? `<span class="text-red-600 font-medium cursor-pointer hover:underline" onclick="toggleItemArrived(${o.id}, ${idx})">✗ Не приехало</span>`
@@ -1378,7 +1391,7 @@
             const order = inTransitOrders.find(o => o.id === orderId);
             if (!order || !order.items || !order.items[itemIdx]) return;
             const item = order.items[itemIdx];
-            if (!confirm('Удалить позицию "' + (item.name || item.code || '') + '" (' + (item.qty || 0) + ')?')) return;
+            if (!confirm('Удалить позицию "' + (item.name || item.code || '') + '" (' + smartRound(item.qty) + ')?')) return;
             order.items.splice(itemIdx, 1);
             // Если все позиции удалены — удаляем заказ целиком
             if (order.items.length === 0) {
@@ -1827,11 +1840,12 @@
                 if (!collapsedG['price_' + gr]) {
                     items.forEach(p => {
                         const code = p.code;
-                        const sp = supplierPrices[code] || {};
+                        const nc = normCode(code);
+                        const sp = supplierPrices[nc] || {};
                         const shP = p.shelfPrice || 0;
                         // Макс. вх. = максимальная цена из поставщиков
                         // Если нет цен у поставщиков — берём p.inPrice, но ТОЛЬКО если он < shelfPrice (реально входящая, а не полка)
-                        let maxInP = getSupplierMaxPrice(code);
+                        let maxInP = getSupplierMaxPrice(nc);
                         if (!maxInP) {
                             const inP = p.inPrice || 0;
                             if (inP > 0 && inP < shP) {
@@ -1873,13 +1887,13 @@
                                 const val = sp[s] || 0;
                                 const isMax = val > 0 && val === maxInP && priceVals.filter(v => v === val).length <= 1;
                                 const cellClass = isMax ? 'text-amber-700 font-semibold bg-amber-50' : '';
-                                return `<td class="text-right"><input type="number" step="0.01" value="${val}" data-sprice="${esc(code)}_${esc(s)}" onchange="updateSupplierPrice('${esc(code)}','${esc(s)}', parseFloat(this.value)||0)" onblur="updateSupplierPrice('${esc(code)}','${esc(s)}', parseFloat(this.value)||0)" class="input w-20 text-right text-xs ${cellClass}" title="Цена от ${esc(s)}"></td>`;
+                                return `<td class="text-right"><input type="number" step="0.01" value="${val}" data-sprice="${esc(nc)}_${esc(s)}" onchange="updateSupplierPrice('${esc(nc)}','${esc(s)}', parseFloat(this.value)||0)" onblur="updateSupplierPrice('${esc(nc)}','${esc(s)}', parseFloat(this.value)||0)" class="input w-20 text-right text-xs ${cellClass}" title="Цена от ${esc(s)}"></td>`;
                             }).join('')}
-                            <td class="text-right text-xs font-bold text-amber-700 bg-amber-50" data-max-price="${esc(code)}">${maxInP > 0 ? maxInP.toFixed(2) : '—'}</td>
+                            <td class="text-right text-xs font-bold text-amber-700 bg-amber-50" data-max-price="${esc(nc)}">${maxInP > 0 ? maxInP.toFixed(2) : '—'}</td>
                             <td class="text-right"><input type="number" step="0.01" value="${shP}" onchange="updatePrice('${esc(code)}', 'shelfPrice', parseFloat(this.value)||0)" class="input w-20 text-right text-xs"></td>
-                            <td class="text-right text-xs font-medium ${incomeClass}" data-income="${esc(code)}">${shP > 0 && maxInP > 0 ? (income > 0 ? '+' : '') + income.toFixed(2) : '—'}</td>
-                            <td class="text-right text-xs font-medium ${markupClass}" data-markup="${esc(code)}">${maxInP > 0 && shP > 0 ? markup.toFixed(1) + '%' : '—'}</td>
-                            <td class="text-right text-xs font-medium ${marginClass}" data-margin="${esc(code)}">${maxInP > 0 && shP > 0 ? margin.toFixed(1) + '%' : '—'}</td>
+                            <td class="text-right text-xs font-medium ${incomeClass}" data-income="${esc(nc)}">${shP > 0 && maxInP > 0 ? (income > 0 ? '+' : '') + income.toFixed(2) : '—'}</td>
+                            <td class="text-right text-xs font-medium ${markupClass}" data-markup="${esc(nc)}">${maxInP > 0 && shP > 0 ? markup.toFixed(1) + '%' : '—'}</td>
+                            <td class="text-right text-xs font-medium ${marginClass}" data-margin="${esc(nc)}">${maxInP > 0 && shP > 0 ? margin.toFixed(1) + '%' : '—'}</td>
                         </tr>`;
                     });
                 }
@@ -2240,8 +2254,7 @@
                     save(KEYS.SUPPLIER_PRICES, supplierPrices);
                     save(KEYS.SUPPLIER_ASSORTMENT, supplierAssortment);
                     save(KEYS.SCHEDULE, deliverySchedule);
-                    ensureSupplierAssortment();
-                    save(KEYS.SUPPLIER_PRICES, supplierPrices);
+                    // НЕ вызываем ensureSupplierAssortment() после импорта цен — он перезапишет импортированные цены из inPrice
                     render();
 
                     const msg = `Импорт цен завершён:
@@ -2383,38 +2396,79 @@
             input.value = '';
 
             const reader = new FileReader();
+            reader.onerror = function(e) {
+                alert('Ошибка чтения файла: ' + (e.target.error ? e.target.error.message : 'неизвестная ошибка'));
+                console.error('[Wishes] FileReader error:', e);
+            };
             reader.onload = function(e) {
                 try {
-                    const wb = XLSX.read(e.target.result, { type: 'array' });
+                    let wb;
+                    try {
+                        wb = XLSX.read(e.target.result, { type: 'array' });
+                    } catch(err1) {
+                        console.warn('[Wishes] array parse failed, trying binary:', err1.message);
+                        try {
+                            // Конвертируем ArrayBuffer в binary string для совместимости
+                            const arr = new Uint8Array(e.target.result);
+                            let binaryStr = '';
+                            for (let i = 0; i < arr.length; i++) binaryStr += String.fromCharCode(arr[i]);
+                            wb = XLSX.read(binaryStr, { type: 'binary' });
+                        } catch(err2) {
+                            throw new Error('Не удалось прочитать файл Excel.\nПопробуйте пересохранить файл в формате .xlsx\n\nОшибка: ' + err2.message);
+                        }
+                    }
 
-                    // Ищем лист "Заказ" или берём первый
-                    const ws = wb.Sheets['Заказ'] || wb.Sheets[wb.SheetNames[0]];
-                    const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
+                    // Ищем лучший лист: "Желаемые позиции" > "Заказ" > первый лист
+                    let ws = null;
+                    let sheetName = '';
+                    const prioritySheets = ['Желаемые позиции', 'Желаемые', 'Пожелания', 'Заказ', 'Wishes'];
+                    for (let sn of prioritySheets) {
+                        if (wb.Sheets[sn]) {
+                            ws = wb.Sheets[sn];
+                            sheetName = sn;
+                            break;
+                        }
+                    }
+                    if (!ws) {
+                        ws = wb.Sheets[wb.SheetNames[0]];
+                        sheetName = wb.SheetNames[0];
+                    }
+                    if (!ws) throw new Error('В файле нет листов с данными');
+
+                    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
                     if (rows.length < 2) { alert('Файл пуст или нет данных'); return; }
 
-                    const headers = rows[0].map(h => String(h || '').trim());
+                    // Пропускаем пустые строки в начале
+                    let startRow = 0;
+                    while (startRow < rows.length && !rows[startRow] || (rows[startRow] && rows[startRow].every(c => !c && c !== 0))) {
+                        startRow++;
+                    }
+                    if (startRow >= rows.length - 1) { alert('Файл пуст или нет данных'); return; }
+
+                    const headers = rows[startRow].map(h => String(h || '').trim().toLowerCase());
                     let colTT = -1, colSupplier = -1, colCode = -1, colName = -1, colQty = -1;
 
-                    // Специальная обработка: колонка "Код" может быть первой с числовыми данными
-                    // а "Код весовой" — не та что нужна. Берём первую колонку с "код" (без "весовой")
+                    // Поиск колонок
                     let codeCols = [];
                     headers.forEach(function(h, idx) {
-                        const lh = h.toLowerCase();
-                        if (lh === 'магазин' || lh.includes('магазин') || lh.includes('тт') || lh === 'торг' || lh === 'точка' || lh === 'склад') colTT = idx;
-                        if (lh.includes('поставщик') || lh.includes('пост')) colSupplier = idx;
-                        if (lh.includes('код') && !lh.includes('весов')) codeCols.push(idx);
-                        if (lh.includes('наимен') || lh.includes('товар') || lh.includes('имя') || lh === 'name') colName = idx;
-                        // Колонка количества: "Вес, кг", "Количество", "Кол-во", "Qty" и т.д.
-                        if (lh.includes('вес') || lh.includes('кол') || lh.includes('qty') || lh === 'количество' || lh === 'кг') colQty = idx;
+                        // Магазин / ТТ
+                        if (h === 'магазин' || h.includes('магазин') || h === 'тт' || h === 'торг' || h === 'точка' || h === 'склад') colTT = idx;
+                        // Поставщик
+                        if (h.includes('поставщик') || (h.includes('пост') && !h.includes('сопост'))) colSupplier = idx;
+                        // Код (исключаем весовой)
+                        if (h.includes('код') && !h.includes('весов')) codeCols.push(idx);
+                        // Наименование
+                        if (h.includes('наимен') || h.includes('товар') || h.includes('имя') || h === 'name') colName = idx;
+                        // Количество / Вес
+                        if (h.includes('вес') || h.includes('кол') || h.includes('qty') || h === 'количество' || h === 'кг' || h.includes('кол-во')) colQty = idx;
                     });
-                    // Берём первую колонку "Код" (не весовой)
                     colCode = codeCols.length > 0 ? codeCols[0] : -1;
 
-                    console.log('[Wishes] Колонки:', { colTT, colSupplier, colCode, colName, colQty, headers });
+                    console.log('[Wishes] Лист:', sheetName, 'Строка заголовков:', startRow, 'Колонки:', { colTT, colSupplier, colCode, colName, colQty, headers });
 
-                    if (colTT < 0) { alert('Не найдена колонка "Магазин/ТТ/Склад" в файле.\n\nЗаголовки: ' + headers.join(', ')); return; }
-                    if (colCode < 0) { alert('Не найдена колонка "Код" в файле.\n\nЗаголовки: ' + headers.join(', ')); return; }
-                    if (colQty < 0) { alert('Не найдена колонка с количеством (Вес/Количество) в файле.\n\nЗаголовки: ' + headers.join(', ')); return; }
+                    if (colTT < 0) { alert('Не найдена колонка "Магазин/ТТ/Склад" в файле.\n\nЗаголовки: ' + rows[startRow].join(', ')); return; }
+                    if (colCode < 0) { alert('Не найдена колонка "Код" в файле.\n\nЗаголовки: ' + rows[startRow].join(', ')); return; }
+                    if (colQty < 0) { alert('Не найдена колонка с количеством (Вес/Количество) в файле.\n\nЗаголовки: ' + rows[startRow].join(', ')); return; }
 
                     // Сопоставляем полное название магазина из файла с коротким ТТ из stores
                     const storeMapping = {};
@@ -2424,45 +2478,54 @@
 
                     function matchStore(fileStoreName) {
                         const lower = fileStoreName.toLowerCase();
-                        // Точное совпадение
                         if (storeMapping[lower]) return storeMapping[lower];
-                        // Проверяем вхождение: название ТТ содержится в названии из файла
                         for (var key in storeMapping) {
                             if (lower.includes(key) || key.includes(lower)) return storeMapping[key];
                         }
-                        return fileStoreName; // возвращаем как есть если не нашли
+                        return fileStoreName;
                     }
 
                     storeWishes = [];
-                    let imported = 0, notMatched = [];
+                    let imported = 0, skippedEmpty = 0;
 
-                    rows.slice(1).forEach(function(row) {
-                        const rawTT = String(row[colTT] || '').trim();
-                        const code = normCode(String(row[colCode] || ''));
-                        if (!rawTT || !code || code === '0') return;
+                    for (let ri = startRow + 1; ri < rows.length; ri++) {
+                        const row = rows[ri];
+                        if (!row || row.length === 0) continue;
 
-                        const tt = matchStore(rawTT);
-                        const supplier = colSupplier >= 0 ? String(row[colSupplier] || '').trim() : '';
-                        const name = colName >= 0 ? String(row[colName] || '').trim() : (matrix[code] ? matrix[code].nomenclature : '');
-                        const qty = parseFloat(row[colQty]);
-                        if (isNaN(qty) || qty <= 0) return;
+                        try {
+                            const rawTT = String(row[colTT] || '').trim();
+                            if (!rawTT) continue;
 
-                        // Проверяем: не duplicруем если уже есть такая же ТТ+код
-                        const exists = storeWishes.some(function(w) { return w.tt === tt && w.code === code; });
-                        if (exists) return;
+                            const rawCode = String(row[colCode] || '').trim();
+                            const code = normCode(rawCode);
+                            if (!code || code === '0') continue;
 
-                        storeWishes.push({ tt: tt, supplier: supplier, code: code, name: name, qty: qty });
-                        imported++;
-                    });
+                            const tt = matchStore(rawTT);
+                            const supplier = colSupplier >= 0 ? String(row[colSupplier] || '').trim() : '';
+                            const name = colName >= 0 ? String(row[colName] || '').trim() : (matrix[code] ? matrix[code].nomenclature : '');
+                            const rawQty = row[colQty];
+                            const qty = parseFloat(String(rawQty).replace(',', '.'));
+                            if (isNaN(qty) || qty <= 0) { skippedEmpty++; continue; }
+
+                            const exists = storeWishes.some(function(w) { return w.tt === tt && w.code === code; });
+                            if (exists) continue;
+
+                            storeWishes.push({ tt: tt, supplier: supplier, code: code, name: name, qty: smartRound(qty) });
+                            imported++;
+                        } catch(rowErr) {
+                            console.warn('[Wishes] Error parsing row', ri, ':', rowErr);
+                            continue;
+                        }
+                    }
 
                     save(KEYS.STORE_WISHES, storeWishes);
                     render();
                     let msg = 'Импортировано пожеланий: ' + imported;
-                    if (notMatched.length > 0) msg += '\n\nНе найдены в справочнике:\n' + notMatched.slice(0, 5).join('\n');
+                    if (skippedEmpty > 0) msg += '\nПропущено (пустые/недопустимые): ' + skippedEmpty;
                     alert(msg);
                 } catch (err) {
-                    alert('Ошибка при импорте пожеланий: ' + err.message);
-                    console.error(err);
+                    console.error('[Wishes] Import error:', err);
+                    alert('Ошибка при импорте пожеланий: ' + err.message + '\n\nПопробуйте пересохранить файл в формате .xlsx');
                 }
             };
             reader.readAsArrayBuffer(file);
@@ -2864,8 +2927,9 @@
                             });
 
                             rows.slice(1).forEach(row => {
-                                const code = String(row[0] || '').trim();
-                                if (!code) return;
+                                const rawCode = String(row[0] || '').trim();
+                                if (!rawCode) return;
+                                const code = normCode(rawCode);
 
                                 Object.entries(supplierCols).forEach(([supName, colIdx]) => {
                                     const val = parseFloat(row[colIdx]);
@@ -3525,7 +3589,7 @@
                     const inPrice = p.inPrice || 0;
                     const shelf = p.shelf || 0;
                     // Заказ = прогноз продаж + полка (мин. остаток) — текущий остаток — в пути
-                    let rawOrder = estimatedSales + shelf - effectiveStock - inTransitQty;
+                    let rawOrder = smartRound(estimatedSales + shelf - effectiveStock - inTransitQty);
 
                     // Логика заказа:
                     // 1) Продажи=0 И остаток >= полка → НЕ заказываем (есть запас, товар не продаётся)
@@ -3543,10 +3607,12 @@
                     if (hasSales) {
                         // Есть продажи — обычный расчёт (полка уже в rawOrder)
                         order = rawOrder > 0 ? Math.ceil(rawOrder / quant) * quant : 0;
+                        // Округляем ДО формирования статуса чтобы убрать float ошибки
+                        order = smartRound(order);
                         if (order > 0) {
-                            orderReason = `заказ ${order} кг`;
+                            orderReason = `заказ ${smartRound(order)} кг`;
                         } else if (rawOrder <= 0) {
-                            orderReason = `хватает (${effectiveStock.toFixed(1)} кг)`;
+                            orderReason = `хватает (${smartRound(effectiveStock)} кг)`;
                         } else {
                             orderReason = `достаточно`;
                         }
@@ -3557,20 +3623,21 @@
                     } else if (belowShelf) {
                         // Продаж нет, но остаток ниже полки — дозаказ до полки
                         order = Math.ceil((shelf - effectiveStock) / quant) * quant;
+                        order = smartRound(order);
                         if (order > 0) {
-                            orderReason = `до полки (${shelf} кг), заказ ${order} кг`;
+                            orderReason = `до полки (${smartRound(shelf)} кг), заказ ${smartRound(order)} кг`;
                         } else {
-                            order = quant;
-                            orderReason = `до полки (${shelf} кг), заказ ${order} кг`;
+                            order = smartRound(quant);
+                            orderReason = `до полки (${smartRound(shelf)} кг), заказ ${smartRound(order)} кг`;
                         }
                     } else {
                         // Продаж нет, остаток >= полки — НЕ заказываем
                         order = 0;
-                        orderReason = `остаток ${effectiveStock.toFixed(1)} кг, продаж нет`;
+                        orderReason = `остаток ${smartRound(effectiveStock)} кг, продаж нет`;
                     }
 
-                    // Округляем чтобы убрать float ошибки (0.7000000000000001 → 0.7)
-                    order = Math.round(order * 100) / 100;
+                    // Финальное округление (на случай если ветки выше не попали в smartRound)
+                    order = smartRound(order);
 
                     // Build supplierOrders для поставщиков с доставкой ЗАВТРА
                     const supplierOrders = {};
@@ -3605,12 +3672,12 @@
                         }
                         // else: продаж нет, остаток >= полки → supOrder = 0
 
-                        supOrder = Math.round(supOrder * 100) / 100;
+                        supOrder = smartRound(supOrder);
                         if (orderEdits[editKey] !== undefined) supOrder = orderEdits[editKey];
 
                         // Цена конкретного поставщика (не максимальная из всех!)
                         const supSpecificPrice = (supplierPrices[code] && supplierPrices[code][sup]) || p.inPrice || 0;
-                        const supSum = supOrder * supSpecificPrice;
+                        const supSum = smartRound(supOrder * supSpecificPrice);
                         supplierOrders[sup] = { order: supOrder, inPrice: supSpecificPrice, sum: supSum, daysUntil: 1, isPreferred: hasStorePref && sup === preferredSupplier };
                         if (supOrder > 0) allOrderSuppliers.add(sup);
                     });
@@ -3642,7 +3709,7 @@
                     else if (orderEdits[`${store.tt}_${code}`] !== undefined) order = orderEdits[`${store.tt}_${code}`];
 
                     const weekendAvgDisplay = weekendAvg || 0;
-                    const sum = order * inPrice;
+                    const sum = smartRound(order * inPrice);
 
                     results.push({
                         tt: store.tt, code, nomenclature: p.nomenclature || stockData?.name || '',
@@ -3850,8 +3917,8 @@
                                                     const editedVal = orderEdits[editKey];
                                                     const hasManualEdit = editedVal !== undefined;
                                                     const orderVal = hasManualEdit ? editedVal : (so ? so.order : 0);
-                                                    const supPrice = (supplierPrices[r.code] && supplierPrices[r.code][sup]) || r.inPrice || 0;
-                                                    const sumVal = orderVal * supPrice;
+                                                    const supPrice = (supplierPrices[normCode(r.code)] && supplierPrices[normCode(r.code)][sup]) || r.inPrice || 0;
+                                                    const sumVal = smartRound(orderVal * supPrice);
 
                                                     // Вне ассортимента или НЕТ в матрице — подсветка, инпут ДОСТУПЕН ВСЕГДА
                                                     if (r.notInMatrix && so) {
@@ -4025,18 +4092,18 @@
                     const editKey = `${r.tt}_${r.code}_${sup}`;
                     if (orderEdits[editKey] !== undefined) {
                         var so = r.supplierOrders[sup];
-                        so.order = orderEdits[editKey];
-                        so.sum = so.order * (so.inPrice || 0);
+                        so.order = smartRound(orderEdits[editKey]);
+                        so.sum = smartRound(so.order * (so.inPrice || 0));
                     }
                 });
                 // Also update primary order
                 const editKeyPrimary = r.supplier ? `${r.tt}_${r.code}_${r.supplier}` : `${r.tt}_${r.code}`;
                 if (orderEdits[editKeyPrimary] !== undefined) {
-                    r.order = orderEdits[editKeyPrimary];
-                    r.sum = r.order * (r.inPrice || 0);
+                    r.order = smartRound(orderEdits[editKeyPrimary]);
+                    r.sum = smartRound(r.order * (r.inPrice || 0));
                 } else if (orderEdits[`${r.tt}_${r.code}`] !== undefined) {
-                    r.order = orderEdits[`${r.tt}_${r.code}`];
-                    r.sum = r.order * (r.inPrice || 0);
+                    r.order = smartRound(orderEdits[`${r.tt}_${r.code}`]);
+                    r.sum = smartRound(r.order * (r.inPrice || 0));
                 }
             });
         }
@@ -4519,8 +4586,8 @@
                         r.deliveredQty || 0,
                         r.inTransitQty || 0,
                         r.daysUntil >= 99 ? '∞' : r.daysUntil,
-                        orderQty,
-                        (orderQty * (r.inPrice || 0)).toFixed(2),
+                        smartRound(orderQty),
+                        smartRound(orderQty * (r.inPrice || 0)).toFixed(2),
                         r.status || ''
                     ]);
                 } else {
@@ -4544,8 +4611,8 @@
                             r.deliveredQty || 0,
                             r.inTransitQty || 0,
                             daysText,
-                            orderQty,
-                            (orderQty * supPrice).toFixed(2),
+                            smartRound(orderQty),
+                            smartRound(orderQty * supPrice).toFixed(2),
                             statusText
                         ]);
                     });
@@ -4621,7 +4688,7 @@
                     if (!so || so.order <= 0) return;
                     const key = sup + '|||' + r.tt;
                     if (!groups[key]) groups[key] = { supplier: sup, store: r.tt, items: [] };
-                    groups[key].items.push({ code: r.code, name: r.nomenclature || r.code, qty: so.order, sum: so.sum || 0 });
+                    groups[key].items.push({ code: r.code, name: r.nomenclature || r.code, qty: smartRound(so.order), sum: smartRound(so.sum || 0) });
                 });
             });
 
@@ -4821,8 +4888,8 @@
                                                 var so = (r.supplierOrders || {})[sup];
                                                 var deliversTomorrow = so && so.daysUntil === 1;
                                                 var orderVal = so ? so.order : 0;
-                                                var supPrice = (supplierPrices[r.code] && supplierPrices[r.code][sup]) || r.inPrice || 0;
-                                                var sumVal = orderVal * supPrice;
+                                                var supPrice = (supplierPrices[normCode(r.code)] && supplierPrices[normCode(r.code)][sup]) || r.inPrice || 0;
+                                                var sumVal = smartRound(orderVal * supPrice);
                                                 // Вне ассортимента — голубой, показываем ВСЕГДА
                                                 if (r.notInMatrix && so) {
                                                     if (orderVal > 0) {

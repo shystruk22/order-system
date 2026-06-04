@@ -107,3 +107,24 @@ Stage Summary:
 - All supplier columns appear even for suppliers without active delivery days
 - Export correctly shows "не в матрице" status and "нет доставки" for days column
 - File: /home/z/my-project/download/fish-order.html (v3.23)
+---
+Task ID: 1
+Agent: main
+Task: Fix 3 issues in fish-order.html (v3.32 → v3.33)
+
+Work Log:
+- Analyzed all 3 issues: (1) Prices not persisting, (2) Decimal precision in comments, (3) Import parsing error
+- Issue 1 root cause: renderPrices() looked up supplierPrices using original code (p.code) instead of normCode, causing mismatch when codes had leading zeros
+- Issue 2 root cause: Floating point arithmetic produced values like 1.000000004 that were displayed raw in in-transit and export
+- Issue 3 root cause: importStoreWishes was fragile - no fallback parsing, no skip for empty rows, limited sheet detection
+- Added smartRound() helper function for clean decimal display
+- Fixed all supplierPrices lookups to use normCode
+- Added normCode to supplier import at line 2878
+- Applied smartRound to all order quantities, sums, in-transit display, and export
+- Rewrote importStoreWishes with dual parse mode (array/binary), better sheet detection, empty row skipping, per-row error handling
+- Updated version to 3.33
+
+Stage Summary:
+- fish-order.html v3.33 saved to /home/z/my-project/download/fish-order.html
+- 3 bugs fixed: price persistence, decimal precision, import parsing
+- File sharing services (catbox, tmpfiles, etc.) were not responding
