@@ -3992,7 +3992,7 @@
                                                     const wish = getStoreWish(r.tt, r.code);
                                                     if (!wish) return '<td class="text-center"></td>';
                                                     return '<td class="text-center bg-violet-50"><div class="text-[10px] text-violet-500">' + esc(wish.tt) + (wish.supplier ? ' → ' + esc(wish.supplier) : '') + '</div><div class="font-bold text-violet-700">' + wish.qty + '</div><button onclick="event.stopPropagation();removeStoreWish(\'' + esc(r.tt) + '\',\'' + esc(r.code) + '\')" class="text-red-300 hover:text-red-500 text-[10px]" title="Удалить">✕</button></td>';
-                                                })()() : ''}
+                                                })() : ''}
                                             </tr>`;
                                         }).join('')}
                                     `).join('')}
