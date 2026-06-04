@@ -2487,8 +2487,8 @@
                         if (h.includes('код') && !h.includes('весов')) codeCols.push(idx);
                         // Наименование
                         if (h.includes('наимен') || h.includes('товар') || h.includes('имя') || h === 'name') colName = idx;
-                        // Количество / Вес
-                        if (h.includes('вес') || h.includes('кол') || h.includes('qty') || h === 'количество' || h === 'кг' || h.includes('кол-во')) colQty = idx;
+                        // Количество / Вес (исключаем колонки с "код" в названии типа "Код весовой")
+                        if ((h.includes('вес') || h.includes('кол') || h.includes('qty') || h === 'количество' || h === 'кг' || h.includes('кол-во')) && !h.includes('код')) colQty = idx;
                     });
                     colCode = codeCols.length > 0 ? codeCols[0] : -1;
 
