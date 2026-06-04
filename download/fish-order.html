@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Заказ рыбы</title>
-    <!-- Version: 3.34 -->
+    <!-- Version: 3.35 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -561,19 +561,24 @@
         }
 
         function render() {
-            const content = document.getElementById('content');
-            const scrollTop = content.scrollTop;
-            const tableContainer = document.querySelector('.table-container');
-            const tableScrollTop = tableContainer ? tableContainer.scrollTop : 0;
+            try {
+                const content = document.getElementById('content');
+                const scrollTop = content.scrollTop;
+                const tableContainer = document.querySelector('.table-container');
+                const tableScrollTop = tableContainer ? tableContainer.scrollTop : 0;
 
-            renderTabs();
-            renderContent();
-            updateStats();
+                renderTabs();
+                renderContent();
+                updateStats();
 
-            content.scrollTop = scrollTop;
-            const newTableContainer = document.querySelector('.table-container');
-            if (newTableContainer && tableScrollTop > 0) {
-                newTableContainer.scrollTop = tableScrollTop;
+                content.scrollTop = scrollTop;
+                const newTableContainer = document.querySelector('.table-container');
+                if (newTableContainer && tableScrollTop > 0) {
+                    newTableContainer.scrollTop = tableScrollTop;
+                }
+            } catch(e) {
+                console.error('Render error:', e);
+                document.getElementById('content').innerHTML = '<div class="bg-red-50 border border-red-300 rounded-lg p-6 text-center"><p class="text-red-700 font-semibold text-lg">Ошибка отображения</p><p class="text-red-500 text-sm mt-2">' + esc(e.message) + '</p><button onclick="render()" class="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">Повторить</button></div>';
             }
         }
 
@@ -601,14 +606,19 @@
 
         function renderContent() {
             const el = document.getElementById('content');
-            switch(tab) {
-                case 'upload': el.innerHTML = renderUpload(); break;
-                case 'assortment': el.innerHTML = renderAssortment(); break;
-                case 'prices': el.innerHTML = renderPrices(); break;
-                case 'matrix': el.innerHTML = renderMatrix(); break;
-                case 'suppliers': el.innerHTML = renderSuppliers(); break;
-                case 'order': el.innerHTML = renderOrder(); break;
-                case 'intransit': el.innerHTML = renderIntransit(); break;
+            try {
+                switch(tab) {
+                    case 'upload': el.innerHTML = renderUpload(); break;
+                    case 'assortment': el.innerHTML = renderAssortment(); break;
+                    case 'prices': el.innerHTML = renderPrices(); break;
+                    case 'matrix': el.innerHTML = renderMatrix(); break;
+                    case 'suppliers': el.innerHTML = renderSuppliers(); break;
+                    case 'order': el.innerHTML = renderOrder(); break;
+                    case 'intransit': el.innerHTML = renderIntransit(); break;
+                }
+            } catch(e) {
+                console.error('Render content error:', e);
+                el.innerHTML = '<div class="bg-red-50 border border-red-300 rounded-lg p-6 text-center"><p class="text-red-700 font-semibold text-lg">Ошибка отображения</p><p class="text-red-500 text-sm mt-2">' + esc(e.message) + '</p><button onclick="render()" class="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">Повторить</button></div>';
             }
         }
 
@@ -1913,9 +1923,11 @@
 
             if (value > 0) {
                 supplierPrices[nc][supplierName] = value;
+                console.log('[Price] Saved:', nc, supplierName, '=', value);
             } else {
                 delete supplierPrices[nc][supplierName];
                 if (Object.keys(supplierPrices[nc]).length === 0) delete supplierPrices[nc];
+                console.log('[Price] Deleted:', nc, supplierName);
             }
             const product = matrix[nc] || matrix[code];
             if (product) {
@@ -1937,6 +1949,22 @@
             if (_priceRenderTimeout) clearTimeout(_priceRenderTimeout);
             _priceRenderTimeout = setTimeout(() => {
                 _priceRenderTimeout = null;
+                // Save any in-progress edits before re-rendering
+                var priceInputs = document.querySelectorAll('input[data-sprice]');
+                priceInputs.forEach(function(inp) {
+                    if (document.activeElement === inp) {
+                        var key = inp.getAttribute('data-sprice');
+                        var parts = key.split('_');
+                        var code = parts[0];
+                        var supplier = parts.slice(1).join('_');
+                        var val = parseFloat(inp.value);
+                        if (!isNaN(val) && val > 0) {
+                            if (!supplierPrices[code]) supplierPrices[code] = {};
+                            supplierPrices[code][supplier] = val;
+                        }
+                    }
+                });
+                save(KEYS.SUPPLIER_PRICES, supplierPrices);
                 render();
             }, 2000);
         }
@@ -2440,7 +2468,7 @@
 
                     // Пропускаем пустые строки в начале
                     let startRow = 0;
-                    while (startRow < rows.length && !rows[startRow] || (rows[startRow] && rows[startRow].every(c => !c && c !== 0))) {
+                    while (startRow < rows.length && (!rows[startRow] || (rows[startRow] && rows[startRow].every(c => !c && c !== 0)))) {
                         startRow++;
                     }
                     if (startRow >= rows.length - 1) { alert('Файл пуст или нет данных'); return; }
@@ -4893,7 +4921,7 @@
                                                 // Вне ассортимента — голубой, показываем ВСЕГДА
                                                 if (r.notInMatrix && so) {
                                                     if (orderVal > 0) {
-                                                        return '<td class="text-center bg-blue-50" title="\u041D\u0435 \u0432 \u043C\u0430\u0442\u0440\u0438\u0446\u0435"><div class="font-bold text-sm">' + orderVal.toFixed(1) + '</div><div class="text-[10px] text-gray-500">' + sumVal.toFixed(0) + ' \u20BD</div></td>';
+                                                        return '<td class="text-center bg-blue-50" title="\u041D\u0435 \u0432 \u043C\u0430\u0442\u0440\u0438\u0446\u0435"><div class="font-bold text-sm">' + smartRound(orderVal).toFixed(1) + '</div><div class="text-[10px] text-gray-500">' + sumVal.toFixed(0) + ' \u20BD</div></td>';
                                                     }
                                                     var bgClass = deliversTomorrow ? 'bg-blue-50' : 'bg-blue-100';
                                                     var titleText = deliversTomorrow ? '\u041D\u0435 \u0432 \u043C\u0430\u0442\u0440\u0438\u0446\u0435' : '\u041D\u0435 \u0432 \u043C\u0430\u0442\u0440\u0438\u0446\u0435, \u043D\u0435\u0442 \u0434\u043E\u0441\u0442\u0430\u0432\u043A\u0438';
@@ -4908,7 +4936,7 @@
                                                 }
                                                 var prefBg2 = (so && so.isPreferred) ? 'ring-2 ring-violet-300 bg-violet-50' : '';
                                                 if (orderVal > 0) {
-                                                    return '<td class="text-center ' + cellBg + ' ' + prefBg2 + '"><div class="font-bold text-sm">' + orderVal.toFixed(1) + '</div><div class="text-[10px] text-gray-500">' + sumVal.toFixed(0) + ' \u20BD</div></td>';
+                                                    return '<td class="text-center ' + cellBg + ' ' + prefBg2 + '"><div class="font-bold text-sm">' + smartRound(orderVal).toFixed(1) + '</div><div class="text-[10px] text-gray-500">' + sumVal.toFixed(0) + ' \u20BD</div></td>';
                                                 }
                                                 return '<td class="text-center ' + prefBg2 + '"><span class="text-gray-300">\u2014</span></td>';
                                             }).join('');

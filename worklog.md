@@ -128,3 +128,18 @@ Stage Summary:
 - fish-order.html v3.33 saved to /home/z/my-project/download/fish-order.html
 - 3 bugs fixed: price persistence, decimal precision, import parsing
 - File sharing services (catbox, tmpfiles, etc.) were not responding
+---
+Task ID: 2
+Agent: main
+Task: Fix 4 bugs in fish-order.html (v3.34 → v3.35)
+
+Work Log:
+- BUG 1: "Заказ" tab shows blank when renderOrder() throws — added try-catch to both render() (line 563) and renderContent() (line 607). Errors now display a red error box with message and retry button instead of blank content.
+- BUG 2: Prices in "Цена" tab not persisting when debounce render fires — added DOM collection of in-progress price edits before the 2-second debounce render() call. Also added console.log in updateSupplierPrice() for debugging price save/delete operations.
+- BUG 3: Floating point values like "1.000000004" in renderSavedOrder — wrapped orderVal with smartRound() at two display locations in renderSavedOrder (lines ~4924, ~4939) where raw orderVal.toFixed(1) was used instead of smartRound(orderVal).toFixed(1).
+- BUG 4: importStoreWishes parse error from operator precedence — `while (startRow < rows.length && !rows[startRow] || ...)` was parsed incorrectly because `&&` binds tighter than `||`. Fixed by adding explicit parentheses: `while (startRow < rows.length && (!rows[startRow] || ...))`.
+- Updated version comment to 3.35
+
+Stage Summary:
+- 4 bugs fixed: blank tab on error, price persistence, floating point display, import parse precedence
+- File: /home/z/my-project/download/fish-order.html (v3.35)
