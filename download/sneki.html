@@ -515,29 +515,18 @@
         const items = [];
         const foundTTs = new Set();
         let curTT = '';
-        // Определяем формат файла: старый (col0=код, col1=qty) или новый (col0=название, col1=код, дальше данные)
-        let formatDetected = null; // 'old' или 'new'
-        
-        // Логируем первые 15 строк для отладки
-        console.log('=== RAW SALES DATA (первые 15 строк) ===');
-        for (let d = 0; d < Math.min(15, json.length); d++) {
-          console.log(`[${d}]:`, json[d]);
-        }
-        console.log('=== END RAW ===');
         
         for (let i = 2; i < json.length; i++) {
           const r = json[i];
           if (!r || r.length === 0) continue;
           
           const c0 = String(r[0] || '').trim();
-          const c1 = String(r[1] || '').trim();
-          
-          const isTT = /склад|магазин|основной/i.test(c0) && !/^\d/.test(c0);
           
           // Пропускаем информационные строки: "(N поз.)", "ШТ", пустые, "нет в матрице" и т.д.
-          if (/^\(/.test(c0) || /^шт$/i.test(c0) || c0 === '' || /^нет/i.test(c0)) continue;
+          if (!c0 || /^\(/.test(c0) || /^шт$/i.test(c0) || /^нет/i.test(c0)) continue;
           
-          if (isTT) {
+          // TT detection
+          if (/склад|магазин|основной/i.test(c0) && !/^\d/.test(c0)) {
             curTT = matchStoreTT(c0);
             foundTTs.add(curTT);
             continue;
@@ -545,48 +534,45 @@
           
           if (!curTT) continue;
           
-          const c0IsDigit = /^\d/.test(c0);
-          const c1IsDigit = /^\d/.test(c1);
-          
-          // Автоопределение формата по первой строке товара
-          if (!formatDetected) {
-            if (c0IsDigit && !c1IsDigit) {
-              formatDetected = 'old'; // col0=код, col1=кол-во
-            } else if (!c0IsDigit && c1IsDigit) {
-              formatDetected = 'new'; // col0=название, col1=код, продажи дальше
+          // Поиск кода товара: ищем столбец с числовым кодом (5-8 цифр)
+          let code = null;
+          let codeCol = -1;
+          for (let col = 0; col < Math.min(r.length, 4); col++) {
+            const val = String(r[col] || '').trim();
+            // Код товара: 5-8 цифр, может с ведущими нулями
+            if (/^\d{5,10}$/.test(val)) {
+              code = normCode(val);
+              codeCol = col;
+              break;
             }
           }
           
-          if (formatDetected === 'old') {
-            // Старый формат: col0 = код, col1 = количество
-            const qty = parseFloat(c1) || 0;
-            if (c0IsDigit && qty > 0) {
-              items.push({ tt: curTT, code: normCode(c0), quantity: qty });
+          if (!code) continue;
+          
+          // Поиск количества: первое положительное число ПОСЛЕ столбца с кодом
+          let qty = 0;
+          for (let col = codeCol + 1; col < r.length; col++) {
+            const raw = String(r[col] || '').trim();
+            if (raw === '') continue;
+            const val = parseFloat(raw);
+            if (!isNaN(val) && val > 0) {
+              qty = val;
+              break;
             }
           }
-          else if (formatDetected === 'new') {
-            // Новый формат: col0 = название товара, col1 = код
-            // Продажи — сумма числовых значений из col2 до col5 (обычно: кол-во, цена, сумма, остаток)
-            // Пропускаем текстовые значения типа "ШТ", "нет в матрице"
-            const code = c1IsDigit ? normCode(c1) : null;
-            if (code) {
-              let totalQty = 0;
-              // Ограничиваем до col6 чтобы не захватить мусор из второй части строки (ШТ, статус)
-              for (let col = 2; col < Math.min(r.length, 7); col++) {
-                const raw = String(r[col] || '').trim();
-                const val = parseFloat(raw);
-                // Берём только числа > 0, пропускаем текст
-                if (raw !== '' && !isNaN(val) && val > 0) totalQty += val;
-              }
-              if (totalQty > 0) {
-                items.push({ tt: curTT, code, quantity: totalQty });
-              }
-            }
-          }
+          
+          // Записываем товар (даже если qty=0 — для отладки)
+          items.push({ tt: curTT, code, quantity: qty });
         }
         
-        console.log(`Парсинг продаж: ${items.length} записей, ${foundTTs.size} ТТ, формат: ${formatDetected}`);
-        if (items.length > 0) console.log('Первые 5 продаж:', items.slice(0, 5));
+        console.log('=== PARSE SALES RESULT ===');
+        console.log(`Всего: ${items.length} записей, ТТ: ${foundTTs.size}`);
+        console.log('Найденные ТТ:', [...foundTTs]);
+        if (items.length > 0) console.log('Первые 10:', items.slice(0, 10));
+        console.log('С qty>0:', items.filter(x => x.quantity > 0).length);
+        // Показываем пользователю что распарсилось
+        const withQty = items.filter(x => x.quantity > 0);
+        alert(`Продажи: ${withQty.length} записей с qty>0 из ${items.length} товаров\nTT: ${[...foundTTs].join(', ')}`);
         return { items, foundTTs };
       }, [matchStoreTT]);
 
