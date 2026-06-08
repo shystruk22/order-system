@@ -3469,20 +3469,63 @@
             const allStores = [...stores];
             const skippedTodayInfo = []; // Для информирования о пропущенных
 
-            // Карта остатков по ТТ и коду
-            const stockMap = new Map();
-            stocks.forEach(s => stockMap.set(`${s.tt}_${s.code}`, s));
+            // Общая карта мэтчинга TT
+            const storeTTSet = new Set(stores.map(s => s.tt));
 
-            // Карта продаж по ТТ и коду
+            // Карта остатков по ТТ и коду (с мэтчингом TT)
+            const stockMap = new Map();
+            const stockTTMatchMap = {};
+            stocks.forEach(s => {
+                let resolvedTT = s.tt;
+                if (!storeTTSet || !storeTTSet.has(s.tt)) {
+                    if (stockTTMatchMap[s.tt]) {
+                        resolvedTT = stockTTMatchMap[s.tt];
+                    } else {
+                        // Используем тот же мэтчинг что и для продаж
+                        const lower = s.tt.toLowerCase();
+                        for (const st of stores) {
+                            const stL = (st.tt || '').toLowerCase();
+                            if (stL && (lower.includes(stL) || stL.includes(lower))) { resolvedTT = st.tt; break; }
+                        }
+                        stockTTMatchMap[s.tt] = resolvedTT;
+                    }
+                }
+                stockMap.set(`${resolvedTT}_${s.code}`, s);
+            });
+
+            // Карта продаж по ТТ и коду (с мэтчингом TT)
             const salesByTTCode = {};
             const nameToCode = {};
             Object.entries(matrix).forEach(([code, p]) => {
                 if (p.nomenclature) nameToCode[p.nomenclature.trim().toLowerCase()] = code;
             });
+            // Карта мэтчинга TT: полное имя → короткое TT из stores
+            const ttMatchMap = {};
             sales.forEach(s => {
                 if (!s.tt) return;
+                // Мэтчим TT если оно длинное (из файла) и не совпадает ни с одним stores[].tt
+                let resolvedTT = s.tt;
+                if (!storeTTSet.has(s.tt)) {
+                    if (ttMatchMap[s.tt]) {
+                        resolvedTT = ttMatchMap[s.tt];
+                    } else {
+                        const lower = s.tt.toLowerCase();
+                        const cleaned = lower.replace(/основной склад/g, '').replace(/крым/g, '').replace(/[()]/g, '').replace(/\s+/g, ' ').trim();
+                        const fileWords = cleaned.split(/[\s,]+/).filter(w => w.length > 2);
+                        for (const st of stores) {
+                            const stL = (st.tt || '').toLowerCase();
+                            if (stL && lower.includes(stL)) { resolvedTT = st.tt; break; }
+                            const stCleaned = stL.replace(/\s+/g, ' ').trim();
+                            const stWords = stCleaned.split(/[\s,]+/).filter(w => w.length > 2);
+                            let mc = 0;
+                            for (const fw of fileWords) { for (const sw of stWords) { if (fw.includes(sw) || sw.includes(fw)) { mc++; break; } } }
+                            if (mc >= 2 && mc >= Math.min(fileWords.length, stWords.length) * 0.5) { resolvedTT = st.tt; break; }
+                        }
+                        ttMatchMap[s.tt] = resolvedTT;
+                    }
+                }
                 if (s.code) {
-                    const key = `${s.tt}_${normCode(s.code)}`;
+                    const key = `${resolvedTT}_${normCode(s.code)}`;
                     salesByTTCode[key] = (salesByTTCode[key] || 0) + s.quantity;
                 } else if (s.name) {
                     const normName = s.name.trim().toLowerCase();
@@ -4227,7 +4270,8 @@
                     const wb = XLSX.read(data, { type: 'array' });
                     const json = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' });
                     if (type === 'sales') {
-                        const result = SharedUtils.parseSales(json);
+                        const storeNames = stores.map(s => s.tt);
+                        const result = SharedUtils.parseSales(json, storeNames);
                         sales = result.items;
                         save(KEYS.SALES, sales);
                         // Дополнительно: парсим продажи с датами для расчёта выходных (Пн/Сб/Вс)
@@ -4235,7 +4279,8 @@
                         alert(`Загружено ${sales.length} продаж, найдено ${result.foundTTs.length} ТТ`);
                     }
                     else if (type === 'stocks') {
-                        const parseResult = SharedUtils.parseStocks(json);
+                        const storeNames = stores.map(s => s.tt);
+                        const parseResult = SharedUtils.parseStocks(json, storeNames);
                         const localItems = parseResult.items || parseResult;
                         // Маппим productName → name для совместимости
                         localItems.forEach(item => { item.name = item.productName || item.name || ''; });

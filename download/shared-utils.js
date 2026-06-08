@@ -154,12 +154,52 @@
     }
 
     // ============================================================================
+    // МЭТЧИНГ TT: сопоставление полного названия из файла с коротким TT из stores
+    // ============================================================================
+    function matchStoreTT(fileTTName, storeNames) {
+        if (!fileTTName || !storeNames || !storeNames.length) return fileTTName;
+        const lower = fileTTName.toLowerCase();
+        // 1) Точное совпадение
+        for (let i = 0; i < storeNames.length; i++) {
+            const st = storeNames[i].toLowerCase();
+            if (st === lower) return storeNames[i];
+        }
+        // 2) Полное название из файла содержит короткое TT
+        for (let i = 0; i < storeNames.length; i++) {
+            const st = storeNames[i].toLowerCase();
+            if (st && lower.includes(st)) return storeNames[i];
+        }
+        // 3) Короткое TT содержит часть из файла
+        for (let i = 0; i < storeNames.length; i++) {
+            const st = storeNames[i].toLowerCase();
+            if (st && st.includes(lower)) return storeNames[i];
+        }
+        // 4) Умный мэтчинг: убираем "Основной склад", "КРЫМ", скобки и сравниваем по словам
+        const cleaned = lower.replace(/основной склад/g, '').replace(/крым/g, '').replace(/[()]/g, '').replace(/\s+/g, ' ').trim();
+        const fileWords = cleaned.split(/[\s,]+/).filter(function(w) { return w.length > 2; });
+        for (let i = 0; i < storeNames.length; i++) {
+            const sCleaned = storeNames[i].toLowerCase().replace(/\s+/g, ' ').trim();
+            const storeWords = sCleaned.split(/[\s,]+/).filter(function(w) { return w.length > 2; });
+            let matchCount = 0;
+            for (let f = 0; f < fileWords.length; f++) {
+                for (let s = 0; s < storeWords.length; s++) {
+                    if (fileWords[f].includes(storeWords[s]) || storeWords[s].includes(fileWords[f])) { matchCount++; break; }
+                }
+            }
+            if (matchCount >= 2 && matchCount >= Math.min(fileWords.length, storeWords.length) * 0.5) return storeNames[i];
+        }
+        return fileTTName;
+    }
+
+    // ============================================================================
     // ПАРСИНГ ПРОДАЖ (из sneki.html — стандартная версия)
     // Формат: Строка 1-2 = заголовки, далее:
     //   Кол 0: Название ТТ (склад|магазин|основной) ИЛИ код товара (цифры)
     //   Кол 1: Количество продаж
+    //   @param {Array} json - строки Excel
+    //   @param {Array} [storeNames] - список TT из stores для мэтчинга
     // ============================================================================
-    function parseSales(json) {
+    function parseSales(json, storeNames) {
         const items = [];
         const foundTTs = new Set();
         let curTT = '';
@@ -175,15 +215,15 @@
             const isProductCode = /^\d/.test(c0);
 
             if (isTT) {
-                curTT = c0;
+                curTT = matchStoreTT(c0, storeNames);
                 foundTTs.add(curTT);
             } else if (isProductCode && curTT && qty > 0) {
                 items.push({ tt: curTT, code: normCode(c0), quantity: qty });
             }
         }
 
-        console.log(`[SharedUtils] Парсинг продаж: ${items.length} записей, ${foundTTs.size} ТТ`);
-        return { items, foundTTs: Array.from(foundTTs) };
+        console.log('[SharedUtils] Парсинг продаж: ' + items.length + ' записей, ' + foundTTs.size + ' ТТ');
+        return { items: items, foundTTs: Array.from(foundTTs) };
     }
 
     // ============================================================================
@@ -193,7 +233,7 @@
     //   Кол 1: Код товара
     //   Кол 2+: Дневные остатки (последняя колонка = текущий остаток)
     // ============================================================================
-    function parseStocks(json) {
+    function parseStocks(json, storeNames) {
         const items = [];
         const foundTTs = new Set();
         let curTT = '';
@@ -215,7 +255,7 @@
             const isProductCode = /^\d/.test(code) || code.length >= 5;
 
             if (isTT) {
-                curTT = c0;
+                curTT = matchStoreTT(c0, storeNames);
                 foundTTs.add(curTT);
             } else if (isProductCode && curTT && c0) {
                 // Считаем daysPresent — количество дней где остаток > 0
