@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>СНЕКИ — Система расчёта заказа</title>
-  <!-- Version: 12.3 -->
+  <!-- Version: 12.4 -->
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -626,31 +626,55 @@
           // Разбиваем по табам, а не по пробелам
           const parts = line.split('\t').map(p => p.trim()).filter(p => p);
           
-          // Пропускаем заголовки типа "Склад РЦ Крым"
+          // Пропускаем заголовки
           if (parts.length < 2) return;
-          if (parts[0].toLowerCase().includes('склад') || parts[0].toLowerCase().includes('rc')) return;
+          if (parts[0].toLowerCase().includes('склад') || parts[0].toLowerCase().includes('rc') || parts[0].toLowerCase().includes('наимен') || parts[0].toLowerCase().includes('код')) return;
           
-          // Формат: Наименование | Код | Остаток
+          // Умный поиск кода и остатка в строке
+          let code = '', name = parts[0], stock = 0;
+          
           if (parts.length >= 3) {
-            const name = parts[0];
-            const code = normCode(parts[1]);
-            // Остаток может быть с запятой как десятичный разделитель
-            const stock = parseFloat(parts[2].replace(',', '.').replace(/\s/g, '')) || 0;
-            if (code && stock > 0) {
-              newRc[code] = stock;
-              count++;
-              if (!matrix[code]) {
+            // Ищем числовые колонки (код = целое число, остаток = число с дробью)
+            let codeCol = -1, stockCol = -1;
+            for (let i = 1; i < parts.length; i++) {
+              const v = String(parts[i]).trim();
+              if (/^\d+$/.test(v) && codeCol < 0) codeCol = i;  // первое целое число = код
+            }
+            // Остаток = последнее число (целое или дробное) после кода
+            for (let i = parts.length - 1; i > codeCol; i--) {
+              const v = parseFloat(String(parts[i]).replace(',', '.').replace(/\s/g, ''));
+              if (!isNaN(v) && v > 0) { stockCol = i; stock = v; break; }
+            }
+            if (codeCol >= 0) code = normCode(parts[codeCol]);
+            // Fallback: если код не найден, ищем любое число >= 3 цифр
+            if (!code) {
+              for (let i = 0; i < parts.length; i++) {
+                const v = String(parts[i]).trim();
+                if (/^\d{3,}$/.test(v)) { code = normCode(v); break; }
+              }
+            }
+          } else if (parts.length === 2) {
+            const isP0Num = /^\d+$/.test(String(parts[0]).trim());
+            if (isP0Num) {
+              code = normCode(parts[0]);
+              stock = parseFloat(String(parts[1]).replace(',', '.').replace(/\s/g, '')) || 0;
+            } else {
+              for (let i = 0; i < parts.length; i++) { if (/^\d+$/.test(String(parts[i]).trim())) { code = normCode(parts[i]); break; } }
+              for (let i = parts.length - 1; i >= 0; i--) { const v = parseFloat(String(parts[i]).replace(',', '.').replace(/\s/g, '')) || 0; if (v > 0) { stock = v; break; } }
+            }
+          }
+          
+          if (code && code !== '0' && stock > 0) {
+            newRc[code] = stock;
+            count++;
+            if (!matrix[code]) {
+              if (name && !/^\d+$/.test(name.trim())) {
                 const newProduct = { code, nomenclature: name, group: 'есть на РЦ', packaging: 'ШТ', weightCode: '', inPrice: 0, outPrice: 0, shelf: 0, quant: 1 };
                 stores.forEach(s => { newProduct[s.tt] = 'НЕТ'; });
                 newProducts.push(newProduct);
                 addedToMatrix++;
               }
             }
-          } else if (parts.length === 2) {
-            // Формат: Код | Остаток (без наименования)
-            const code = normCode(parts[0]);
-            const stock = parseFloat(parts[1].replace(',', '.').replace(/\s/g, '')) || 0;
-            if (code && stock > 0) { newRc[code] = stock; count++; }
           }
         });
         
@@ -760,8 +784,8 @@
               const shelfVal = shelfValues[key];
               const shelf = useShelf ? (shelfVal !== undefined ? shelfVal : (p.packaging === 'КГ' ? 1 : 4)) : null;
 
-              if (!inMatrix) { res.push({ tt: store.tt, code, nomenclature: p.nomenclature, group: p.group || '', currentStock: 0, sales: 0, daysPresent: 0, shelf, order: 0, packaging: p.packaging, orderStatus: 'нет в матрице', rcStock, manualEdit: false, avgSalesPerDay: 0 }); return; }
-              if (rcStock <= 0) { res.push({ tt: store.tt, code, nomenclature: p.nomenclature, group: p.group || '', currentStock: stockData?.currentStock || 0, sales: 0, daysPresent: 0, shelf, order: 0, packaging: p.packaging, orderStatus: 'нет на РЦ', rcStock: 0, manualEdit: false, avgSalesPerDay: 0 }); return; }
+              if (!inMatrix) { res.push({ tt: store.tt, code, nomenclature: p.nomenclature, group: p.group || '', currentStock: stockData?.currentStock || 0, sales: 0, daysPresent: stockData?.daysPresent || 0, shelf, order: 0, packaging: p.packaging, orderStatus: 'нет в матрице', rcStock, manualEdit: false, avgSalesPerDay: 0 }); return; }
+              if (rcStock <= 0) { res.push({ tt: store.tt, code, nomenclature: p.nomenclature, group: p.group || '', currentStock: stockData?.currentStock || 0, sales: 0, daysPresent: stockData?.daysPresent || 0, shelf, order: 0, packaging: p.packaging, orderStatus: 'нет на РЦ', rcStock: 0, manualEdit: false, avgSalesPerDay: 0 }); return; }
               // Товар в матрице, есть на РЦ, но нет на точке (нет данных остатков или остаток = 0)
               if (!stockData || stockData.currentStock <= 0) {
                 const minOrder = p.packaging === 'КГ' ? 0.5 : 2;
@@ -1721,7 +1745,14 @@
                           </tr>
                           {!collapsedGroups[group] && items.map(p => (
                             <tr key={p.code} className="hover:bg-gray-50 transition-colors">
-                              <td className="sticky-col-1 bg-white text-xs text-gray-500">{p.group || ''}</td>
+                              <td className="sticky-col-1 bg-white"><select value={p.group || ''} onChange={e => {
+                                const newGroup = e.target.value;
+                                setMatrix(prev => ({ ...prev, [p.code]: { ...prev[p.code], group: newGroup } }));
+                                setProducts(prev => prev.map(prod => prod.code === p.code ? { ...prod, group: newGroup } : prod));
+                              }} className="text-xs bg-transparent border border-transparent hover:border-gray-300 focus:border-blue-400 focus:bg-white rounded px-1 py-0.5 w-full max-w-[140px] cursor-pointer outline-none">
+                                {allGroups.map(g => <option key={g} value={g}>{g}</option>)}
+                                {!allGroups.includes(p.group || '') && <option value={p.group || ''}>{p.group || ''}</option>}
+                              </select></td>
                               <td className="sticky-col-2 bg-white">{p.nomenclature}</td>
                               <td className="font-mono text-sm">{p.code}</td>
                               <td className="text-center">{p.packaging}</td>

@@ -475,6 +475,41 @@
         return { items, newShelf, newQuants: {} };
       }, []);
 
+      // Мэтчинг TT из файла с stores — умный поиск по ключевым словам
+      const matchStoreTT = useCallback((fileTTName) => {
+        if (!fileTTName || !stores.length) return fileTTName;
+        const lower = fileTTName.toLowerCase();
+        // 1) Точное совпадение
+        for (const s of stores) {
+          if (s.tt && s.tt.toLowerCase() === lower) return s.tt;
+        }
+        // 2) Вложение: полное название из файла содержит короткое TT
+        for (const s of stores) {
+          if (s.tt && lower.includes(s.tt.toLowerCase())) return s.tt;
+        }
+        // 3) Вложение наоборот: короткое TT содержит часть из файла
+        for (const s of stores) {
+          if (s.tt && s.tt.toLowerCase().includes(lower)) return s.tt;
+        }
+        // 4) Умный мэтчинг: извлекаем ключевые слова (город + улица) и сравниваем
+        // Убираем "Основной склад (КРЫМ," и скобки
+        const cleaned = lower.replace(/основной склад/g, '').replace(/крым/g, '').replace(/[()]/g, '').replace(/\s+/g, ' ').trim();
+        for (const s of stores) {
+          const sCleaned = (s.tt || '').toLowerCase().replace(/\s+/g, ' ').trim();
+          // Сравниваем по совпадению слов: проверяем что ключевые слова из cleaned есть в sCleaned
+          const fileWords = cleaned.split(/[\s,]+/).filter(w => w.length > 2);
+          const storeWords = sCleaned.split(/[\s,]+/).filter(w => w.length > 2);
+          const matches = fileWords.filter(fw => storeWords.some(sw => fw.includes(sw) || sw.includes(fw)));
+          if (matches.length >= 2 && matches.length >= Math.min(fileWords.length, storeWords.length) * 0.5) return s.tt;
+        }
+        // 5) Пробуем tt2
+        for (const s of stores) {
+          const sTT2 = (s.tt2 || '').toLowerCase();
+          if (sTT2 && (lower.includes(sTT2) || sTT2.includes(lower))) return s.tt;
+        }
+        return fileTTName;
+      }, [stores]);
+
       // Parse sales file
       const parseSales = useCallback((json) => {
         const items = [];
@@ -491,13 +526,16 @@
           const isTT = /склад|магазин|основной/i.test(c0) && !/^\d/.test(c0);
           const isProductCode = /^\d/.test(c0);
           
-          if (isTT) { curTT = c0; foundTTs.add(curTT); }
+          if (isTT) {
+            curTT = matchStoreTT(c0);
+            foundTTs.add(curTT);
+          }
           else if (isProductCode && curTT && qty > 0) { items.push({ tt: curTT, code: normCode(c0), quantity: qty }); }
         }
         
         console.log(`Парсинг продаж: ${items.length} записей, ${foundTTs.size} ТТ`);
         return { items, foundTTs };
-      }, []);
+      }, [matchStoreTT]);
 
       // Parse stocks file
       const parseStocks = useCallback((json) => {
@@ -518,7 +556,10 @@
           const isTT = /склад|магазин|основной/i.test(c0) && !/^\d/.test(code);
           const isProductCode = /^\d/.test(code) || code.length >= 5;
           
-          if (isTT) { curTT = c0; foundTTs.add(curTT); }
+          if (isTT) {
+            curTT = matchStoreTT(c0);
+            foundTTs.add(curTT);
+          }
           else if (isProductCode && curTT && c0) {
             let daysPresent = 0, totalDays = 0;
             for (let col = 2; col <= lastCol; col++) {
@@ -531,7 +572,7 @@
         
         console.log(`Парсинг остатков: ${items.length} записей, ${foundTTs.size} ТТ`);
         return { items, foundTTs };
-      }, []);
+      }, [matchStoreTT]);
 
       // File upload handler
       const handleFile = useCallback((file, type) => {
