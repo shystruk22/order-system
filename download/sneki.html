@@ -735,8 +735,24 @@
       const createMatrix = useCallback(() => {
         if (products.length === 0) { alert('Загрузите ассортимент!'); return; }
         const storeList = stores.map(s => s.tt);
+        const storeTTSet2 = new Set(storeList);
+        const ttCache2 = {};
+        function resolveTT2(tt) {
+          if (!tt || storeTTSet2.has(tt)) return tt;
+          if (ttCache2[tt]) return ttCache2[tt];
+          const lower = tt.toLowerCase();
+          for (const s of stores) { const st = (s.tt||'').toLowerCase(); if (st && lower.includes(st)) { ttCache2[tt]=s.tt; return s.tt; } }
+          const cleaned = lower.replace(/основной склад/g,'').replace(/крым/g,'').replace(/[()]/g,'').replace(/\s+/g,' ').trim();
+          const fw = cleaned.split(/[\s,]+/).filter(w=>w.length>2);
+          for (const s of stores) {
+            const sw = (s.tt||'').toLowerCase().split(/[\s,]+/).filter(w=>w.length>2);
+            let mc=0; for (const f of fw) { for (const w of sw) { if (f.includes(w)||w.includes(f)) { mc++; break; } } }
+            if (mc>=2) { ttCache2[tt]=s.tt; return s.tt; }
+          }
+          ttCache2[tt]=tt; return tt;
+        }
         const salesMap = new Map();
-        sales.forEach(s => { const key = `${s.tt}_${s.code}`; salesMap.set(key, (salesMap.get(key) || 0) + s.quantity); });
+        sales.forEach(s => { const key = `${resolveTT2(s.tt)}_${s.code}`; salesMap.set(key, (salesMap.get(key) || 0) + s.quantity); });
         const newMatrix = {};
         products.forEach(p => {
           newMatrix[p.code] = { ...p };
@@ -811,10 +827,36 @@
         if (stocks.length === 0) { alert('Загрузите остатки!'); return; }
         setLoading(true);
         setTimeout(() => {
+          // Мэтчинг TT: строим карту длинное имя → короткое TT из stores
+          const storeTTSet = new Set(stores.map(s => s.tt));
+          const ttMatchCache = {};
+          function resolveTT(rawTT) {
+            if (!rawTT || storeTTSet.has(rawTT)) return rawTT;
+            if (ttMatchCache[rawTT]) return ttMatchCache[rawTT];
+            const lower = rawTT.toLowerCase();
+            // Вложение: полное содержит короткое
+            for (const s of stores) {
+              const st = (s.tt || '').toLowerCase();
+              if (st && lower.includes(st)) { ttMatchCache[rawTT] = s.tt; return s.tt; }
+            }
+            // Умный мэтчинг по ключевым словам
+            const cleaned = lower.replace(/основной склад/g, '').replace(/крым/g, '').replace(/[()]/g, '').replace(/\s+/g, ' ').trim();
+            const fileWords = cleaned.split(/[\s,]+/).filter(w => w.length > 2);
+            for (const s of stores) {
+              const stL = (s.tt || '').toLowerCase().replace(/\s+/g, ' ').trim();
+              const stWords = stL.split(/[\s,]+/).filter(w => w.length > 2);
+              let mc = 0;
+              for (const fw of fileWords) { for (const sw of stWords) { if (fw.includes(sw) || sw.includes(fw)) { mc++; break; } } }
+              if (mc >= 2) { ttMatchCache[rawTT] = s.tt; return s.tt; }
+            }
+            ttMatchCache[rawTT] = rawTT;
+            return rawTT;
+          }
+
           const stockMap = new Map();
-          stocks.forEach(s => { stockMap.set(`${s.tt}_${s.code}`, s); });
+          stocks.forEach(s => { stockMap.set(`${resolveTT(s.tt)}_${s.code}`, s); });
           const salesMap = new Map();
-          sales.forEach(s => { const key = `${s.tt}_${s.code}`; salesMap.set(key, (salesMap.get(key) || 0) + s.quantity); });
+          sales.forEach(s => { const key = `${resolveTT(s.tt)}_${s.code}`; salesMap.set(key, (salesMap.get(key) || 0) + s.quantity); });
           const res = [];
           stores.forEach(store => {
             Object.entries(matrix).forEach(([code, p]) => {
