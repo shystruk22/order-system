@@ -534,13 +534,13 @@
           
           if (!curTT) continue;
           
-          // Поиск кода товара: ищем столбец с числовым кодом (5-8 цифр)
+          // Поиск кода товара: ищем столбец с числовым кодом
           let code = null;
           let codeCol = -1;
-          for (let col = 0; col < Math.min(r.length, 4); col++) {
+          for (let col = 0; col < Math.min(r.length, 6); col++) {
             const val = String(r[col] || '').trim();
-            // Код товара: 5-8 цифр, может с ведущими нулями
-            if (/^\d{5,10}$/.test(val)) {
+            // Код товара: минимум 4 цифры, может с ведущими нулями (до 20 символов)
+            if (/^\d{4,20}$/.test(val)) {
               code = normCode(val);
               codeCol = col;
               break;
