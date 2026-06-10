@@ -884,16 +884,18 @@
               const shelfVal = shelfValues[key];
               const shelf = useShelf ? (shelfVal !== undefined ? shelfVal : (p.packaging === 'КГ' ? 1 : 4)) : null;
 
-              if (!inMatrix) { res.push({ tt: store.tt, code, nomenclature: p.nomenclature, group: p.group || '', currentStock: stockData?.currentStock || 0, sales: 0, daysPresent: stockData?.daysPresent || 0, shelf, order: 0, packaging: p.packaging, orderStatus: 'нет в матрице', rcStock, manualEdit: false, avgSalesPerDay: 0 }); return; }
-              if (rcStock <= 0) { res.push({ tt: store.tt, code, nomenclature: p.nomenclature, group: p.group || '', currentStock: stockData?.currentStock || 0, sales: 0, daysPresent: stockData?.daysPresent || 0, shelf, order: 0, packaging: p.packaging, orderStatus: 'нет на РЦ', rcStock: 0, manualEdit: false, avgSalesPerDay: 0 }); return; }
+              // ВСЕГДА ищем продажи из salesMap — независимо от статуса товара
+              const salesQty = salesMap.get(key) || 0;
+
+              if (!inMatrix) { res.push({ tt: store.tt, code, nomenclature: p.nomenclature, group: p.group || '', currentStock: stockData?.currentStock || 0, sales: salesQty, daysPresent: stockData?.daysPresent || 0, shelf, order: 0, packaging: p.packaging, orderStatus: 'нет в матрице', rcStock, manualEdit: false, avgSalesPerDay: 0 }); return; }
+              if (rcStock <= 0) { res.push({ tt: store.tt, code, nomenclature: p.nomenclature, group: p.group || '', currentStock: stockData?.currentStock || 0, sales: salesQty, daysPresent: stockData?.daysPresent || 0, shelf, order: 0, packaging: p.packaging, orderStatus: 'нет на РЦ', rcStock: 0, manualEdit: false, avgSalesPerDay: 0 }); return; }
               // Товар в матрице, есть на РЦ, но нет на точке (нет данных остатков или остаток = 0)
               if (!stockData || stockData.currentStock <= 0) {
                 const minOrder = p.packaging === 'КГ' ? 0.5 : 2;
-                res.push({ tt: store.tt, code, nomenclature: p.nomenclature, group: p.group || '', currentStock: stockData?.currentStock || 0, sales: 0, daysPresent: 0, shelf, order: minOrder, packaging: p.packaging, orderStatus: `заказ ${minOrder} (мин.)`, rcStock, manualEdit: true, avgSalesPerDay: 0 });
+                res.push({ tt: store.tt, code, nomenclature: p.nomenclature, group: p.group || '', currentStock: stockData?.currentStock || 0, sales: salesQty, daysPresent: 0, shelf, order: minOrder, packaging: p.packaging, orderStatus: `заказ ${minOrder} (мин.)`, rcStock, manualEdit: true, avgSalesPerDay: 0 });
                 return;
               }
 
-              const salesQty = salesMap.get(key) || 0;
               const avgSales = stockData.daysPresent > 0 ? salesQty / stockData.daysPresent : 0;
               // Получаем квант из группы для КГ товаров
               const groupQuant = p.packaging === 'КГ' ? (groupQuants[p.group || ''] || 0.5) : 1;
