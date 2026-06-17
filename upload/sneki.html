@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>СНЕКИ — Система расчёта заказа</title>
-  <!-- Version: 12.4 -->
+  <!-- Version: 12.5 -->
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -475,7 +475,42 @@
         return { items, newShelf, newQuants: {} };
       }, []);
 
-      // Parse sales file
+      // Мэтчинг TT из файла с stores — умный поиск по ключевым словам
+      const matchStoreTT = useCallback((fileTTName) => {
+        if (!fileTTName || !stores.length) return fileTTName;
+        const lower = fileTTName.toLowerCase();
+        // 1) Точное совпадение
+        for (const s of stores) {
+          if (s.tt && s.tt.toLowerCase() === lower) return s.tt;
+        }
+        // 2) Вложение: полное название из файла содержит короткое TT
+        for (const s of stores) {
+          if (s.tt && lower.includes(s.tt.toLowerCase())) return s.tt;
+        }
+        // 3) Вложение наоборот: короткое TT содержит часть из файла
+        for (const s of stores) {
+          if (s.tt && s.tt.toLowerCase().includes(lower)) return s.tt;
+        }
+        // 4) Умный мэтчинг: извлекаем ключевые слова (город + улица) и сравниваем
+        // Убираем "Основной склад (КРЫМ," и скобки
+        const cleaned = lower.replace(/основной склад/g, '').replace(/крым/g, '').replace(/[()]/g, '').replace(/\s+/g, ' ').trim();
+        for (const s of stores) {
+          const sCleaned = (s.tt || '').toLowerCase().replace(/\s+/g, ' ').trim();
+          // Сравниваем по совпадению слов: проверяем что ключевые слова из cleaned есть в sCleaned
+          const fileWords = cleaned.split(/[\s,]+/).filter(w => w.length > 2);
+          const storeWords = sCleaned.split(/[\s,]+/).filter(w => w.length > 2);
+          const matches = fileWords.filter(fw => storeWords.some(sw => fw.includes(sw) || sw.includes(fw)));
+          if (matches.length >= 2 && matches.length >= Math.min(fileWords.length, storeWords.length) * 0.5) return s.tt;
+        }
+        // 5) Пробуем tt2
+        for (const s of stores) {
+          const sTT2 = (s.tt2 || '').toLowerCase();
+          if (sTT2 && (lower.includes(sTT2) || sTT2.includes(lower))) return s.tt;
+        }
+        return fileTTName;
+      }, [stores]);
+
+      // Parse sales file — формат: 2 столбца (код, кол-во), TT = строка-заголовок между блоками
       const parseSales = useCallback((json) => {
         const items = [];
         const foundTTs = new Set();
@@ -485,19 +520,41 @@
           const r = json[i];
           if (!r || r.length === 0) continue;
           
-          const c0 = String(r[0] || '').trim();
-          const qty = parseFloat(String(r[1])) || 0;
+          const c0Raw = r[0];
+          const c0 = String(c0Raw || '').trim();
           
-          const isTT = /склад|магазин|основной/i.test(c0) && !/^\d/.test(c0);
-          const isProductCode = /^\d/.test(c0);
+          // Пропускаем пустые и информационные строки
+          if (!c0) continue;
           
-          if (isTT) { curTT = c0; foundTTs.add(curTT); }
-          else if (isProductCode && curTT && qty > 0) { items.push({ tt: curTT, code: normCode(c0), quantity: qty }); }
+          // TT detection — строка содержит "склад" и не является числом
+          if (/склад|магазин|основной/i.test(c0) && !/^\d/.test(c0)) {
+            curTT = matchStoreTT(c0);
+            foundTTs.add(curTT);
+            continue;
+          }
+          
+          if (!curTT) continue;
+          
+          // Код товара в col0: может быть строка с ведущими нулями или число
+          // Проверяем что c0 — это число (с нулями или без)
+          const isCode = /^\d+$/.test(c0) || (typeof c0Raw === 'number' && c0Raw > 0);
+          
+          if (isCode) {
+            const code = normCode(c0);
+            const qty = parseFloat(String(r[1] || 0)) || 0;
+            items.push({ tt: curTT, code, quantity: qty });
+          }
         }
         
-        console.log(`Парсинг продаж: ${items.length} записей, ${foundTTs.size} ТТ`);
+        console.log('=== PARSE SALES ===');
+        console.log(`Товаров: ${items.length}, TT: ${foundTTs.size}`);
+        console.log('TT:', [...foundTTs]);
+        if (items.length > 0) console.log('Первые 5:', items.slice(0, 5));
+        console.log('С qty>0:', items.filter(x => x.quantity > 0).length);
+        const withQty = items.filter(x => x.quantity > 0);
+        alert(`Продажи: ${withQty.length} с qty>0 из ${items.length} товаров\nTT: ${[...foundTTs].join(', ')}`);
         return { items, foundTTs };
-      }, []);
+      }, [matchStoreTT]);
 
       // Parse stocks file
       const parseStocks = useCallback((json) => {
@@ -518,7 +575,10 @@
           const isTT = /склад|магазин|основной/i.test(c0) && !/^\d/.test(code);
           const isProductCode = /^\d/.test(code) || code.length >= 5;
           
-          if (isTT) { curTT = c0; foundTTs.add(curTT); }
+          if (isTT) {
+            curTT = matchStoreTT(c0);
+            foundTTs.add(curTT);
+          }
           else if (isProductCode && curTT && c0) {
             let daysPresent = 0, totalDays = 0;
             for (let col = 2; col <= lastCol; col++) {
@@ -531,7 +591,7 @@
         
         console.log(`Парсинг остатков: ${items.length} записей, ${foundTTs.size} ТТ`);
         return { items, foundTTs };
-      }, []);
+      }, [matchStoreTT]);
 
       // File upload handler
       const handleFile = useCallback((file, type) => {
@@ -566,8 +626,6 @@
             else if (type === 'sales') {
               const { items, foundTTs } = parseSales(json);
               setSales(items);
-              // НЕ добавляем новые ТТ автоматически - используем только те, что есть в списке магазинов
-              alert(`Загружено ${items.length} продаж, найдено ${foundTTs.size} ТТ\n(расчёт только по магазинам из списка)`);
             }
             else if (type === 'stocks') {
               const { items, foundTTs } = parseStocks(json);
@@ -694,8 +752,24 @@
       const createMatrix = useCallback(() => {
         if (products.length === 0) { alert('Загрузите ассортимент!'); return; }
         const storeList = stores.map(s => s.tt);
+        const storeTTSet2 = new Set(storeList);
+        const ttCache2 = {};
+        function resolveTT2(tt) {
+          if (!tt || storeTTSet2.has(tt)) return tt;
+          if (ttCache2[tt]) return ttCache2[tt];
+          const lower = tt.toLowerCase();
+          for (const s of stores) { const st = (s.tt||'').toLowerCase(); if (st && lower.includes(st)) { ttCache2[tt]=s.tt; return s.tt; } }
+          const cleaned = lower.replace(/основной склад/g,'').replace(/крым/g,'').replace(/[()]/g,'').replace(/\s+/g,' ').trim();
+          const fw = cleaned.split(/[\s,]+/).filter(w=>w.length>2);
+          for (const s of stores) {
+            const sw = (s.tt||'').toLowerCase().split(/[\s,]+/).filter(w=>w.length>2);
+            let mc=0; for (const f of fw) { for (const w of sw) { if (f.includes(w)||w.includes(f)) { mc++; break; } } }
+            if (mc>=2) { ttCache2[tt]=s.tt; return s.tt; }
+          }
+          ttCache2[tt]=tt; return tt;
+        }
         const salesMap = new Map();
-        sales.forEach(s => { const key = `${s.tt}_${s.code}`; salesMap.set(key, (salesMap.get(key) || 0) + s.quantity); });
+        sales.forEach(s => { const key = `${resolveTT2(s.tt)}_${s.code}`; salesMap.set(key, (salesMap.get(key) || 0) + s.quantity); });
         const newMatrix = {};
         products.forEach(p => {
           newMatrix[p.code] = { ...p };
@@ -770,10 +844,36 @@
         if (stocks.length === 0) { alert('Загрузите остатки!'); return; }
         setLoading(true);
         setTimeout(() => {
+          // Мэтчинг TT: строим карту длинное имя → короткое TT из stores
+          const storeTTSet = new Set(stores.map(s => s.tt));
+          const ttMatchCache = {};
+          function resolveTT(rawTT) {
+            if (!rawTT || storeTTSet.has(rawTT)) return rawTT;
+            if (ttMatchCache[rawTT]) return ttMatchCache[rawTT];
+            const lower = rawTT.toLowerCase();
+            // Вложение: полное содержит короткое
+            for (const s of stores) {
+              const st = (s.tt || '').toLowerCase();
+              if (st && lower.includes(st)) { ttMatchCache[rawTT] = s.tt; return s.tt; }
+            }
+            // Умный мэтчинг по ключевым словам
+            const cleaned = lower.replace(/основной склад/g, '').replace(/крым/g, '').replace(/[()]/g, '').replace(/\s+/g, ' ').trim();
+            const fileWords = cleaned.split(/[\s,]+/).filter(w => w.length > 2);
+            for (const s of stores) {
+              const stL = (s.tt || '').toLowerCase().replace(/\s+/g, ' ').trim();
+              const stWords = stL.split(/[\s,]+/).filter(w => w.length > 2);
+              let mc = 0;
+              for (const fw of fileWords) { for (const sw of stWords) { if (fw.includes(sw) || sw.includes(fw)) { mc++; break; } } }
+              if (mc >= 2) { ttMatchCache[rawTT] = s.tt; return s.tt; }
+            }
+            ttMatchCache[rawTT] = rawTT;
+            return rawTT;
+          }
+
           const stockMap = new Map();
-          stocks.forEach(s => { stockMap.set(`${s.tt}_${s.code}`, s); });
+          stocks.forEach(s => { stockMap.set(`${resolveTT(s.tt)}_${s.code}`, s); });
           const salesMap = new Map();
-          sales.forEach(s => { const key = `${s.tt}_${s.code}`; salesMap.set(key, (salesMap.get(key) || 0) + s.quantity); });
+          sales.forEach(s => { const key = `${resolveTT(s.tt)}_${s.code}`; salesMap.set(key, (salesMap.get(key) || 0) + s.quantity); });
           const res = [];
           stores.forEach(store => {
             Object.entries(matrix).forEach(([code, p]) => {
@@ -784,24 +884,27 @@
               const shelfVal = shelfValues[key];
               const shelf = useShelf ? (shelfVal !== undefined ? shelfVal : (p.packaging === 'КГ' ? 1 : 4)) : null;
 
-              if (!inMatrix) { res.push({ tt: store.tt, code, nomenclature: p.nomenclature, group: p.group || '', currentStock: stockData?.currentStock || 0, sales: 0, daysPresent: stockData?.daysPresent || 0, shelf, order: 0, packaging: p.packaging, orderStatus: 'нет в матрице', rcStock, manualEdit: false, avgSalesPerDay: 0 }); return; }
-              if (rcStock <= 0) { res.push({ tt: store.tt, code, nomenclature: p.nomenclature, group: p.group || '', currentStock: stockData?.currentStock || 0, sales: 0, daysPresent: stockData?.daysPresent || 0, shelf, order: 0, packaging: p.packaging, orderStatus: 'нет на РЦ', rcStock: 0, manualEdit: false, avgSalesPerDay: 0 }); return; }
-              // Товар в матрице, есть на РЦ, но нет на точке (нет данных остатков или остаток = 0)
+              // ВСЕГДА ищем продажи из salesMap — независимо от статуса товара
+              const salesQty = salesMap.get(key) || 0;
+
+              // Исключаем только если товара нет в матрице (НЕТ/пусто)
+              if (!inMatrix) { res.push({ tt: store.tt, code, nomenclature: p.nomenclature, group: p.group || '', currentStock: stockData?.currentStock || 0, sales: salesQty, daysPresent: stockData?.daysPresent || 0, shelf, order: 0, packaging: p.packaging, orderStatus: 'не в матрице', rcStock, manualEdit: false, avgSalesPerDay: 0 }); return; }
+
+              // Товар в матрице — рассчитываем заказ независимо от наличия на РЦ
+              const avgSales = stockData?.daysPresent > 0 ? salesQty / stockData.daysPresent : 0;
+              // Получаем квант из группы для КГ товаров
+              const groupQuant = p.packaging === 'КГ' ? (groupQuants[p.group || ''] || 0.5) : 1;
+              
+              // Нет на точке (нет данных остатков или остаток = 0) — минимальный заказ
               if (!stockData || stockData.currentStock <= 0) {
                 const minOrder = p.packaging === 'КГ' ? 0.5 : 2;
-                res.push({ tt: store.tt, code, nomenclature: p.nomenclature, group: p.group || '', currentStock: stockData?.currentStock || 0, sales: 0, daysPresent: 0, shelf, order: minOrder, packaging: p.packaging, orderStatus: `заказ ${minOrder} (мин.)`, rcStock, manualEdit: true, avgSalesPerDay: 0 });
+                res.push({ tt: store.tt, code, nomenclature: p.nomenclature, group: p.group || '', currentStock: 0, sales: salesQty, daysPresent: 0, shelf, order: minOrder, packaging: p.packaging, orderStatus: `заказ ${minOrder}`, rcStock, manualEdit: true, avgSalesPerDay: 0 });
                 return;
               }
 
-              const salesQty = salesMap.get(key) || 0;
-              const avgSales = stockData.daysPresent > 0 ? salesQty / stockData.daysPresent : 0;
-              // Получаем квант из группы для КГ товаров
-              const groupQuant = p.packaging === 'КГ' ? (groupQuants[p.group || ''] || 0.5) : 1;
               // Передаём shelf (который null если useShelf=false), а не shelfVal
               const order = calcOrder(p.packaging, stockData.currentStock, avgSales, period, shelf, groupQuant);
-              // Возможные продажи = средние продажи * период
-              const possibleSales = avgSales * period;
-              res.push({ tt: store.tt, code, nomenclature: p.nomenclature, group: p.group || '', currentStock: stockData.currentStock, sales: salesQty, possibleSales, daysPresent: stockData.daysPresent, shelf, order, packaging: p.packaging, orderStatus: order > 0 ? `заказ ${order}` : 'достаточно', rcStock, manualEdit: false, avgSalesPerDay: avgSales });
+              res.push({ tt: store.tt, code, nomenclature: p.nomenclature, group: p.group || '', currentStock: stockData.currentStock, sales: salesQty, possibleSales: avgSales * period, daysPresent: stockData.daysPresent, shelf, order, packaging: p.packaging, orderStatus: order > 0 ? `заказ ${order}` : 'достаточно', rcStock, manualEdit: false, avgSalesPerDay: avgSales });
             });
           });
           setResults(res);
@@ -817,7 +920,8 @@
         const order = parseFloat(newOrder) || 0;
         setResults(prev => {
           const updated = prev.map(r => r.tt === tt && r.code === code ? { ...r, order, manualEdit: true, orderStatus: order > 0 ? `заказ ${order}` : 'достаточно' } : r);
-          save(KEYS.RESULTS, updated);
+          // Отложенное сохранение чтобы не блокировать UI при вводе
+          setTimeout(() => save(KEYS.RESULTS, updated), 0);
           return updated;
         });
       }, []);
@@ -855,10 +959,10 @@
           let updated;
           if (order === 0 || value === '') { updated = { ...prev }; delete updated[code]; }
           else { updated = { ...prev, [code]: order }; }
-          // Сохраняем rcResults с обновлённым заказом
+          // Сохраняем rcResults с обновлённым заказом (отложенное сохранение)
           setRcResults(rcPrev => {
             const updatedRc = rcPrev.map(r => r.code === code ? { ...r, order, manualEdit: order !== 0, ...(order === 0 ? {} : { autoOrder: order }) } : r);
-            save(KEYS.RC_RESULTS, updatedRc);
+            setTimeout(() => save(KEYS.RC_RESULTS, updatedRc), 0);
             return updatedRc;
           });
           return updated;
@@ -1283,7 +1387,7 @@
         else if (action === 'recalc') { 
           setResults(prev => { 
             const updated = prev.map(r => { 
-              if (r.orderStatus.includes('нет')) return r; 
+              if (r.orderStatus === 'не в матрице') return r; 
               // Получаем квант для КГ товаров
               const product = matrix[r.code];
               const groupQuant = r.packaging === 'КГ' ? (groupQuants[r.group || ''] || 0.5) : 1;
@@ -1309,10 +1413,8 @@
           if (filterTT && !r.tt.toLowerCase().includes(filterTT.toLowerCase())) return false;
           if (filterGroup && r.group !== filterGroup) return false;
           if (filterStatus === 'orders' && r.order === 0) return false;
-          if (filterStatus === 'noMatrix' && r.orderStatus !== 'нет в матрице') return false;
-          if (filterStatus === 'noRC' && r.rcStock > 0) return false;
-          if (filterStatus === 'hasRC' && r.rcStock <= 0) return false;
-          if (filterStatus === 'lowRC' && (r.rcStock <= 0 || r.rcStock >= 5)) return false;
+          if (filterStatus === 'noMatrix' && r.orderStatus !== 'не в матрице') return false;
+          if (filterStatus === 'enough' && r.order !== 0) return false;
           return true;
         });
       }, [results, searchResults, filterTT, filterStatus, filterGroup]);
@@ -1988,8 +2090,8 @@
                   <div className="flex flex-wrap justify-between items-center gap-2">
                     <div className="flex flex-wrap gap-2">
                       <div className="bg-sky-100 text-sky-800 rounded-md px-3 py-1.5 min-w-[80px]"><div className="text-[10px] opacity-70">ПОЗИЦИЙ</div><div className="text-lg font-bold">{filteredResults.length}</div></div>
-                      <div className="bg-amber-100 text-amber-800 rounded-md px-3 py-1.5 min-w-[80px]"><div className="text-[10px] opacity-70">НЕТ В МАТРИЦЕ</div><div className="text-lg font-bold">{filteredResults.filter(r => r.orderStatus === 'нет в матрице').length}</div></div>
-                      <div className="bg-rose-100 text-rose-800 rounded-md px-3 py-1.5 min-w-[80px]"><div className="text-[10px] opacity-70">НЕТ НА РЦ</div><div className="text-lg font-bold">{filteredResults.filter(r => r.orderStatus === 'нет на РЦ').length}</div></div>
+                      <div className="bg-amber-100 text-amber-800 rounded-md px-3 py-1.5 min-w-[80px]"><div className="text-[10px] opacity-70">НЕ В МАТРИЦЕ</div><div className="text-lg font-bold">{filteredResults.filter(r => r.orderStatus === 'не в матрице').length}</div></div>
+                      <div className="bg-gray-100 text-gray-800 rounded-md px-3 py-1.5 min-w-[80px]"><div className="text-[10px] opacity-70">ДОСТАТОЧНО</div><div className="text-lg font-bold">{filteredResults.filter(r => r.orderStatus === 'достаточно').length}</div></div>
                       <div className="bg-emerald-100 text-emerald-800 rounded-md px-3 py-1.5 min-w-[80px] cursor-pointer hover:bg-emerald-200 transition-colors" onClick={() => setShowSumModal(true)}><div className="text-[10px] opacity-70">СУММА</div><div className="text-lg font-bold">{stats.orderSum.toLocaleString('ru-RU')} ₽</div></div>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -2002,7 +2104,7 @@
                         <option value="">Все ТТ</option>
                         {stores.map(s => <option key={s.tt} value={s.tt}>{s.tt}</option>)}
                       </select>
-                      <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="select text-xs"><option value="">Все статусы</option><option value="orders">С заказом</option><option value="noMatrix">Нет в матрице</option><option value="noRC">Нет на РЦ</option><option value="hasRC">Есть на РЦ</option><option value="lowRC">Мало на РЦ</option></select>
+                      <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="select text-xs"><option value="">Все статусы</option><option value="orders">С заказом</option><option value="noMatrix">Не в матрице</option><option value="enough">Достаточно</option></select>
                     </div>
                   </div>
                 </div>
@@ -2041,16 +2143,16 @@
                               <td colSpan={10} className="font-semibold text-amber-800"><span className="flex items-center gap-2">{collapsedTT[tt] ? <ChevronRightIcon /> : <ChevronDownIcon />}<MapPinIcon />{tt}<span className="font-normal text-amber-600">({items.length} поз.)</span></span></td>
                             </tr>
                             {!collapsedTT[tt] && items.map((r, idx) => (
-                              <tr key={idx} className={`${r.order > 0 ? 'bg-emerald-50' : r.orderStatus.includes('нет') ? 'bg-rose-50' : ''} transition-colors`}>
+                              <tr key={idx} className={`${r.order > 0 ? 'bg-emerald-50' : r.orderStatus === 'не в матрице' ? 'bg-rose-50' : ''} transition-colors`}>
                                 <td className="sticky left-0 bg-white">{r.nomenclature}</td>
                                 <td className="font-mono text-sm">{r.code}</td>
                                 <td className="text-right">{r.currentStock.toFixed(2)}</td>
                                 <td className="text-right cursor-pointer hover:bg-blue-100 underline decoration-dotted text-blue-700" onClick={() => { setSelectedResult(r); setShowDetailModal(true); }}>{r.sales.toFixed(2)}</td>
                                 <td className="text-center text-xs text-gray-600">{r.daysPresent || '-'}</td>
                                 <td className="text-right">{r.shelf ?? ''}</td>
-                                <td className="bg-emerald-100"><input type="number" value={r.order} onChange={e => updateResultOrder(r.tt, r.code, e.target.value)} className="input w-20 text-right font-bold" min="0" step={r.packaging === 'КГ' ? '0.5' : '1'} /></td>
+                                <td className="bg-emerald-100"><input type="number" defaultValue={r.order} onBlur={e => updateResultOrder(r.tt, r.code, e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.target.blur(); } }} inputMode="decimal" className="input w-20 text-right font-bold focus:ring-2 focus:ring-emerald-400" min="0" step={r.packaging === 'КГ' ? '0.5' : '1'} /></td>
                                 <td className="text-center">{r.packaging}</td>
-                                <td className={`text-center text-xs font-medium px-2 py-1 rounded ${r.orderStatus === 'нет в матрице' ? 'bg-rose-100 text-rose-700' : r.orderStatus === 'нет на РЦ' ? 'bg-amber-100 text-amber-700' : r.order > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-600'}`}>{r.orderStatus}</td>
+                                <td className={`text-center text-xs font-medium px-2 py-1 rounded ${r.orderStatus === 'не в матрице' ? 'bg-rose-100 text-rose-700' : r.orderStatus === 'достаточно' ? 'bg-gray-100 text-gray-600' : 'bg-emerald-100 text-emerald-700'}`}>{r.orderStatus}</td>
                                 <td className={`text-right font-medium ${r.rcStock > 0 ? 'text-emerald-600' : 'text-rose-500'}`}>{r.rcStock}</td>
                               </tr>
                             ))}
@@ -2132,7 +2234,7 @@
                                 <td className={`text-right ${r.rcStock === 0 ? 'text-rose-600 font-medium' : ''}`}>{r.rcStock}</td>
                                 <td className="text-right">{r.totalSales.toFixed(2)}</td>
                                 <td className="text-right bg-amber-50">{r.monthlyNeed}</td>
-                                <td className="bg-emerald-100"><input type="number" value={r.order} onChange={e => updateRcOrder(r.code, e.target.value)} className="input w-14 text-right font-bold" min="0" step={r.packaging === 'КГ' ? '0.5' : '1'} /></td>
+                                <td className="bg-emerald-100"><input type="number" defaultValue={r.order} onBlur={e => updateRcOrder(r.code, e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.target.blur(); } }} inputMode="decimal" className="input w-14 text-right font-bold focus:ring-2 focus:ring-emerald-400" min="0" step={r.packaging === 'КГ' ? '0.5' : '1'} /></td>
                               </tr>
                             ))}
                           </tbody>

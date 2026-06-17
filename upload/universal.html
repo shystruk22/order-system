@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Универсальный расчёт</title>
-    <!-- Version: 2.2 -->
+    <!-- Version: 2.3 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -1487,7 +1487,7 @@
         let orderEdits = {};          // Ручные правки заказа: {"tt_code": value}
         let newMarkupEdits = {};      // Временные «новые наценки» для вкладки Цены: {"code": value}
         let savedOrderDate = null;    // Дата сохранённого заказа
-        let ndsRate = 20;             // Стандартная ставка НДС %
+        let ndsRate = 22;             // Стандартная ставка НДС %
         let ndflRate = 6;             // Ставка НДФЛ %
         let onlineFeeRate = 1;        // 1% за онлайн-обслуживание
         let savedOrdersList = [];     // Список всех сохранённых заказов
@@ -1820,6 +1820,7 @@
             suppliers = load(KEYS.SUPPLIERS, []);
             currentSupplier = load(KEYS.CURRENT_SUPPLIER, '');
             defaultMarkup = load(KEYS.DEFAULT_MARKUP, 25);
+            ndsRate = load('univ_ndsRate_v1', 22);
             groupMarkups = load(KEYS.GROUP_MARKUPS, {});
 
             // Загрузка списка сохранённых заказов (автоудаление после 14 дней)
@@ -1917,63 +1918,19 @@
                 }
             });
 
-            // Синхронизация через polling SharedData
+            // SharedData: только ВЫГРУЗКА данных (не подтягиваем чужие изменения!)
+            // Раньше onChange сливал ассортимент/матрицу из других вкладок, что
+            // могло перезаписывать данные universal.html и вызывать ошибки.
             if (window.SharedData) {
-                SharedData.onChange(({source}) => {
-                    if (source !== 'universal') {
-                        try {
-                            // Синхронизация ассортимента
-                            const newProducts = SharedData.getProducts();
-                            if (newProducts && Array.isArray(newProducts) && newProducts.length > 0) {
-                                const obj = {};
-                                newProducts.forEach(p => {
-                                    if (p.code) {
-                                        const code = normCode(p.code);
-                                        obj[code] = {
-                                            ...p, inPrice: p.inPrice || p.price || 0,
-                                            markup: p.markup || defaultMarkup
-                                        };
-                                    }
-                                });
-                                let changed = false;
-                                Object.entries(obj).forEach(([code, item]) => {
-                                    if (!matrix[code] || matrix[code].nomenclature !== item.nomenclature ||
-                                        matrix[code].price !== item.price || matrix[code].group !== item.group) {
-                                        changed = true;
-                                    }
-                                });
-                                if (changed || Object.keys(matrix).length !== Object.keys(obj).length) {
-                                    matrix = obj;
-                                    save(KEYS.ASSORTMENT, matrix);
-                                    resetSavedOrders();
-                                    render();
-                                }
-                            }
-
-                            // Синхронизация отметок матрицы (ДА/НЕТ)
-                            const newMarks = SharedData.getMatrixMarks();
-                            if (newMarks && Object.keys(newMarks).length > 0) {
-                                let changed = false;
-                                Object.entries(newMarks).forEach(([code, ttMarks]) => {
-                                    if (!matrixMarks[code]) {
-                                        matrixMarks[code] = {};
-                                    }
-                                    Object.entries(ttMarks).forEach(([tt, val]) => {
-                                        if (matrixMarks[code][tt] !== val) {
-                                            matrixMarks[code][tt] = val;
-                                            changed = true;
-                                        }
-                                    });
-                                });
-                                if (changed) {
-                                    save(KEYS.MATRIX_MARKS, matrixMarks);
-                                    resetSavedOrders();
-                                    render();
-                                }
-                            }
-                        } catch(e) {}
-                    }
-                });
+                try {
+                    const arr = Object.values(matrix).filter(p => p && p.code);
+                    if (arr.length > 0) SharedData.saveProducts(arr, 'universal');
+                } catch(e) { console.warn('SharedData sync error:', e); }
+                try {
+                    if (Object.keys(matrixMarks).length > 0) SharedData.saveMatrixMarks(matrixMarks, 'universal');
+                } catch(e) {}
+                // НЕ подписываемся на onChange — universal управляет своими данными
+                // самостоятельно через загрузку файлов и сохранённые ассортимент/матрицы.
             }
             
             render();
@@ -3028,7 +2985,7 @@
                             <div class="flex items-center justify-between bg-yellow-50 px-2 py-1.5 rounded-lg border border-yellow-200">
                                 <label class="text-[10px] text-gray-600">НДС %</label>
                                 <div class="flex items-center gap-1">
-                                    <input type="number" value="${ndsRate}" onchange="ndsRate=parseFloat(this.value)||0;render()" class="input w-12 text-center text-xs font-bold text-yellow-700" step="0.1">
+                                    <input type="number" value="${ndsRate}" onchange="ndsRate=parseFloat(this.value)||0;SharedUtils.save('univ_ndsRate_v1',ndsRate);render()" class="input w-12 text-center text-xs font-bold text-yellow-700" step="0.1">
                                     <span class="text-[10px] text-gray-400">%</span>
                                 </div>
                             </div>
@@ -3899,7 +3856,7 @@
                                                 <td class="text-center">${r.avgSalesPerDay.toFixed(2)}</td>
                                                 <td class="text-center">${r.currentStock.toFixed(2)}</td>
                                                 <td class="text-center font-semibold ${r.statusType === 'minOrder' ? 'bg-amber-100' : r.statusType === 'order' ? 'bg-emerald-100' : ''}">
-                                                    <input type="number" value="${r.order}" data-tt="${esc(r.tt)}" data-code="${esc(r.code)}" onblur="editOrder(this)" onkeydown="if(event.key==='Enter'){this.blur()}" inputmode="decimal" class="input w-16 text-center text-sm font-bold">
+                                                    <input type="number" value="${r.order}" data-tt="${esc(r.tt)}" data-code="${esc(r.code)}" onblur="editOrder(this)" onkeydown="if(event.keyCode===13){event.preventDefault();this.blur()}" class="input w-16 text-center text-sm font-bold">
                                                 </td>
                                                 <td class="text-center text-xs font-medium ${statusClass}">${r.status}</td>
                                             </tr>`;
@@ -3919,14 +3876,19 @@
             const code = input.dataset.code;
             const editKey = `${tt}_${code}`;
             orderEdits[editKey] = newOrder;
-            // Подсветить ручное изменение — без перерисовки таблицы
-            const r = savedOrderResults?.find(x => x.tt === tt && x.code === code);
+            // Подсветить ручное изменение — если отличается от расчёта
+            const r = savedOrderResults && savedOrderResults.find ? savedOrderResults.find(x => x.tt === tt && x.code === code) : null;
             if (r && r.calcOrder !== undefined && newOrder !== r.calcOrder) {
-                input.style.color = '#dc2626';
+                input.style.color = '#dc2626'; // красный — отличается от расчёта
             } else {
                 input.style.color = '';
             }
-            save('orderEdits', orderEdits);
+            // Автосохранение правок
+            try {
+                var saved = load(KEYS.SAVED_ORDER, null);
+                if (saved) { saved.orderEdits = Object.assign({}, orderEdits); save(KEYS.SAVED_ORDER, saved); }
+            } catch(e) {}
+            // НЕ вызываем render() — это вызывало задержку и перестроение всего DOM
         }
 
         // === Сохранение заказа (множественное) ===
@@ -4906,11 +4868,26 @@
             alert('Данные очищены');
         }
 
-        // Инициализация с ожиданием облачного хранилища
+        // Инициализация с защитой от CloudStorage (если storage.js загружен другой страницей)
+        function safeInit() {
+            try { init(); } catch(e) {
+                console.error('Init error:', e);
+                document.getElementById('content').innerHTML = '<div class="p-4 text-red-600">Ошибка инициализации: ' + e.message + '</div>';
+            }
+        }
         if (window.CloudStorage && !window.CloudStorage.isReady()) {
-            window.addEventListener('cloudStorageReady', () => { try { init(); } catch(e) { console.error('Init error:', e); document.getElementById('content').innerHTML = '<div class="p-4 text-red-600">Ошибка инициализации: ' + e.message + '</div>'; } });
+            // CloudStorage существует но не готов — ждём с таймаутом 3 сек
+            window.addEventListener('cloudStorageReady', function onReady() {
+                window.removeEventListener('cloudStorageReady', onReady);
+                clearTimeout(cloudTimeout);
+                safeInit();
+            });
+            var cloudTimeout = setTimeout(function() {
+                console.warn('[Universal] CloudStorage timeout — запускаем init без ожидания облака');
+                safeInit();
+            }, 3000);
         } else {
-            try { init(); } catch(e) { console.error('Init error:', e); document.getElementById('content').innerHTML = '<div class="p-4 text-red-600">Ошибка инициализации: ' + e.message + '</div>'; }
+            safeInit();
         }
 
         // После загрузки из облака — перечитываем данные и перерисовываем

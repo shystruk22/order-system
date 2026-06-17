@@ -484,54 +484,16 @@
                 if (e.key === KEYS.STORES) loadStoresFromHTML();
             });
 
-            // SharedData: cross-tab real-time sync
+            // SharedData: только ВЫГРУЗКА данных из fish-order (не подтягиваем чужие товары!)
+            // Раньше SharedData onChange сливал продукты из universal.html в fish-order,
+            // что загрязняло ассортимент рыбы данными из других калькуляторов и вызывало ошибки.
             if (window.SharedData) {
-                // Push local data to SharedData on init
                 try {
                     const arr = Object.values(matrix).filter(p => p && p.code);
                     if (arr.length > 0) SharedData.saveProducts(arr, 'fish-order');
                 } catch(e) { console.warn('SharedData sync error:', e); }
-
-                // Listen for changes from other tabs (assortment.html, sneki.html)
-                SharedData.onChange(function(info) {
-                    if (info.source !== 'fish-order') {
-                        // Проверяем: если пользователь сейчас вводит цены — не сбрасываем DOM
-                        if (_priceRenderTimeout) return; // цена только что вводилась, ждём debounce
-                        const fresh = SharedData.getProducts();
-                        if (fresh && fresh.length > 0) {
-                            // Convert array to object format and merge
-                            let updatedCount = 0;
-                            fresh.forEach(function(p) {
-                                if (!p.code) return;
-                                const nc = SharedUtils.normCode(p.code);
-                                if (!matrix[nc]) {
-                                    // Новый товар — создаём
-                                    matrix[nc] = {
-                                        code: nc, nomenclature: p.nomenclature || p.name || '',
-                                        group: p.group || '', packaging: p.packaging || 'ШТ',
-                                        supplier: p.supplier || '', price: p.price || 0,
-                                        inPrice: p.inPrice || p.price || 0, shelfPrice: p.shelfPrice || 0,
-                                        shelf: p.shelf || 0, quant: p.quant || 1, volume: p.volume || 0,
-                                        markup: p.markup || 0
-                                    };
-                                    updatedCount++;
-                                } else {
-                                    // Существующий товар — обновляем shelfPrice и другие поля
-                                    const existing = matrix[nc];
-                                    if (p.shelfPrice && p.shelfPrice > 0 && p.shelfPrice !== existing.shelfPrice) {
-                                        existing.shelfPrice = p.shelfPrice;
-                                        updatedCount++;
-                                    }
-                                }
-                            });
-                            if (updatedCount > 0) {
-                                syncFishAssortment();
-                                render();
-                                console.log('[FishOrder] Synced from ' + info.source + ': ' + updatedCount + ' products updated');
-                            }
-                        }
-                    }
-                });
+                // НЕ подписываемся на onChange — fish-order управляет своим ассортиментом
+                // самостоятельно через загрузку файлов и сохранённые ассортимент/матрицы.
             }
 
             render();
@@ -3469,20 +3431,63 @@
             const allStores = [...stores];
             const skippedTodayInfo = []; // Для информирования о пропущенных
 
-            // Карта остатков по ТТ и коду
-            const stockMap = new Map();
-            stocks.forEach(s => stockMap.set(`${s.tt}_${s.code}`, s));
+            // Общая карта мэтчинга TT
+            const storeTTSet = new Set(stores.map(s => s.tt));
 
-            // Карта продаж по ТТ и коду
+            // Карта остатков по ТТ и коду (с мэтчингом TT)
+            const stockMap = new Map();
+            const stockTTMatchMap = {};
+            stocks.forEach(s => {
+                let resolvedTT = s.tt;
+                if (!storeTTSet || !storeTTSet.has(s.tt)) {
+                    if (stockTTMatchMap[s.tt]) {
+                        resolvedTT = stockTTMatchMap[s.tt];
+                    } else {
+                        // Используем тот же мэтчинг что и для продаж
+                        const lower = s.tt.toLowerCase();
+                        for (const st of stores) {
+                            const stL = (st.tt || '').toLowerCase();
+                            if (stL && (lower.includes(stL) || stL.includes(lower))) { resolvedTT = st.tt; break; }
+                        }
+                        stockTTMatchMap[s.tt] = resolvedTT;
+                    }
+                }
+                stockMap.set(`${resolvedTT}_${s.code}`, s);
+            });
+
+            // Карта продаж по ТТ и коду (с мэтчингом TT)
             const salesByTTCode = {};
             const nameToCode = {};
             Object.entries(matrix).forEach(([code, p]) => {
                 if (p.nomenclature) nameToCode[p.nomenclature.trim().toLowerCase()] = code;
             });
+            // Карта мэтчинга TT: полное имя → короткое TT из stores
+            const ttMatchMap = {};
             sales.forEach(s => {
                 if (!s.tt) return;
+                // Мэтчим TT если оно длинное (из файла) и не совпадает ни с одним stores[].tt
+                let resolvedTT = s.tt;
+                if (!storeTTSet.has(s.tt)) {
+                    if (ttMatchMap[s.tt]) {
+                        resolvedTT = ttMatchMap[s.tt];
+                    } else {
+                        const lower = s.tt.toLowerCase();
+                        const cleaned = lower.replace(/основной склад/g, '').replace(/крым/g, '').replace(/[()]/g, '').replace(/\s+/g, ' ').trim();
+                        const fileWords = cleaned.split(/[\s,]+/).filter(w => w.length > 2);
+                        for (const st of stores) {
+                            const stL = (st.tt || '').toLowerCase();
+                            if (stL && lower.includes(stL)) { resolvedTT = st.tt; break; }
+                            const stCleaned = stL.replace(/\s+/g, ' ').trim();
+                            const stWords = stCleaned.split(/[\s,]+/).filter(w => w.length > 2);
+                            let mc = 0;
+                            for (const fw of fileWords) { for (const sw of stWords) { if (fw.includes(sw) || sw.includes(fw)) { mc++; break; } } }
+                            if (mc >= 2 && mc >= Math.min(fileWords.length, stWords.length) * 0.5) { resolvedTT = st.tt; break; }
+                        }
+                        ttMatchMap[s.tt] = resolvedTT;
+                    }
+                }
                 if (s.code) {
-                    const key = `${s.tt}_${normCode(s.code)}`;
+                    const key = `${resolvedTT}_${normCode(s.code)}`;
                     salesByTTCode[key] = (salesByTTCode[key] || 0) + s.quantity;
                 } else if (s.name) {
                     const normName = s.name.trim().toLowerCase();
@@ -3954,9 +3959,9 @@
                                                         const netLabel = r.matrixNet ? 'НЕТ в матрице' : 'Вне ассортимента';
                                                         if (deliversTomorrow) {
                                                             if (orderVal > 0) {
-                                                                return '<td class="text-center ' + netBg + '-50" title="' + netLabel + ' (ручной заказ)"><input type="number" step="0.5" min="0" value="' + Number(orderVal).toFixed(1) + '" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onblur="editOrder(this)" onkeydown="if(event.key==='Enter'){this.blur()}" class="input w-16 text-center text-sm font-bold"><div class="text-[10px] text-gray-500">' + sumVal.toFixed(0) + ' ₽</div></td>';
+                                                                return '<td class="text-center ' + netBg + '-50" title="' + netLabel + ' (ручной заказ)"><input type="number" step="0.5" min="0" value="' + Number(orderVal).toFixed(1) + '" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onblur="editOrder(this)" onkeydown="if(event.keyCode===13){event.preventDefault();this.blur()}" class="input w-16 text-center text-sm font-bold"><div class="text-[10px] text-gray-500">' + sumVal.toFixed(0) + ' ₽</div></td>';
                                                             }
-                                                            return '<td class="text-center ' + netBg + '-50" title="' + netLabel + '"><input type="number" step="0.5" min="0" value="' + (hasManualEdit ? '0' : '') + '" placeholder="0" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onblur="editOrder(this)" onkeydown="if(event.key==='Enter'){this.blur()}" class="input w-16 text-center text-sm text-gray-400 bg-gray-50"></td>';
+                                                            return '<td class="text-center ' + netBg + '-50" title="' + netLabel + '"><input type="number" step="0.5" min="0" value="' + (hasManualEdit ? '0' : '') + '" placeholder="0" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onblur="editOrder(this)" onkeydown="if(event.keyCode===13){event.preventDefault();this.blur()}" class="input w-16 text-center text-sm text-gray-400 bg-gray-50"></td>';
                                                         } else {
                                                             // Нет доставки завтра — серая ячейка, редактирование недоступно
                                                             return '<td class="text-center bg-gray-200 opacity-50 cursor-not-allowed" title="' + netLabel + ', нет доставки завтра от ' + esc(sup) + '"><span class="text-gray-400 text-xs">—</span></td>';
@@ -3978,12 +3983,12 @@
                                                     if (orderVal > 0) {
                                                         const editBg = hasManualEdit ? 'bg-amber-100 ring-1 ring-amber-300' : '';
                                                         const editTitle = hasManualEdit ? ' title="Ручная правка"' : ((so && so.isPreferred) ? ' title="Предпочтение магазина ★"' : '');
-                                                        return '<td class="text-center ' + (cellBg || '') + ' ' + editBg + ' ' + prefBg + '"' + editTitle + '><input type="number" step="0.5" min="0" value="' + Number(orderVal).toFixed(1) + '" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onblur="editOrder(this)" onkeydown="if(event.key==='Enter'){this.blur()}" class="input w-16 text-center text-sm font-bold"><div class="text-[10px] text-gray-500">' + sumVal.toFixed(0) + ' ₽</div></td>';
+                                                        return '<td class="text-center ' + (cellBg || '') + ' ' + editBg + ' ' + prefBg + '"' + editTitle + '><input type="number" step="0.5" min="0" value="' + Number(orderVal).toFixed(1) + '" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onblur="editOrder(this)" onkeydown="if(event.keyCode===13){event.preventDefault();this.blur()}" class="input w-16 text-center text-sm font-bold"><div class="text-[10px] text-gray-500">' + sumVal.toFixed(0) + ' ₽</div></td>';
                                                     }
                                                     const editBg = hasManualEdit ? 'bg-amber-50 ring-1 ring-amber-200' : '';
                                                     const editTitle = hasManualEdit ? ' title="Ручная правка (очистите поле для авто)"' : ((so && so.isPreferred) ? ' title="Предпочтение магазина ★"' : '');
                                                     const inputVal = hasManualEdit ? '0' : '';
-                                                    return '<td class="text-center ' + editBg + ' ' + prefBg + '"' + editTitle + '><input type="number" step="0.5" min="0" value="' + inputVal + '" placeholder="0" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onblur="editOrder(this)" onkeydown="if(event.key==='Enter'){this.blur()}" class="input w-16 text-center text-sm text-gray-400 bg-gray-50"></td>';
+                                                    return '<td class="text-center ' + editBg + ' ' + prefBg + '"' + editTitle + '><input type="number" step="0.5" min="0" value="' + inputVal + '" placeholder="0" data-tt="' + esc(r.tt) + '" data-code="' + esc(r.code) + '" data-supplier="' + esc(sup) + '" onblur="editOrder(this)" onkeydown="if(event.keyCode===13){event.preventDefault();this.blur()}" class="input w-16 text-center text-sm text-gray-400 bg-gray-50"></td>';
                                                 }).join('')}
                                                 <td class="text-left text-xs ${r.notInMatrix ? (r.matrixNet ? 'text-orange-600 font-medium italic' : 'text-blue-600 font-medium italic') : r.hasConflict ? 'text-amber-700 font-medium' : r.order > 0 ? 'text-emerald-700' : 'text-gray-500'}">${r.status}</td>
                                                 ${hasWishes ? (() => {
@@ -4068,7 +4073,7 @@
         function editOrder(input) {
             const val = input.value.trim();
             const tt = input.dataset.tt;
-            const code = input.dataset.code;
+            const code = normCode(input.dataset.code);
             const supplier = input.dataset.supplier || '';
             const editKey = supplier ? `${tt}_${code}_${supplier}` : `${tt}_${code}`;
             if (val === '') {
@@ -4076,6 +4081,16 @@
             } else {
                 const num = parseFloat(val);
                 orderEdits[editKey] = isNaN(num) ? 0 : Math.round(num * 100) / 100;
+            }
+            // Обновляем сумму в соседнем div БЕЗ полного перестроения DOM
+            const td = input.closest('td');
+            if (td) {
+                const sumDiv = td.querySelector('div');
+                if (sumDiv) {
+                    const qty = orderEdits[editKey] !== undefined ? orderEdits[editKey] : 0;
+                    const sp = (supplierPrices[code] && supplierPrices[code][supplier]) || (matrix[code] && matrix[code].inPrice) || 0;
+                    sumDiv.textContent = Math.round(qty * sp) + ' \u20BD';
+                }
             }
             // Автосохранение правок в localStorage (чтобы не потерялись при перезагрузке)
             try {
@@ -4085,12 +4100,7 @@
                     save(KEYS.SAVED_ORDER, saved);
                 }
             } catch(e) {}
-            // Подсветка без перерисовки
-            if (val !== '') {
-                input.style.color = '#dc2626';
-            } else {
-                input.style.color = '';
-            }
+            // НЕ вызываем render() — это вызывало задержку и перестроение всего DOM
         }
 
         // Собрать ВСЕ текущие значения из полей ввода заказа в orderEdits
@@ -4232,7 +4242,8 @@
                     const wb = XLSX.read(data, { type: 'array' });
                     const json = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' });
                     if (type === 'sales') {
-                        const result = SharedUtils.parseSales(json);
+                        const storeNames = stores.map(s => s.tt);
+                        const result = SharedUtils.parseSales(json, storeNames);
                         sales = result.items;
                         save(KEYS.SALES, sales);
                         // Дополнительно: парсим продажи с датами для расчёта выходных (Пн/Сб/Вс)
@@ -4240,7 +4251,8 @@
                         alert(`Загружено ${sales.length} продаж, найдено ${result.foundTTs.length} ТТ`);
                     }
                     else if (type === 'stocks') {
-                        const parseResult = SharedUtils.parseStocks(json);
+                        const storeNames = stores.map(s => s.tt);
+                        const parseResult = SharedUtils.parseStocks(json, storeNames);
                         const localItems = parseResult.items || parseResult;
                         // Маппим productName → name для совместимости
                         localItems.forEach(item => { item.name = item.productName || item.name || ''; });
@@ -5062,11 +5074,26 @@
             alert('Данные очищены');
         }
 
-        // Инициализация с ожиданием облачного хранилища
+        // Инициализация с защитой от CloudStorage (если storage.js загружен другой страницей)
+        function safeInit() {
+            try { init(); } catch(e) {
+                console.error('Init error:', e);
+                document.getElementById('content').innerHTML = '<div class="p-4 text-red-600">Ошибка инициализации: ' + e.message + '</div>';
+            }
+        }
         if (window.CloudStorage && !window.CloudStorage.isReady()) {
-            window.addEventListener('cloudStorageReady', () => { try { init(); } catch(e) { console.error('Init error:', e); document.getElementById('content').innerHTML = '<div class="p-4 text-red-600">Ошибка инициализации: ' + e.message + '</div>'; } });
+            // CloudStorage существует но не готов — ждём с таймаутом 3 сек
+            window.addEventListener('cloudStorageReady', function onReady() {
+                window.removeEventListener('cloudStorageReady', onReady);
+                clearTimeout(cloudTimeout);
+                safeInit();
+            });
+            var cloudTimeout = setTimeout(function() {
+                console.warn('[FishOrder] CloudStorage timeout — запускаем init без ожидания облака');
+                safeInit();
+            }, 3000);
         } else {
-            try { init(); } catch(e) { console.error('Init error:', e); document.getElementById('content').innerHTML = '<div class="p-4 text-red-600">Ошибка инициализации: ' + e.message + '</div>'; }
+            safeInit();
         }
 
         // После загрузки из облака — перечитываем данные и перерисовываем
