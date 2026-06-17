@@ -161,6 +161,20 @@
                 set('sneki_rcManualOrders_v2', stores.sneki_rcManualOrders);
                 set('sneki_results_v2', stores.sneki_results);
                 set('sneki_rcResults_v2', stores.sneki_rcResults);
+
+                // fish-order specific
+                set('fish_assortment_v1', stores.fish_assortment);
+                set('fish_matrix_v1', stores.fish_matrix);
+                set('fish_sales_v1', stores.fish_sales);
+                set('fish_stocks_v1', stores.fish_stocks);
+                set('fish_schedule_v1', stores.fish_schedule);
+                set('fish_intransit_v1', stores.fish_intransit);
+                set('fish_supplier_assortment_v1', stores.fish_supplier_assortment);
+                set('fish_supplier_prices_v1', stores.fish_supplier_prices);
+                set('fish_store_supplier_prefs_v1', stores.fish_store_supplier_prefs);
+                set('fish_stock_consumption_v1', stores.fish_stock_consumption);
+                set('fish_saved_order_v1', stores.fish_saved_order);
+                set('fish_store_wishes_v1', stores.fish_store_wishes);
             }
 
             // Сбрасываем флаг изменений
@@ -252,7 +266,21 @@
                 sneki_vatRate: get('sneki_vatRate_v2'),
                 sneki_rcManualOrders: get('sneki_rcManualOrders_v2'),
                 sneki_results: get('sneki_results_v2'),
-                sneki_rcResults: get('sneki_rcResults_v2')
+                sneki_rcResults: get('sneki_rcResults_v2'),
+
+                // fish-order specific
+                fish_assortment: get('fish_assortment_v1'),
+                fish_matrix: get('fish_matrix_v1'),
+                fish_sales: get('fish_sales_v1'),
+                fish_stocks: get('fish_stocks_v1'),
+                fish_schedule: get('fish_schedule_v1'),
+                fish_intransit: get('fish_intransit_v1'),
+                fish_supplier_assortment: get('fish_supplier_assortment_v1'),
+                fish_supplier_prices: get('fish_supplier_prices_v1'),
+                fish_store_supplier_prefs: get('fish_store_supplier_prefs_v1'),
+                fish_stock_consumption: get('fish_stock_consumption_v1'),
+                fish_saved_order: get('fish_saved_order_v1'),
+                fish_store_wishes: get('fish_store_wishes_v1')
             }
         };
     }

@@ -5075,7 +5075,10 @@
         }
 
         // Инициализация с защитой от CloudStorage (если storage.js загружен другой страницей)
+        let initialized = false;
         function safeInit() {
+            if (initialized) return; // Защита от двойного вызова
+            initialized = true;
             try { init(); } catch(e) {
                 console.error('Init error:', e);
                 document.getElementById('content').innerHTML = '<div class="p-4 text-red-600">Ошибка инициализации: ' + e.message + '</div>';
@@ -5095,20 +5098,6 @@
         } else {
             safeInit();
         }
-
-        // После загрузки из облака — перечитываем данные и перерисовываем
-        window.addEventListener('cloudStorageReady', () => {
-            loadStoresFromHTML();
-            sales = load(KEYS.SALES, []);
-            stocks = load(KEYS.STOCKS, []);
-            deliverySchedule = load(KEYS.SCHEDULE, {});
-            const sk = Object.keys(deliverySchedule);
-            if (sk.length > 0 && !sk.includes(selectedScheduleSupplier)) selectedScheduleSupplier = sk[0];
-            inTransitOrders = load(KEYS.INTRANSIT, []);
-            supplierAssortment = load(KEYS.SUPPLIER_ASSORTMENT, {});
-            storeSupplierPrefs = load(KEYS.STORE_SUPPLIER_PREFS, {});
-            render();
-        });
     </script>
 </body>
 </html>
