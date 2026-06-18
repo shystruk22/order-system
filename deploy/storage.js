@@ -409,7 +409,6 @@
 
         const savedClientId = window.YANDEX_CLIENT_ID || '';
         const savedSecret = window.YANDEX_CLIENT_SECRET || '';
-        const savedCode = 'sdhriyvytgpxraup'; // предзаполненный код подтверждения
 
         modal.innerHTML = `
             <div style="background: white; border-radius: 16px; padding: 24px;
@@ -441,11 +440,17 @@
                             onfocus="this.style.borderColor='#7c3aed'" onblur="this.style.borderColor='#d1d5db'">
                     </div>
                     <div>
-                        <label style="font-size: 12px; font-weight: 600; color: #444; display: block; margin-bottom: 4px;">
-                            Код подтверждения
-                        </label>
-                        <input id="oauthCode" type="text" placeholder="Код из адресной строки после авторизации"
-                            value="${savedCode}"
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                            <label style="font-size: 12px; font-weight: 600; color: #444;">
+                                Код подтверждения
+                            </label>
+                            <button id="oauthGetCodeBtn" style="font-size: 11px; color: #7c3aed; background: none; border: none;
+                                cursor: pointer; text-decoration: underline; padding: 0;"
+                                onmouseover="this.style.color='#6d28d9'" onmouseout="this.style.color='#7c3aed'">
+                                Получить новый код
+                            </button>
+                        </div>
+                        <input id="oauthCode" type="text" placeholder="Нажмите 'Получить новый код' выше"
                             style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px;
                                    font-size: 14px; box-sizing: border-box; outline: none;"
                             onfocus="this.style.borderColor='#7c3aed'" onblur="this.style.borderColor='#d1d5db'">
@@ -495,6 +500,18 @@
         `;
 
         document.body.appendChild(modal);
+
+        // Кнопка 'Получить новый код' — открывает страницу авторизации Яндекса
+        document.getElementById('oauthGetCodeBtn').onclick = () => {
+            const cid = document.getElementById('oauthClientId').value.trim();
+            if (!cid) {
+                document.getElementById('oauthStatus').innerHTML = '<span style="color:#dc2626">Сначала введите Client ID</span>';
+                return;
+            }
+            const url = 'https://oauth.yandex.ru/authorize?response_type=code&client_id=' + encodeURIComponent(cid);
+            window.open(url, '_blank');
+            document.getElementById('oauthStatus').innerHTML = '<span style="color:#2563eb">В открывшемся окне авторизуйтесь и скопируйте код из адресной строки</span>';
+        };
 
         // Закрытие по фону
         modal.addEventListener('click', (e) => {
