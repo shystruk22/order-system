@@ -297,6 +297,34 @@
     }
 
     // ============================================================================
+    // СОЗДАНИЕ ПАПКИ НА ЯНДЕКС.ДИСКЕ (если не существует)
+    // ============================================================================
+    async function ensureDirExists(dirPath) {
+        try {
+            await diskRequest(`${API_BASE}/resources?path=${encodeURIComponent(dirPath)}`);
+            return; // уже существует
+        } catch (e) {
+            if (e.message.includes('404') || e.message.includes('Не найден')) {
+                // Папки нет — создаём (mkdir по пути)
+                const parts = dirPath.split('/').filter(Boolean);
+                let current = '';
+                for (const part of parts) {
+                    current += (current ? '/' : '') + part;
+                    try {
+                        await diskRequest(`${API_BASE}/resources?path=${encodeURIComponent(current)}`);
+                    } catch (e2) {
+                        if (e2.message.includes('404') || e2.message.includes('Не найден')) {
+                            await diskRequest(`${API_BASE}/resources?path=${encodeURIComponent(current)}`, {
+                                method: 'PUT'
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ============================================================================
     // ЗАГРУЗКА ДАННЫХ НА ЯНДЕКС.ДИСК
     // ============================================================================
     async function uploadToDisk() {
@@ -310,6 +338,9 @@
         syncInProgress = true;
 
         try {
+            // Сначала проверяем/создаём папку
+            await ensureDirExists(APP_DIR);
+
             const data = collectAllData();
             const jsonStr = JSON.stringify(data);
 
