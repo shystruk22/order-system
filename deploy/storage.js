@@ -380,6 +380,173 @@
     }
 
     // ============================================================================
+    // ФОРМА НАСТРОЙКИ OAUTH (модальное окно)
+    // ============================================================================
+    function showOAuthModal() {
+        // Убираем старый модал если есть
+        const old = document.getElementById('yandexOAuthModal');
+        if (old) old.remove();
+
+        const modal = document.createElement('div');
+        modal.id = 'yandexOAuthModal';
+        modal.style.cssText = `
+            position: fixed; inset: 0; z-index: 999999;
+            background: rgba(0,0,0,0.5); display: flex;
+            align-items: center; justify-content: center;
+            font-family: system-ui, sans-serif;
+        `;
+
+        const savedClientId = window.YANDEX_CLIENT_ID || '';
+        const savedSecret = window.YANDEX_CLIENT_SECRET || '';
+        const savedCode = 'sdhriyvytgpxraup'; // предзаполненный код подтверждения
+
+        modal.innerHTML = `
+            <div style="background: white; border-radius: 16px; padding: 24px;
+                        width: 420px; max-width: 95vw; box-shadow: 0 20px 60px rgba(0,0,0,0.3);">
+                <h2 style="margin: 0 0 4px 0; font-size: 18px; color: #111;">Настройка Яндекс.Диск</h2>
+                <p style="margin: 0 0 16px 0; font-size: 13px; color: #666;">
+                    Введите данные OAuth-приложения для подключения облака
+                </p>
+
+                <div style="display: flex; flex-direction: column; gap: 12px;">
+                    <div>
+                        <label style="font-size: 12px; font-weight: 600; color: #444; display: block; margin-bottom: 4px;">
+                            Client ID
+                        </label>
+                        <input id="oauthClientId" type="text" placeholder="Вставьте Client ID из oauth.yandex.ru"
+                            value="${savedClientId}"
+                            style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px;
+                                   font-size: 14px; box-sizing: border-box; outline: none;"
+                            onfocus="this.style.borderColor='#7c3aed'" onblur="this.style.borderColor='#d1d5db'">
+                    </div>
+                    <div>
+                        <label style="font-size: 12px; font-weight: 600; color: #444; display: block; margin-bottom: 4px;">
+                            Client Secret
+                        </label>
+                        <input id="oauthClientSecret" type="password" placeholder="Вставьте Client Secret"
+                            value="${savedSecret}"
+                            style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px;
+                                   font-size: 14px; box-sizing: border-box; outline: none;"
+                            onfocus="this.style.borderColor='#7c3aed'" onblur="this.style.borderColor='#d1d5db'">
+                    </div>
+                    <div>
+                        <label style="font-size: 12px; font-weight: 600; color: #444; display: block; margin-bottom: 4px;">
+                            Код подтверждения
+                        </label>
+                        <input id="oauthCode" type="text" placeholder="Код из адресной строки после авторизации"
+                            value="${savedCode}"
+                            style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px;
+                                   font-size: 14px; box-sizing: border-box; outline: none;"
+                            onfocus="this.style.borderColor='#7c3aed'" onblur="this.style.borderColor='#d1d5db'">
+                    </div>
+
+                    <div id="oauthStatus" style="font-size: 12px; color: #666; min-height: 20px;"></div>
+
+                    <div style="display: flex; gap: 8px;">
+                        <button id="oauthSubmitBtn" style="
+                            flex: 1; padding: 10px; background: #7c3aed; color: white;
+                            border: none; border-radius: 8px; font-size: 14px; font-weight: 600;
+                            cursor: pointer; transition: background 0.2s;"
+                            onmouseover="this.style.background='#6d28d9'" onmouseout="this.style.background='#7c3aed'">
+                            Получить токен
+                        </button>
+                        <button id="oauthManualBtn" style="
+                            padding: 10px 16px; background: #f3f4f6; color: #374151;
+                            border: none; border-radius: 8px; font-size: 13px; cursor: pointer;
+                            transition: background 0.2s;"
+                            onmouseover="this.style.background='#e5e7eb'" onmouseout="this.style.background='#f3f4f6'">
+                            Ввести токен вручную
+                        </button>
+                    </div>
+
+                    <div id="oauthManualArea" style="display: none;">
+                        <label style="font-size: 12px; font-weight: 600; color: #444; display: block; margin-bottom: 4px;">
+                            OAuth-токен
+                        </label>
+                        <input id="oauthManualToken" type="text" placeholder="Готовый OAuth-токен Яндекс.Диска"
+                            style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px;
+                                   font-size: 14px; box-sizing: border-box; outline: none; margin-bottom: 8px;"
+                            onfocus="this.style.borderColor='#7c3aed'" onblur="this.style.borderColor='#d1d5db'">
+                        <button id="oauthManualSave" style="
+                            width: 100%; padding: 10px; background: #059669; color: white;
+                            border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;">
+                            Сохранить токен
+                        </button>
+                    </div>
+
+                    <button id="oauthCloseBtn" style="
+                        margin-top: 4px; padding: 6px; background: none; border: none;
+                        color: #9ca3af; font-size: 12px; cursor: pointer; width: 100%; text-align: center;">
+                        Отмена
+                    </button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        // Закрытие по фону
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) modal.remove();
+        });
+
+        // Закрытие кнопкой
+        document.getElementById('oauthCloseBtn').onclick = () => modal.remove();
+
+        // Показать ручной ввод
+        document.getElementById('oauthManualBtn').onclick = () => {
+            const area = document.getElementById('oauthManualArea');
+            area.style.display = area.style.display === 'none' ? 'block' : 'none';
+        };
+
+        // Сохранить токен вручную
+        document.getElementById('oauthManualSave').onclick = () => {
+            const tkn = document.getElementById('oauthManualToken').value.trim();
+            if (!tkn) {
+                document.getElementById('oauthStatus').innerHTML = '<span style="color:#dc2626">Введите токен</span>';
+                return;
+            }
+            if (window.setYandexToken(tkn)) {
+                document.getElementById('oauthStatus').innerHTML = '<span style="color:#059669">Токен сохранён!</span>';
+                setTimeout(() => modal.remove(), 500);
+                // Перезагружаем для применения
+                setTimeout(() => location.reload(), 700);
+            }
+        };
+
+        // Обмен кода на токен
+        document.getElementById('oauthSubmitBtn').onclick = async () => {
+            const clientId = document.getElementById('oauthClientId').value.trim();
+            const clientSecret = document.getElementById('oauthClientSecret').value.trim();
+            const code = document.getElementById('oauthCode').value.trim();
+            const status = document.getElementById('oauthStatus');
+            const submitBtn = document.getElementById('oauthSubmitBtn');
+
+            if (!clientId || !clientSecret || !code) {
+                status.innerHTML = '<span style="color:#dc2626">Заполните все три поля</span>';
+                return;
+            }
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Подождите...';
+            submitBtn.style.background = '#9ca3af';
+            status.innerHTML = '<span style="color:#2563eb">Обмениваем код на токен...</span>';
+
+            try {
+                const accessToken = await window.exchangeCodeForToken(code, clientId, clientSecret);
+                status.innerHTML = '<span style="color:#059669">Токен получен и сохранён!</span>';
+                setTimeout(() => modal.remove(), 500);
+                setTimeout(() => location.reload(), 700);
+            } catch (err) {
+                status.innerHTML = '<span style="color:#dc2626">Ошибка: ' + err.message + '</span>';
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Получить токен';
+                submitBtn.style.background = '#7c3aed';
+            }
+        };
+    }
+
+    // ============================================================================
     // КНОПКА РУЧНОЙ СИНХРОНИЗАЦИИ
     // ============================================================================
     function showSyncButton() {
@@ -398,14 +565,10 @@
         `;
         btn.innerHTML = '☁️';
         btn.onclick = async () => {
-            // Если токена нет — запрашиваем
+            // Если токена нет — показываем форму настройки
             if (!getToken()) {
-                const token = prompt('Введите OAuth-токен Яндекс.Диска:');
-                if (token && window.setYandexToken) {
-                    window.setYandexToken(token);
-                } else {
-                    return;
-                }
+                showOAuthModal();
+                return;
             }
 
             btn.disabled = true;
