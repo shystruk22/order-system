@@ -1,2 +1,12 @@
 skills/
 node_modules/
+deploy/
+download/
+upload/
+tool-results/
+.accesslog
+.stats
+.config
+.env
+*.zip
+worklog.md
