@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Система расчёта заказов</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
+    <style>
+        * { font-family: system-ui, -apple-system, sans-serif; }
+        .bento-item {
+            background: white;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 1rem;
+            transition: all 0.2s;
+        }
+        .bento-item:hover {
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            transform: translateY(-2px);
+        }
+        .icon-xl { width: 1.5rem; height: 1.5rem; }
+        .icon-sm { width: 1rem; height: 1rem; }
+        .data-box {
+            background: white;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 1.25rem;
+        }
+        .data-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.625rem 1.25rem;
+            border-radius: 0.5rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s;
+            border: 1px solid;
+        }
+        .data-btn:hover { transform: translateY(-1px); box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .log-area {
+            background: #1e293b;
+            color: #94a3b8;
+            border-radius: 8px;
+            padding: 0.75rem;
+            font-size: 0.75rem;
+            font-family: monospace;
+            max-height: 150px;
+            overflow-y: auto;
+            line-height: 1.6;
+        }
+        .log-area .ok { color: #4ade80; }
+        .log-area .warn { color: #facc15; }
+        .log-area .err { color: #f87171; }
+        .log-area .info { color: #60a5fa; }
+    </style>
+</head>
+<body class="min-h-screen p-6 bg-gray-50">
+    <div class="max-w-4xl mx-auto">
+        <!-- Header -->
+        <div class="text-center mb-10">
+            <h1 class="text-2xl font-bold text-gray-900 mb-2">
+                Система расчёта заказов
+            </h1>
+            <p class="text-gray-500 text-sm">
+                Выберите раздел для работы
+            </p>
+        </div>
+
+        <!-- Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="sections">
+        </div>
+
+        <!-- Управление данными -->
+        <div class="mt-8">
+            <div class="data-box">
+                <h2 class="text-lg font-semibold text-gray-900 mb-1 flex items-center gap-2">
+                    <svg class="w-5 h-5 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                    Управление данными
+                </h2>
+                <p class="text-gray-500 text-sm mb-4">Перенесите все данные между компьютерами или сохраните резервную копию</p>
+
+                <div class="flex flex-wrap gap-3 mb-4">
+                    <button onclick="downloadData()" class="data-btn bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100">
+                        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        Скачать данные
+                    </button>
+                    <label class="data-btn bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100 cursor-pointer">
+                        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                        Загрузить данные
+                        <input type="file" accept=".json" onchange="uploadData(this)" class="hidden">
+                    </label>
+                </div>
+
+                <div class="log-area" id="logArea">
+                    <span class="info">Готово. Нажмите кнопку для начала.</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Все ключи localStorage используемые системой
+        const ALL_KEYS = [
+            // Общие
+            'shared_stores_v1', 'shared_products_v1', 'shared_matrix_v1',
+            'shared_sales_v1', 'shared_stocks_v1', 'shared_writeoffs_v1',
+            'shared_saved_assortments_v1', 'shared_saved_matrices_v1',
+            // Снеки
+            'sneki_matrix_v2', 'sneki_products_v2', 'sneki_rcStocks_v2',
+            'sneki_sales_v2', 'sneki_stocks_v2', 'sneki_shelfValues_v2',
+            'sneki_quants_v2', 'sneki_groupMarkups_v2', 'sneki_groupQuants_v2',
+            'sneki_groupDays_v2', 'sneki_manualPrices_v2', 'sneki_warehouseMarkup_v2',
+            'sneki_vatRate_v2', 'sneki_rcManualOrders_v2', 'sneki_results_v2', 'sneki_rcResults_v2',
+            // Fish-order
+            'fish_assortment_v1', 'fish_matrix_v1', 'fish_sales_v1', 'fish_stocks_v1',
+            'fish_schedule_v1', 'fish_intransit_v1', 'fish_supplier_assortment_v1',
+            'fish_supplier_prices_v1', 'fish_store_supplier_prefs_v1',
+            'fish_stock_consumption_v1', 'fish_saved_order_v1', 'fish_store_wishes_v1',
+            // Universal
+            'univ_products_v1', 'univ_matrix_v1', 'univ_own_sales_v1', 'univ_own_stocks_v1',
+            'univ_saved_versions_v1', 'univ_suppliers_v1', 'univ_currentSupplier_v1',
+            'univ_defaultMarkup_v1', 'univ_groupMarkups_v1',
+            // Matrix-calc
+            'matrixcalc_mandatory_v1', 'matrixcalc_results_v1', 'matrixcalc_settings_v1',
+            // Fridge
+            'fridge_planograms_v1', 'fridge_writeoffs_v1', 'fridge_sales_v1',
+            // DB (shared-data)
+            'db_products_v1', 'db_matrix_marks_v1', 'db_stores_v1',
+            'db_markups_v1', 'db_sales_v1', 'db_stocks_v1',
+            // Токен (по желанию)
+            'yandex_disk_token'
+        ];
+
+        function log(msg, type) {
+            const area = document.getElementById('logArea');
+            const time = new Date().toLocaleTimeString('ru');
+            area.innerHTML += `<div><span class="${type || ''}">[${time}]</span> ${msg}</div>`;
+            area.scrollTop = area.scrollHeight;
+        }
+
+        function readValue(key) {
+            try {
+                const raw = localStorage.getItem(key);
+                if (!raw) return null;
+                if (raw.startsWith('{') || raw.startsWith('[')) {
+                    return JSON.parse(raw);
+                }
+                if (typeof LZString !== 'undefined') {
+                    try { return JSON.parse(LZString.decompressFromUTF16(raw)); } catch {}
+                }
+                try { return JSON.parse(raw); } catch { return raw; }
+            } catch { return null; }
+        }
+
+        function writeValue(key, value) {
+            try {
+                if (value === null || value === undefined) return;
+                const json = JSON.stringify(value);
+                if (typeof LZString !== 'undefined' && json.length > 500) {
+                    localStorage.setItem(key, LZString.compressToUTF16(json));
+                } else {
+                    localStorage.setItem(key, json);
+                }
+                return true;
+            } catch (e) {
+                log('Ошибка записи ' + key + ': ' + e.message, 'err');
+                return false;
+            }
+        }
+
+        function downloadData() {
+            log('--- Начало выгрузки данных ---', 'info');
+            const data = {};
+            let count = 0;
+            let totalSize = 0;
+
+            ALL_KEYS.forEach(key => {
+                const val = readValue(key);
+                if (val !== null) {
+                    data[key] = val;
+                    count++;
+                    const size = JSON.stringify(val).length;
+                    totalSize += size;
+                    const sizeStr = size > 1024 ? (size / 1024).toFixed(1) + ' KB' : size + ' B';
+                    log('+' + key + ' (' + sizeStr + ')', 'ok');
+                }
+            });
+
+            if (count === 0) {
+                log('Нет данных для сохранения!', 'err');
+                return;
+            }
+
+            const exportObj = {
+                _meta: {
+                    version: 1,
+                    date: new Date().toISOString(),
+                    keys: count,
+                    totalSize: totalSize
+                },
+                data: data
+            };
+
+            const blob = new Blob([JSON.stringify(exportObj)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            const d = new Date();
+            a.download = 'order-system-backup_' + d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0') + '.json';
+            a.click();
+            URL.revokeObjectURL(url);
+
+            log('--- Готово! Сохранено ' + count + ' ключей, ' + (totalSize / 1024).toFixed(1) + ' KB ---', 'ok');
+        }
+
+        function uploadData(input) {
+            if (!input.files || !input.files[0]) return;
+            const file = input.files[0];
+            log('--- Загрузка файла: ' + file.name + ' (' + (file.size / 1024).toFixed(1) + ' KB) ---', 'info');
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const obj = JSON.parse(e.target.result);
+                    const data = obj.data || obj;
+                    const keys = Object.keys(data);
+                    let loaded = 0;
+                    let errors = 0;
+
+                    log('Найдено ' + keys.length + ' ключей в файле', 'info');
+
+                    keys.forEach(key => {
+                        if (writeValue(key, data[key])) {
+                            loaded++;
+                        } else {
+                            errors++;
+                        }
+                    });
+
+                    log('--- Загружено: ' + loaded + ' ключей' + (errors > 0 ? ', ошибок: ' + errors : '') + ' ---', loaded > 0 ? 'ok' : 'err');
+                    if (loaded > 0) {
+                        log('Обновите страницу (F5) чтобы увидеть данные', 'warn');
+                    }
+                } catch (err) {
+                    log('Ошибка чтения файла: ' + err.message, 'err');
+                }
+            };
+            reader.readAsText(file);
+            input.value = '';
+        }
+
+        // === Секции навигации ===
+        const sections = [
+            {
+                href: 'sneki.html',
+                title: 'СНЕКИ',
+                desc: 'Расчёт заказа снековой продукции по матрице с учётом остатков на РЦ',
+                color: '#ea580c',
+                bg: '#fff7ed',
+                icon: '<svg class="icon-xl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" stroke-width="1.5"/><path d="M8 14c0 0 1.5 2 4 2s4-2 4-2" stroke-width="1.5"/><circle cx="9" cy="9" r="1" fill="currentColor"/><circle cx="15" cy="9" r="1" fill="currentColor"/></svg>'
+            },
+            {
+                href: 'fridges.html',
+                title: 'Холодильники',
+                desc: 'Планограммы, матрицы и аналитика холодильного оборудования',
+                color: '#0d9488',
+                bg: '#f0fdfa',
+                icon: '<svg class="icon-xl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2" stroke-width="1.5"/><line x1="4" y1="9" x2="20" y2="9" stroke-width="1.5"/><circle cx="8" cy="5.5" r="0.5" fill="currentColor"/><line x1="8" y1="12.5" x2="8" y2="16" stroke-width="1.5"/></svg>'
+            },
+            {
+                href: 'universal.html',
+                title: 'Универсальный',
+                desc: 'Расчёт заказов для любых поставщиков без учёта остатков',
+                color: '#7c3aed',
+                bg: '#faf5ff',
+                icon: '<svg class="icon-xl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" stroke-width="1.5"/><polyline points="3.27 6.96 12 12.01 20.73 6.96" stroke-width="1.5"/><line x1="12" y1="22.08" x2="12" y2="12" stroke-width="1.5"/></svg>'
+            },
+            {
+                href: 'matrix-calc.html',
+                title: 'Матрицы',
+                desc: 'Анализ продаж и рентабельности для формирования матрицы магазинов',
+                color: '#4b5563',
+                bg: '#f3f4f6',
+                icon: '<svg class="icon-xl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" stroke-width="1.5"/><rect x="14" y="3" width="7" height="7" stroke-width="1.5"/><rect x="14" y="14" width="7" height="7" stroke-width="1.5"/><rect x="3" y="14" width="7" height="7" stroke-width="1.5"/></svg>'
+            },
+            {
+                href: 'fish-order.html',
+                title: 'Заказ рыбы',
+                desc: 'Формирование заказа рыбной продукции с учётом остатков и сроков годности',
+                color: '#0369a1',
+                bg: '#f0f9ff',
+                icon: '<svg class="icon-xl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 12c0-3.5 3.5-6.5 7.5-6.5s5.5 3 5.5 6.5c0 1.5-.5 3-1.5 4l-4 4H9l-1.5-1.5C6 18 6.5 13.5 6.5 12z" stroke-width="1.5"/><circle cx="14" cy="10" r="1" fill="currentColor"/><path d="M2 12c1-1 3-1 4 0" stroke-width="1.5"/><path d="M2 15c1-1 3-1 4 0" stroke-width="1.5"/></svg>'
+            },
+            {
+                href: 'assortment.html',
+                title: 'Ассортимент',
+                desc: 'Управление ассортиментом: импорт, редактирование, назначение поставщиков и цен',
+                color: '#0d9488',
+                bg: '#f0fdfa',
+                icon: '<svg class="icon-xl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" stroke-width="1.5"/><polyline points="3.27 6.96 12 12.01 20.73 6.96" stroke-width="1.5"/><line x1="12" y1="22.08" x2="12" y2="12" stroke-width="1.5"/></svg>'
+            },
+            {
+                href: 'delivery.html',
+                title: 'Доставки',
+                desc: 'График доставок по поставщикам: отслеживание заказов в пути, контроль сроков',
+                color: '#d97706',
+                bg: '#fffbeb',
+                icon: '<svg class="icon-xl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13" rx="2" ry="2" stroke-width="1.5"/><path d="M16 8h4a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-4" stroke-width="1.5"/><circle cx="5.5" cy="18.5" r="2.5" stroke-width="1.5"/><circle cx="18.5" cy="18.5" r="2.5" stroke-width="1.5"/></svg>'
+            },
+            {
+                href: 'supplier-assortment.html',
+                title: 'Поставщики',
+                desc: 'Справочник поставщиков и управление ассортиментом поставок',
+                color: '#8b5cf6',
+                bg: '#f5f3ff',
+                icon: '<svg class="icon-xl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>'
+            },
+        ];
+
+        const container = document.getElementById('sections');
+
+        sections.forEach(section => {
+            const div = document.createElement('a');
+            div.href = section.href;
+            div.className = 'group block';
+            div.innerHTML = `
+                <div class="bento-item h-full flex flex-col hover:border-gray-300">
+                    <div class="flex items-start gap-4 mb-3">
+                        <div class="p-3 rounded-lg" style="background-color: ${section.bg}; color: ${section.color}">
+                            ${section.icon}
+                        </div>
+                        <div class="flex-1">
+                            <h2 class="text-lg font-semibold text-gray-900">
+                                ${section.title}
+                            </h2>
+                            <p class="text-gray-500 text-sm mt-1">
+                                ${section.desc}
+                            </p>
+                        </div>
+                    </div>
+                    <div class="mt-auto pt-3 border-t border-gray-100">
+                        <div class="inline-flex items-center gap-1.5 text-sm font-medium" style="color: ${section.color}">
+                            <span>Открыть</span>
+                            <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+                                <line x1="5" y1="12" x2="19" y2="12"/>
+                                <polyline points="12 5 19 12 12 19"/>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            `;
+            container.appendChild(div);
+        });
+    </script>
+    <script src="storage.js"></script>
+</body>
+</html>
