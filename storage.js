@@ -664,15 +664,14 @@
             scheduleSync();
         };
 
-        // Сохранение при уходе со страницы
+        // Защита от случайного закрытия + сохранение при уходе
         window.addEventListener('beforeunload', (e) => {
             if (window.SharedUtils && window.SharedUtils.isDirty()) {
-                // Отправляем синхронизацию (fire-and-forget)
-                if (navigator.sendBeacon) {
-                    // Лучше бы использовать sendBeacon, но для REST API нужен PUT
-                    // Просто пытаемся отправить
-                    uploadToDisk().catch(() => {});
-                }
+                // Предупреждение браузера о несохранённых данных
+                e.preventDefault();
+                e.returnValue = 'Есть несохранённые изменения. Вы уверены что хотите уйти?';
+                // Фоновая попытка синхронизации
+                uploadToDisk().catch(() => {});
             }
         });
     }

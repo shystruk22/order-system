@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Дашборд — Система расчёта заказов</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
+    <script src="shared-utils.js"></script>
+    <style>
+        * { font-family: system-ui, -apple-system, sans-serif; }
+        .card { background: white; border: 1px solid #e5e7eb; border-radius: 12px; padding: 1.25rem; }
+        .stat-card { background: white; border: 1px solid #e5e7eb; border-radius: 12px; padding: 1rem 1.25rem; }
+        .stat-value { font-size: 2rem; font-weight: 700; line-height: 1; }
+        .stat-label { font-size: 0.8rem; color: #6b7280; margin-top: 4px; }
+        .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 6px; font-size: 0.75rem; font-weight: 600; }
+        .badge-red { background: #fef2f2; color: #dc2626; }
+        .badge-yellow { background: #fffbeb; color: #d97706; }
+        .badge-green { background: #f0fdf4; color: #16a34a; }
+        .badge-blue { background: #eff6ff; color: #2563eb; }
+        .table-row:hover { background: #f9fafb; }
+        .search-input { width: 100%; padding: 10px 14px 10px 40px; border: 2px solid #e5e7eb; border-radius: 10px; font-size: 14px; outline: none; transition: border-color 0.2s; }
+        .search-input:focus { border-color: #7c3aed; }
+        .search-icon { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: #9ca3af; }
+        .progress-bar { height: 6px; border-radius: 3px; background: #e5e7eb; overflow: hidden; }
+        .progress-fill { height: 100%; border-radius: 3px; transition: width 0.5s; }
+        .pulse { animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    </style>
+</head>
+<body class="min-h-screen p-4 md:p-6 bg-gray-50">
+    <div class="max-w-6xl mx-auto">
+        <!-- Header -->
+        <div class="flex items-center justify-between mb-6">
+            <div>
+                <h1 class="text-2xl font-bold text-gray-900">Дашборд</h1>
+                <p class="text-gray-500 text-sm mt-1">Общая сводка по всем разделам</p>
+            </div>
+            <a href="index.html" class="text-sm text-purple-600 hover:text-purple-800 font-medium flex items-center gap-1">
+                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+                На главную
+            </a>
+        </div>
+
+        <!-- Поиск -->
+        <div class="card mb-6">
+            <div class="relative">
+                <svg class="search-icon w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+                <input id="globalSearch" type="text" class="search-input" placeholder="Поиск по коду или названию товара..." autocomplete="off">
+                <div id="searchResults" class="mt-3 hidden"></div>
+            </div>
+        </div>
+
+        <!-- Статистика -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6" id="statsGrid">
+            <div class="stat-card">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <div class="stat-value text-gray-900" id="statStores">—</div>
+                        <div class="stat-label">Магазинов</div>
+                    </div>
+                    <div class="w-10 h-10 rounded-lg bg-purple-50 flex items-center justify-center">
+                        <svg class="w-5 h-5 text-purple-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                    </div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <div class="stat-value text-orange-600" id="statProducts">—</div>
+                        <div class="stat-label">Товаров в матрице</div>
+                    </div>
+                    <div class="w-10 h-10 rounded-lg bg-orange-50 flex items-center justify-center">
+                        <svg class="w-5 h-5 text-orange-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                    </div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <div class="stat-value text-red-600" id="statOutOfStock">—</div>
+                        <div class="stat-label">Заканчивается на РЦ</div>
+                    </div>
+                    <div class="w-10 h-10 rounded-lg bg-red-50 flex items-center justify-center">
+                        <svg class="w-5 h-5 text-red-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                    </div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <div class="stat-value text-blue-600" id="statOrders">—</div>
+                        <div class="stat-label">Позиций в заказах</div>
+                    </div>
+                    <div class="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center">
+                        <svg class="w-5 h-5 text-blue-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Две колонки -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            <!-- Товары заканчивающиеся -->
+            <div class="card">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full bg-red-500 pulse"></span>
+                        Заканчивается на РЦ
+                    </h2>
+                    <span class="badge badge-red" id="lowStockCount">0</span>
+                </div>
+                <div id="lowStockList" class="space-y-2 max-h-80 overflow-y-auto">
+                    <p class="text-gray-400 text-sm">Загрузка...</p>
+                </div>
+            </div>
+
+            <!-- Последние заказы -->
+            <div class="card">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                        <svg class="w-5 h-5 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                        Заказы по разделам
+                    </h2>
+                </div>
+                <div id="ordersSummary" class="space-y-3">
+                    <p class="text-gray-400 text-sm">Загрузка...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Доставка -->
+        <div class="card mb-6">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                    <svg class="w-5 h-5 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="3" width="15" height="13" rx="2" ry="2"/><path d="M16 8h4a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-4"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+                    Доставки и транзит
+                </h2>
+                <a href="delivery.html" class="text-sm text-purple-600 hover:text-purple-800 font-medium">Открыть доставки →</a>
+            </div>
+            <div id="deliveryInfo" class="space-y-3">
+                <p class="text-gray-400 text-sm">Загрузка...</p>
+            </div>
+        </div>
+
+        <!-- Статус синхронизации -->
+        <div class="card" style="background: #f9fafb;">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-lg bg-purple-100 flex items-center justify-center">
+                        <svg class="w-4 h-4 text-purple-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                    </div>
+                    <div>
+                        <div class="text-sm font-semibold text-gray-900" id="syncStatus">Проверка...</div>
+                        <div class="text-xs text-gray-500" id="syncLast">—</div>
+                    </div>
+                </div>
+                <div id="syncActions"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="config.js"></script>
+    <script src="storage.js"></script>
+    <script>
+        // === Утилиты ===
+        const get = (key) => {
+            try {
+                const raw = localStorage.getItem(key);
+                if (!raw) return null;
+                if (raw.startsWith('{') || raw.startsWith('[')) return JSON.parse(raw);
+                if (typeof LZString !== 'undefined') { try { return JSON.parse(LZString.decompressFromUTF16(raw)); } catch {} }
+                try { return JSON.parse(raw); } catch { return raw; }
+            } catch { return null; }
+        };
+
+        const normCode = (code) => {
+            if (!code) return '';
+            return String(code).replace(/^0+/, '') || '0';
+        };
+
+        const fmtNum = (n) => {
+            if (n === null || n === undefined || isNaN(n)) return '0';
+            return Number(n).toLocaleString('ru-RU', { maximumFractionDigits: 1 });
+        };
+
+        // === Статистика ===
+        function loadStats() {
+            // Магазины
+            const stores = get('shared_stores_v1') || [];
+            document.getElementById('statStores').textContent = stores.length;
+
+            // Товары
+            const products = get('shared_products_v1') || get('sneki_products_v2') || [];
+            document.getElementById('statProducts').textContent = Array.isArray(products) ? products.length : Object.keys(products).length;
+
+            // Остатки на РЦ
+            const rcStocks = get('sneki_rcStocks_v2') || {};
+            const matrix = get('sneki_matrix_v2') || get('shared_matrix_v1') || {};
+            const lowThreshold = 3;
+            let lowStock = [];
+
+            Object.entries(rcStocks).forEach(([code, qty]) => {
+                const q = Number(qty) || 0;
+                if (q <= lowThreshold && q >= 0) {
+                    const name = findProductName(code);
+                    lowStock.push({ code, name, qty: q });
+                }
+            });
+
+            // Сортируем: сначала закончившиеся
+            lowStock.sort((a, b) => a.qty - b.qty);
+            document.getElementById('statOutOfStock').textContent = lowStock.length;
+            document.getElementById('lowStockCount').textContent = lowStock.length;
+
+            const listEl = document.getElementById('lowStockList');
+            if (lowStock.length === 0) {
+                listEl.innerHTML = '<p class="text-gray-400 text-sm">Все запасы в норме</p>';
+            } else {
+                listEl.innerHTML = lowStock.slice(0, 20).map(item => {
+                    const isZero = item.qty === 0;
+                    return `<div class="flex items-center justify-between py-2 px-3 rounded-lg ${isZero ? 'bg-red-50' : 'bg-amber-50'}">
+                        <div>
+                            <div class="text-sm font-medium text-gray-900">${item.name || item.code}</div>
+                            <div class="text-xs text-gray-500">${item.code}</div>
+                        </div>
+                        <span class="badge ${isZero ? 'badge-red' : 'badge-yellow'}">${isZero ? 'нет' : item.qty + ' шт'}</span>
+                    </div>`;
+                }).join('');
+                if (lowStock.length > 20) {
+                    listEl.innerHTML += `<p class="text-gray-400 text-xs mt-2">... и ещё ${lowStock.length - 20}</p>`;
+                }
+            }
+
+            // Заказы
+            let totalOrders = 0;
+            const snekiResults = get('sneki_results_v2');
+            const snekiRcResults = get('sneki_rcResults_v2');
+            const fishOrder = get('fish_saved_order_v1');
+
+            const ordersEl = document.getElementById('ordersSummary');
+            let orderCards = [];
+
+            // Снеки
+            if (snekiResults && Array.isArray(snekiResults)) {
+                const count = snekiResults.filter(r => r.orderStatus && r.orderStatus.startsWith('заказ')).length;
+                totalOrders += count;
+                orderCards.push({
+                    title: 'Снеки',
+                    href: 'sneki.html',
+                    count,
+                    total: snekiResults.length,
+                    color: '#ea580c',
+                    bg: '#fff7ed'
+                });
+            }
+
+            // Снеки РЦ
+            if (snekiRcResults && Array.isArray(snekiRcResults)) {
+                const count = snekiRcResults.filter(r => r.orderStatus && r.orderStatus.startsWith('заказ')).length;
+                totalOrders += count;
+            }
+
+            // Рыба
+            if (fishOrder && Array.isArray(fishOrder)) {
+                const count = fishOrder.filter(r => r.needQty && Number(r.needQty) > 0).length;
+                totalOrders += count;
+                orderCards.push({
+                    title: 'Заказ рыбы',
+                    href: 'fish-order.html',
+                    count,
+                    total: fishOrder.length,
+                    color: '#0369a1',
+                    bg: '#f0f9ff'
+                });
+            }
+
+            document.getElementById('statOrders').textContent = totalOrders;
+
+            if (orderCards.length === 0) {
+                ordersEl.innerHTML = '<p class="text-gray-400 text-sm">Заказов ещё не сформировано</p>';
+            } else {
+                ordersEl.innerHTML = orderCards.map(card => {
+                    const pct = card.total > 0 ? Math.round(card.count / card.total * 100) : 0;
+                    return `<a href="${card.href}" class="block p-3 rounded-lg border border-gray-100 hover:border-gray-300 hover:shadow-sm transition">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-sm font-semibold" style="color: ${card.color}">${card.title}</span>
+                            <span class="badge badge-blue">${card.count} из ${card.total}</span>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" style="width: ${pct}%; background: ${card.color};"></div>
+                        </div>
+                    </a>`;
+                }).join('');
+            }
+
+            // Доставки
+            loadDeliveries();
+        }
+
+        function findProductName(code) {
+            const products = get('shared_products_v1') || get('sneki_products_v2') || [];
+            const arr = Array.isArray(products) ? products : [];
+            const found = arr.find(p => normCode(p.code || p.article) === normCode(code));
+            if (found) return found.name || found.title || '';
+            // Поиск в матрице
+            const matrix = get('sneki_matrix_v2') || {};
+            if (matrix[code]) {
+                const stores = Object.values(matrix[code]);
+                if (stores.length > 0 && stores[0].name) return stores[0].name;
+            }
+            return '';
+        }
+
+        function loadDeliveries() {
+            const el = document.getElementById('deliveryInfo');
+            const inTransit = get('fish_intransit_v1');
+            const schedule = get('fish_schedule_v1');
+
+            let items = [];
+
+            if (inTransit && Array.isArray(inTransit)) {
+                inTransit.forEach(t => {
+                    if (t.status === 'in_transit' || t.status === 'ожидается') {
+                        items.push({
+                            type: t.supplier || 'Поставщик',
+                            date: t.deliveryDate || t.date || '',
+                            status: t.status === 'in_transit' ? 'В пути' : 'Ожидается',
+                            statusClass: t.status === 'in_transit' ? 'badge-blue' : 'badge-yellow',
+                            detail: t.items || ''
+                        });
+                    }
+                });
+            }
+
+            if (schedule && typeof schedule === 'object') {
+                Object.entries(schedule).forEach(([key, val]) => {
+                    if (val && val.date) {
+                        items.push({
+                            type: key,
+                            date: val.date,
+                            status: 'По расписанию',
+                            statusClass: 'badge-green',
+                            detail: val.note || ''
+                        });
+                    }
+                });
+            }
+
+            if (items.length === 0) {
+                el.innerHTML = '<p class="text-gray-400 text-sm">Нет активных доставок. Откройте раздел "Доставки" для настройки.</p>';
+            } else {
+                el.innerHTML = items.slice(0, 10).map(item => `
+                    <div class="flex items-center justify-between py-2 px-3 rounded-lg bg-white border border-gray-100">
+                        <div>
+                            <div class="text-sm font-medium text-gray-900">${item.type}</div>
+                            <div class="text-xs text-gray-500">${item.detail || ''}</div>
+                        </div>
+                        <div class="text-right">
+                            <div class="text-sm text-gray-700">${item.date}</div>
+                            <span class="badge ${item.statusClass}">${item.status}</span>
+                        </div>
+                    </div>
+                `).join('');
+            }
+        }
+
+        // === Поиск ===
+        function setupSearch() {
+            const input = document.getElementById('globalSearch');
+            const resultsEl = document.getElementById('searchResults');
+            let timeout;
+
+            input.addEventListener('input', () => {
+                clearTimeout(timeout);
+                timeout = setTimeout(() => {
+                    const query = input.value.trim().toLowerCase();
+                    if (query.length < 2) {
+                        resultsEl.classList.add('hidden');
+                        return;
+                    }
+                    searchProducts(query, resultsEl);
+                }, 200);
+            });
+        }
+
+        function searchProducts(query, container) {
+            const results = [];
+            const codeQuery = normCode(query);
+
+            // Искать в shared_products
+            const products = get('shared_products_v1') || [];
+            if (Array.isArray(products)) {
+                products.forEach(p => {
+                    const code = normCode(p.code || p.article || '');
+                    const name = (p.name || p.title || '').toLowerCase();
+                    if (code.includes(codeQuery) || name.includes(query)) {
+                        results.push({
+                            code: p.code || p.article,
+                            name: p.name || p.title,
+                            source: 'Ассортимент',
+                            href: 'assortment.html'
+                        });
+                    }
+                });
+            }
+
+            // Искать в sneki_products
+            const snekiProducts = get('sneki_products_v2') || [];
+            if (Array.isArray(snekiProducts)) {
+                snekiProducts.forEach(p => {
+                    const code = normCode(p.code || p.article || '');
+                    const name = (p.name || p.title || '').toLowerCase();
+                    if ((code.includes(codeQuery) || name.includes(query)) && !results.find(r => r.code === (p.code || p.article))) {
+                        results.push({
+                            code: p.code || p.article,
+                            name: p.name || p.title,
+                            source: 'Снеки',
+                            href: 'sneki.html'
+                        });
+                    }
+                });
+            }
+
+            // Искать в fish_assortment
+            const fishProducts = get('fish_assortment_v1') || [];
+            if (Array.isArray(fishProducts)) {
+                fishProducts.forEach(p => {
+                    const code = normCode(p.code || p.article || '');
+                    const name = (p.name || p.title || '').toLowerCase();
+                    if ((code.includes(codeQuery) || name.includes(query)) && !results.find(r => r.code === (p.code || p.article))) {
+                        results.push({
+                            code: p.code || p.article,
+                            name: p.name || p.title,
+                            source: 'Рыба',
+                            href: 'fish-order.html'
+                        });
+                    }
+                });
+            }
+
+            // Ограничить результат
+            const maxResults = 30;
+
+            if (results.length === 0) {
+                container.innerHTML = '<p class="text-gray-400 text-sm">Ничего не найдено</p>';
+            } else {
+                container.innerHTML = `
+                    <div class="text-xs text-gray-500 mb-2">Найдено: ${results.length} (показано ${Math.min(results.length, maxResults)})</div>
+                    <div class="space-y-1 max-h-60 overflow-y-auto">
+                        ${results.slice(0, maxResults).map(r => `
+                            <a href="${r.href}" class="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-gray-50 transition">
+                                <div>
+                                    <span class="text-sm font-medium text-gray-900">${r.name || '—'}</span>
+                                    <span class="text-xs text-gray-400 ml-2">${r.code}</span>
+                                </div>
+                                <span class="badge badge-blue">${r.source}</span>
+                            </a>
+                        `).join('')}
+                    </div>
+                `;
+            }
+            container.classList.remove('hidden');
+        }
+
+        // === Статус синхронизации ===
+        function updateSyncStatus() {
+            const token = window.YANDEX_TOKEN || localStorage.getItem('yandex_disk_token');
+            const statusEl = document.getElementById('syncStatus');
+            const lastEl = document.getElementById('syncLast');
+            const actionsEl = document.getElementById('syncActions');
+
+            if (token) {
+                statusEl.textContent = 'Облако подключено';
+                statusEl.style.color = '#059669';
+                const lastSync = localStorage.getItem('cloud_last_sync');
+                lastEl.textContent = lastSync ? 'Последняя синхронизация: ' + new Date(lastSync).toLocaleString('ru') : 'Синхронизация ещё не выполнялась';
+                actionsEl.innerHTML = '<span class="badge badge-green">Активно</span>';
+            } else {
+                statusEl.textContent = 'Облако не подключено';
+                statusEl.style.color = '#dc2626';
+                lastEl.textContent = 'Настройте Яндекс.Диск для автоматической синхронизации';
+                actionsEl.innerHTML = '<button onclick="document.getElementById(\'cloudSyncBtn\').click()" class="text-sm text-purple-600 hover:text-purple-800 font-medium">Настроить →</button>';
+            }
+        }
+
+        // === Инициализация ===
+        function init() {
+            loadStats();
+            setupSearch();
+            updateSyncStatus();
+
+            // Обновлять при изменениях
+            if (window.CloudStorage) {
+                window.CloudStorage.waitForReady().then(() => {
+                    updateSyncStatus();
+                });
+            }
+        }
+
+        // Ждём загрузки всех данных
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => setTimeout(init, 500));
+        } else {
+            setTimeout(init, 500);
+        }
+    </script>
+</body>
+</html>
