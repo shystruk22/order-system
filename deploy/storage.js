@@ -100,12 +100,23 @@
             const jsonText = await dataResp.text();
             const cloudData = JSON.parse(jsonText);
 
-            // Записываем в localStorage
+            // Записываем в localStorage — БЕЗОПАСНО: не затираем локальные данные пустыми из облака
             if (cloudData.stores) {
                 const stores = cloudData.stores;
                 
-                // Общие данные — значения из облака уже распарсены JSON.parse
-                const set = (key, val) => { if (val !== null && val !== undefined) localStorage.setItem(key, JSON.stringify(val)); };
+                // Безопасная запись: берём из облака только если значение реально содержит данные.
+                // Не перезаписываем локальные данные null, undefined или пустым массивом/объектом.
+                const hasData = (val) => {
+                    if (val === null || val === undefined) return false;
+                    if (Array.isArray(val)) return val.length > 0;
+                    if (typeof val === 'object') return Object.keys(val).length > 0;
+                    if (typeof val === 'string') return val.length > 0;
+                    if (typeof val === 'number') return true;
+                    return true;
+                };
+                const set = (key, val) => { 
+                    if (hasData(val)) localStorage.setItem(key, JSON.stringify(val)); 
+                };
                 set('shared_products_v1', stores.products);
                 set('shared_matrix_v1', stores.matrix);
                 set('shared_sales_v1', stores.sales);
@@ -564,7 +575,13 @@
             display: flex; align-items: center; gap: 6px;
         `;
         btn.innerHTML = '☁️';
-        btn.onclick = async () => {
+        btn.onclick = async (e) => {
+            // Shift + клик — всегда открывает настройки OAuth (даже с токеном)
+            if (e.shiftKey) {
+                showOAuthModal();
+                return;
+            }
+
             // Если токена нет — показываем форму настройки
             if (!getToken()) {
                 showOAuthModal();
