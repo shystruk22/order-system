@@ -425,7 +425,6 @@
     // ФОРМА НАСТРОЙКИ OAUTH (модальное окно)
     // ============================================================================
     function showOAuthModal() {
-        // Убираем старый модал если есть
         const old = document.getElementById('yandexOAuthModal');
         if (old) old.remove();
 
@@ -446,79 +445,69 @@
                         width: 420px; max-width: 95vw; box-shadow: 0 20px 60px rgba(0,0,0,0.3);">
                 <h2 style="margin: 0 0 4px 0; font-size: 18px; color: #111;">Настройка Яндекс.Диск</h2>
                 <p style="margin: 0 0 16px 0; font-size: 13px; color: #666;">
-                    Введите данные OAuth-приложения для подключения облака
+                    Введите OAuth-токен для подключения к облаку
                 </p>
 
                 <div style="display: flex; flex-direction: column; gap: 12px;">
+                    <!-- Простой ввод токена -->
                     <div>
                         <label style="font-size: 12px; font-weight: 600; color: #444; display: block; margin-bottom: 4px;">
-                            Client ID
+                            OAuth-токен Яндекс.Диска
                         </label>
-                        <input id="oauthClientId" type="text" placeholder="Вставьте Client ID из oauth.yandex.ru"
-                            value="${savedClientId}"
-                            style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px;
-                                   font-size: 14px; box-sizing: border-box; outline: none;"
-                            onfocus="this.style.borderColor='#7c3aed'" onblur="this.style.borderColor='#d1d5db'">
-                    </div>
-                    <div>
-                        <label style="font-size: 12px; font-weight: 600; color: #444; display: block; margin-bottom: 4px;">
-                            Client Secret
-                        </label>
-                        <input id="oauthClientSecret" type="password" placeholder="Вставьте Client Secret"
-                            value="${savedSecret}"
-                            style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px;
-                                   font-size: 14px; box-sizing: border-box; outline: none;"
-                            onfocus="this.style.borderColor='#7c3aed'" onblur="this.style.borderColor='#d1d5db'">
-                    </div>
-                    <div>
-                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                            <label style="font-size: 12px; font-weight: 600; color: #444;">
-                                Код подтверждения
-                            </label>
-                            <button id="oauthGetCodeBtn" style="font-size: 11px; color: #7c3aed; background: none; border: none;
-                                cursor: pointer; text-decoration: underline; padding: 0;"
-                                onmouseover="this.style.color='#6d28d9'" onmouseout="this.style.color='#7c3aed'">
-                                Получить новый код
-                            </button>
-                        </div>
-                        <input id="oauthCode" type="text" placeholder="Нажмите 'Получить новый код' выше"
-                            style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px;
-                                   font-size: 14px; box-sizing: border-box; outline: none;"
-                            onfocus="this.style.borderColor='#7c3aed'" onblur="this.style.borderColor='#d1d5db'">
+                        <input id="oauthManualToken" type="text" placeholder="Вставьте сюда токен"
+                            style="width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 8px;
+                                   font-size: 14px; box-sizing: border-box; outline: none;">
                     </div>
 
                     <div id="oauthStatus" style="font-size: 12px; color: #666; min-height: 20px;"></div>
 
-                    <div style="display: flex; gap: 8px;">
-                        <button id="oauthSubmitBtn" style="
-                            flex: 1; padding: 10px; background: #7c3aed; color: white;
-                            border: none; border-radius: 8px; font-size: 14px; font-weight: 600;
-                            cursor: pointer; transition: background 0.2s;"
-                            onmouseover="this.style.background='#6d28d9'" onmouseout="this.style.background='#7c3aed'">
-                            Получить токен
-                        </button>
-                        <button id="oauthManualBtn" style="
-                            padding: 10px 16px; background: #f3f4f6; color: #374151;
-                            border: none; border-radius: 8px; font-size: 13px; cursor: pointer;
-                            transition: background 0.2s;"
-                            onmouseover="this.style.background='#e5e7eb'" onmouseout="this.style.background='#f3f4f6'">
-                            Ввести токен вручную
-                        </button>
-                    </div>
+                    <button id="oauthManualSave" style="
+                        width: 100%; padding: 10px; background: #059669; color: white;
+                        border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;
+                        transition: background 0.2s;"
+                        onmouseover="this.style.background='#047857'" onmouseout="this.style.background='#059669'">
+                        Сохранить токен
+                    </button>
 
-                    <div id="oauthManualArea" style="display: none;">
-                        <label style="font-size: 12px; font-weight: 600; color: #444; display: block; margin-bottom: 4px;">
-                            OAuth-токен
-                        </label>
-                        <input id="oauthManualToken" type="text" placeholder="Готовый OAuth-токен Яндекс.Диска"
-                            style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px;
-                                   font-size: 14px; box-sizing: border-box; outline: none; margin-bottom: 8px;"
-                            onfocus="this.style.borderColor='#7c3aed'" onblur="this.style.borderColor='#d1d5db'">
-                        <button id="oauthManualSave" style="
-                            width: 100%; padding: 10px; background: #059669; color: white;
-                            border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;">
-                            Сохранить токен
-                        </button>
+                    <!-- Разделитель -->
+                    <div style="text-align: center; color: #d1d5db; font-size: 12px; margin: 4px 0;">— или —</div>
+
+                    <!-- Ссылка на расширенную OAuth-настройку -->
+                    <button id="oauthToggleAdvanced" style="
+                        padding: 0; background: none; border: none; color: #7c3aed;
+                        font-size: 13px; cursor: pointer; text-decoration: underline; width: 100%; text-align: center;">
+                        Получить токен через Яндекс OAuth (Client ID + Secret)
+                    </button>
+
+                    <!-- Расширенная форма (скрыта по умолчанию) -->
+                    <div id="oauthAdvancedArea" style="display: none; border-top: 1px solid #e5e7eb; padding-top: 12px;">
+                        <div style="display: flex; flex-direction: column; gap: 12px;">
+                            <div>
+                                <label style="font-size: 12px; font-weight: 600; color: #444; display: block; margin-bottom: 4px;">Client ID</label>
+                                <input id="oauthClientId" type="text" placeholder="Client ID из oauth.yandex.ru"
+                                    value="${savedClientId}"
+                                    style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; box-sizing: border-box; outline: none;">
+                            </div>
+                            <div>
+                                <label style="font-size: 12px; font-weight: 600; color: #444; display: block; margin-bottom: 4px;">Client Secret</label>
+                                <input id="oauthClientSecret" type="password" placeholder="Client Secret"
+                                    value="${savedSecret}"
+                                    style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; box-sizing: border-box; outline: none;">
+                            </div>
+                            <div>
+                                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                                    <label style="font-size: 12px; font-weight: 600; color: #444;">Код подтверждения</label>
+                                    <button id="oauthGetCodeBtn" style="font-size: 11px; color: #7c3aed; background: none; border: none; cursor: pointer; text-decoration: underline; padding: 0;">
+                                        Получить новый код
+                                    </button>
+                                </div>
+                                <input id="oauthCode" type="text" placeholder="Нажмите 'Получить новый код' выше"
+                                    style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; box-sizing: border-box; outline: none;">
+                            </div>
+                            <button id="oauthSubmitBtn" style="width: 100%; padding: 10px; background: #7c3aed; color: white; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;">
+                                Получить токен
+                            </button>
+                        </div>
                     </div>
 
                     <button id="oauthCloseBtn" style="
@@ -532,30 +521,18 @@
 
         document.body.appendChild(modal);
 
-        // Кнопка 'Получить новый код' — открывает страницу авторизации Яндекса
-        document.getElementById('oauthGetCodeBtn').onclick = () => {
-            const cid = document.getElementById('oauthClientId').value.trim();
-            if (!cid) {
-                document.getElementById('oauthStatus').innerHTML = '<span style="color:#dc2626">Сначала введите Client ID</span>';
-                return;
-            }
-            const url = 'https://oauth.yandex.ru/authorize?response_type=code&client_id=' + encodeURIComponent(cid);
-            window.open(url, '_blank');
-            document.getElementById('oauthStatus').innerHTML = '<span style="color:#2563eb">В открывшемся окне авторизуйтесь и скопируйте код из адресной строки</span>';
-        };
-
-        // Закрытие по фону
-        modal.addEventListener('click', (e) => {
-            if (e.target === modal) modal.remove();
-        });
-
-        // Закрытие кнопкой
+        // Закрытие
+        modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
         document.getElementById('oauthCloseBtn').onclick = () => modal.remove();
 
-        // Показать ручной ввод
-        document.getElementById('oauthManualBtn').onclick = () => {
-            const area = document.getElementById('oauthManualArea');
+        // Переключить расширенную форму
+        document.getElementById('oauthToggleAdvanced').onclick = () => {
+            const area = document.getElementById('oauthAdvancedArea');
             area.style.display = area.style.display === 'none' ? 'block' : 'none';
+            document.getElementById('oauthToggleAdvanced').textContent =
+                area.style.display === 'none'
+                    ? 'Получить токен через Яндекс OAuth (Client ID + Secret)'
+                    : 'Скрыть расширенную настройку';
         };
 
         // Сохранить токен вручную
@@ -568,9 +545,19 @@
             if (window.setYandexToken(tkn)) {
                 document.getElementById('oauthStatus').innerHTML = '<span style="color:#059669">Токен сохранён!</span>';
                 setTimeout(() => modal.remove(), 500);
-                // Перезагружаем для применения
                 setTimeout(() => location.reload(), 700);
             }
+        };
+
+        // Получить новый код авторизации
+        document.getElementById('oauthGetCodeBtn').onclick = () => {
+            const cid = document.getElementById('oauthClientId').value.trim();
+            if (!cid) {
+                document.getElementById('oauthStatus').innerHTML = '<span style="color:#dc2626">Сначала введите Client ID</span>';
+                return;
+            }
+            window.open('https://oauth.yandex.ru/authorize?response_type=code&client_id=' + encodeURIComponent(cid), '_blank');
+            document.getElementById('oauthStatus').innerHTML = '<span style="color:#2563eb">Авторизуйтесь в открывшемся окне и скопируйте код</span>';
         };
 
         // Обмен кода на токен
@@ -592,7 +579,7 @@
             status.innerHTML = '<span style="color:#2563eb">Обмениваем код на токен...</span>';
 
             try {
-                const accessToken = await window.exchangeCodeForToken(code, clientId, clientSecret);
+                await window.exchangeCodeForToken(code, clientId, clientSecret);
                 status.innerHTML = '<span style="color:#059669">Токен получен и сохранён!</span>';
                 setTimeout(() => modal.remove(), 500);
                 setTimeout(() => location.reload(), 700);
