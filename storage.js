@@ -100,12 +100,23 @@
             const jsonText = await dataResp.text();
             const cloudData = JSON.parse(jsonText);
 
-            // Записываем в localStorage
+            // Записываем в localStorage — БЕЗОПАСНО: не затираем локальные данные пустыми из облака
             if (cloudData.stores) {
                 const stores = cloudData.stores;
                 
-                // Общие данные — значения из облака уже распарсены JSON.parse
-                const set = (key, val) => { if (val !== null && val !== undefined) localStorage.setItem(key, JSON.stringify(val)); };
+                // Безопасная запись: берём из облака только если значение реально содержит данные.
+                // Не перезаписываем локальные данные null, undefined или пустым массивом/объектом.
+                const hasData = (val) => {
+                    if (val === null || val === undefined) return false;
+                    if (Array.isArray(val)) return val.length > 0;
+                    if (typeof val === 'object') return Object.keys(val).length > 0;
+                    if (typeof val === 'string') return val.length > 0;
+                    if (typeof val === 'number') return true;
+                    return true;
+                };
+                const set = (key, val) => { 
+                    if (hasData(val)) localStorage.setItem(key, JSON.stringify(val)); 
+                };
                 set('shared_products_v1', stores.products);
                 set('shared_matrix_v1', stores.matrix);
                 set('shared_sales_v1', stores.sales);
@@ -286,6 +297,34 @@
     }
 
     // ============================================================================
+    // СОЗДАНИЕ ПАПКИ НА ЯНДЕКС.ДИСКЕ (если не существует)
+    // ============================================================================
+    async function ensureDirExists(dirPath) {
+        try {
+            await diskRequest(`${API_BASE}/resources?path=${encodeURIComponent(dirPath)}`);
+            return; // уже существует
+        } catch (e) {
+            if (e.message.includes('404') || e.message.includes('Не найден')) {
+                // Папки нет — создаём (mkdir по пути)
+                const parts = dirPath.split('/').filter(Boolean);
+                let current = '';
+                for (const part of parts) {
+                    current += (current ? '/' : '') + part;
+                    try {
+                        await diskRequest(`${API_BASE}/resources?path=${encodeURIComponent(current)}`);
+                    } catch (e2) {
+                        if (e2.message.includes('404') || e2.message.includes('Не найден')) {
+                            await diskRequest(`${API_BASE}/resources?path=${encodeURIComponent(current)}`, {
+                                method: 'PUT'
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ============================================================================
     // ЗАГРУЗКА ДАННЫХ НА ЯНДЕКС.ДИСК
     // ============================================================================
     async function uploadToDisk() {
@@ -299,6 +338,9 @@
         syncInProgress = true;
 
         try {
+            // Сначала проверяем/создаём папку
+            await ensureDirExists(APP_DIR);
+
             const data = collectAllData();
             const jsonStr = JSON.stringify(data);
 
@@ -380,6 +422,177 @@
     }
 
     // ============================================================================
+    // ФОРМА НАСТРОЙКИ OAUTH (модальное окно)
+    // ============================================================================
+    function showOAuthModal() {
+        const old = document.getElementById('yandexOAuthModal');
+        if (old) old.remove();
+
+        const modal = document.createElement('div');
+        modal.id = 'yandexOAuthModal';
+        modal.style.cssText = `
+            position: fixed; inset: 0; z-index: 999999;
+            background: rgba(0,0,0,0.5); display: flex;
+            align-items: center; justify-content: center;
+            font-family: system-ui, sans-serif;
+        `;
+
+        const savedClientId = window.YANDEX_CLIENT_ID || '';
+        const savedSecret = window.YANDEX_CLIENT_SECRET || '';
+
+        modal.innerHTML = `
+            <div style="background: white; border-radius: 16px; padding: 24px;
+                        width: 420px; max-width: 95vw; box-shadow: 0 20px 60px rgba(0,0,0,0.3);">
+                <h2 style="margin: 0 0 4px 0; font-size: 18px; color: #111;">Настройка Яндекс.Диск</h2>
+                <p style="margin: 0 0 16px 0; font-size: 13px; color: #666;">
+                    Введите OAuth-токен для подключения к облаку
+                </p>
+
+                <div style="display: flex; flex-direction: column; gap: 12px;">
+                    <!-- Простой ввод токена -->
+                    <div>
+                        <label style="font-size: 12px; font-weight: 600; color: #444; display: block; margin-bottom: 4px;">
+                            OAuth-токен Яндекс.Диска
+                        </label>
+                        <input id="oauthManualToken" type="text" placeholder="Вставьте сюда токен"
+                            style="width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 8px;
+                                   font-size: 14px; box-sizing: border-box; outline: none;">
+                    </div>
+
+                    <div id="oauthStatus" style="font-size: 12px; color: #666; min-height: 20px;"></div>
+
+                    <button id="oauthManualSave" style="
+                        width: 100%; padding: 10px; background: #059669; color: white;
+                        border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;
+                        transition: background 0.2s;"
+                        onmouseover="this.style.background='#047857'" onmouseout="this.style.background='#059669'">
+                        Сохранить токен
+                    </button>
+
+                    <!-- Разделитель -->
+                    <div style="text-align: center; color: #d1d5db; font-size: 12px; margin: 4px 0;">— или —</div>
+
+                    <!-- Ссылка на расширенную OAuth-настройку -->
+                    <button id="oauthToggleAdvanced" style="
+                        padding: 0; background: none; border: none; color: #7c3aed;
+                        font-size: 13px; cursor: pointer; text-decoration: underline; width: 100%; text-align: center;">
+                        Получить токен через Яндекс OAuth (Client ID + Secret)
+                    </button>
+
+                    <!-- Расширенная форма (скрыта по умолчанию) -->
+                    <div id="oauthAdvancedArea" style="display: none; border-top: 1px solid #e5e7eb; padding-top: 12px;">
+                        <div style="display: flex; flex-direction: column; gap: 12px;">
+                            <div>
+                                <label style="font-size: 12px; font-weight: 600; color: #444; display: block; margin-bottom: 4px;">Client ID</label>
+                                <input id="oauthClientId" type="text" placeholder="Client ID из oauth.yandex.ru"
+                                    value="${savedClientId}"
+                                    style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; box-sizing: border-box; outline: none;">
+                            </div>
+                            <div>
+                                <label style="font-size: 12px; font-weight: 600; color: #444; display: block; margin-bottom: 4px;">Client Secret</label>
+                                <input id="oauthClientSecret" type="password" placeholder="Client Secret"
+                                    value="${savedSecret}"
+                                    style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; box-sizing: border-box; outline: none;">
+                            </div>
+                            <div>
+                                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                                    <label style="font-size: 12px; font-weight: 600; color: #444;">Код подтверждения</label>
+                                    <button id="oauthGetCodeBtn" style="font-size: 11px; color: #7c3aed; background: none; border: none; cursor: pointer; text-decoration: underline; padding: 0;">
+                                        Получить новый код
+                                    </button>
+                                </div>
+                                <input id="oauthCode" type="text" placeholder="Нажмите 'Получить новый код' выше"
+                                    style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; box-sizing: border-box; outline: none;">
+                            </div>
+                            <button id="oauthSubmitBtn" style="width: 100%; padding: 10px; background: #7c3aed; color: white; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;">
+                                Получить токен
+                            </button>
+                        </div>
+                    </div>
+
+                    <button id="oauthCloseBtn" style="
+                        margin-top: 4px; padding: 6px; background: none; border: none;
+                        color: #9ca3af; font-size: 12px; cursor: pointer; width: 100%; text-align: center;">
+                        Отмена
+                    </button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        // Закрытие
+        modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+        document.getElementById('oauthCloseBtn').onclick = () => modal.remove();
+
+        // Переключить расширенную форму
+        document.getElementById('oauthToggleAdvanced').onclick = () => {
+            const area = document.getElementById('oauthAdvancedArea');
+            area.style.display = area.style.display === 'none' ? 'block' : 'none';
+            document.getElementById('oauthToggleAdvanced').textContent =
+                area.style.display === 'none'
+                    ? 'Получить токен через Яндекс OAuth (Client ID + Secret)'
+                    : 'Скрыть расширенную настройку';
+        };
+
+        // Сохранить токен вручную
+        document.getElementById('oauthManualSave').onclick = () => {
+            const tkn = document.getElementById('oauthManualToken').value.trim();
+            if (!tkn) {
+                document.getElementById('oauthStatus').innerHTML = '<span style="color:#dc2626">Введите токен</span>';
+                return;
+            }
+            if (window.setYandexToken(tkn)) {
+                document.getElementById('oauthStatus').innerHTML = '<span style="color:#059669">Токен сохранён!</span>';
+                setTimeout(() => modal.remove(), 500);
+                setTimeout(() => location.reload(), 700);
+            }
+        };
+
+        // Получить новый код авторизации
+        document.getElementById('oauthGetCodeBtn').onclick = () => {
+            const cid = document.getElementById('oauthClientId').value.trim();
+            if (!cid) {
+                document.getElementById('oauthStatus').innerHTML = '<span style="color:#dc2626">Сначала введите Client ID</span>';
+                return;
+            }
+            window.open('https://oauth.yandex.ru/authorize?response_type=code&client_id=' + encodeURIComponent(cid), '_blank');
+            document.getElementById('oauthStatus').innerHTML = '<span style="color:#2563eb">Авторизуйтесь в открывшемся окне и скопируйте код</span>';
+        };
+
+        // Обмен кода на токен
+        document.getElementById('oauthSubmitBtn').onclick = async () => {
+            const clientId = document.getElementById('oauthClientId').value.trim();
+            const clientSecret = document.getElementById('oauthClientSecret').value.trim();
+            const code = document.getElementById('oauthCode').value.trim();
+            const status = document.getElementById('oauthStatus');
+            const submitBtn = document.getElementById('oauthSubmitBtn');
+
+            if (!clientId || !clientSecret || !code) {
+                status.innerHTML = '<span style="color:#dc2626">Заполните все три поля</span>';
+                return;
+            }
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Подождите...';
+            submitBtn.style.background = '#9ca3af';
+            status.innerHTML = '<span style="color:#2563eb">Обмениваем код на токен...</span>';
+
+            try {
+                await window.exchangeCodeForToken(code, clientId, clientSecret);
+                status.innerHTML = '<span style="color:#059669">Токен получен и сохранён!</span>';
+                setTimeout(() => modal.remove(), 500);
+                setTimeout(() => location.reload(), 700);
+            } catch (err) {
+                status.innerHTML = '<span style="color:#dc2626">Ошибка: ' + err.message + '</span>';
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Получить токен';
+                submitBtn.style.background = '#7c3aed';
+            }
+        };
+    }
+
+    // ============================================================================
     // КНОПКА РУЧНОЙ СИНХРОНИЗАЦИИ
     // ============================================================================
     function showSyncButton() {
@@ -397,15 +610,17 @@
             display: flex; align-items: center; gap: 6px;
         `;
         btn.innerHTML = '☁️';
-        btn.onclick = async () => {
-            // Если токена нет — запрашиваем
+        btn.onclick = async (e) => {
+            // Shift + клик — всегда открывает настройки OAuth (даже с токеном)
+            if (e.shiftKey) {
+                showOAuthModal();
+                return;
+            }
+
+            // Если токена нет — показываем форму настройки
             if (!getToken()) {
-                const token = prompt('Введите OAuth-токен Яндекс.Диска:');
-                if (token && window.setYandexToken) {
-                    window.setYandexToken(token);
-                } else {
-                    return;
-                }
+                showOAuthModal();
+                return;
             }
 
             btn.disabled = true;
