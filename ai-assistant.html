@@ -277,6 +277,19 @@
                     <input type="text" id="customEndpoint" class="input-field" placeholder="https://api.example.com/v1/chat/completions">
                 </div>
 
+                <div id="corsGroup">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <label class="text-sm font-medium text-gray-700">CORS-прокси</label>
+                            <p class="text-xs text-gray-400">Нужен для DeepSeek и OpenAI из браузера</p>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="useCorsProxy" class="sr-only peer" checked>
+                            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
+                        </label>
+                    </div>
+                </div>
+
                 <div class="flex items-center justify-between">
                     <div>
                         <label class="text-sm font-medium text-gray-700">Включать все данные в контекст</label>
@@ -478,6 +491,10 @@ ${ctx}
                 return callAnthropic(systemPrompt, historySlice);
             }
 
+            // CORS proxy — нужен для запросов из браузера к DeepSeek/OpenAI
+            const CORS_PROXY = 'https://corsproxy.io/?';
+            const useProxy = document.getElementById('useCorsProxy').checked;
+
             // OpenAI / DeepSeek / OpenRouter / Custom — единый формат
             let baseUrl;
             if (provider === 'custom') {
@@ -490,6 +507,8 @@ ${ctx}
                 baseUrl = 'https://api.openai.com/v1';
             }
 
+            const endpoint = (useProxy ? CORS_PROXY + encodeURIComponent(baseUrl + '/chat/completions') : baseUrl + '/chat/completions');
+
             const headers = {
                 'Content-Type': 'application/json',
                 'Authorization': 'Bearer ' + settings.apiKey
@@ -500,11 +519,11 @@ ${ctx}
                 headers['X-Title'] = 'Order System AI Assistant';
             }
 
-            const response = await fetch(baseUrl + '/chat/completions', {
+            const response = await fetch(endpoint, {
                 method: 'POST',
                 headers,
                 body: JSON.stringify({
-                    model: settings.model || 'gpt-4o-mini',
+                    model: settings.model || (provider === 'deepseek' ? 'deepseek-chat' : 'gpt-4o-mini'),
                     messages: [
                         { role: 'system', content: systemPrompt },
                         ...historySlice
@@ -678,6 +697,7 @@ ${ctx}
             document.getElementById('apiKey').value = settings.apiKey || '';
             document.getElementById('modelName').value = settings.model || 'gpt-4o-mini';
             document.getElementById('fullContext').checked = settings.fullContext !== false;
+            document.getElementById('useCorsProxy').checked = settings.useCorsProxy !== false;
             if (settings.customEndpoint) {
                 document.getElementById('customEndpoint').value = settings.customEndpoint;
             }
@@ -714,7 +734,8 @@ ${ctx}
                 apiKey: document.getElementById('apiKey').value.trim(),
                 model: document.getElementById('modelName').value.trim(),
                 customEndpoint: document.getElementById('customEndpoint').value.trim(),
-                fullContext: document.getElementById('fullContext').checked
+                fullContext: document.getElementById('fullContext').checked,
+                useCorsProxy: document.getElementById('useCorsProxy').checked
             };
 
             localStorage.setItem(AI_SETTINGS_KEY, JSON.stringify(settings));
