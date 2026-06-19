@@ -2729,5 +2729,18 @@
     const root = ReactDOM.createRoot(document.getElementById('root'));
     root.render(<App />);
   </script>
+  <script>
+    // Глобальный обработчик ошибок — показывает проблему на экране
+    window.onerror = function(msg, url, line, col, err) {
+      var el = document.getElementById('root');
+      if (el && !el.querySelector('.js-error')) {
+        var d = document.createElement('div');
+        d.className = 'js-error';
+        d.style.cssText = 'position:fixed;bottom:10px;right:10px;max-width:90vw;background:#fef2f2;border:1px solid #fca5a5;border-radius:12px;padding:16px;font-size:13px;color:#991b1b;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.15);font-family:monospace;word-break:break-all;';
+        d.innerHTML = '<b>JS ошибка (стр.' + line + '):</b><br>' + msg;
+        el.appendChild(d);
+      }
+    };
+  </script>
 </body>
 </html>
