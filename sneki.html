@@ -2726,8 +2726,12 @@
       );
     }
 
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
+    if (typeof React === 'undefined' || typeof ReactDOM === 'undefined') {
+      document.getElementById('root').innerHTML = '<div style="padding:40px;text-align:center;color:#dc2626"><h2>Не удалось загрузить библиотеки</h2><p>Обновите страницу (Ctrl+Shift+R) или проверьте интернет-соединение.</p></div>';
+    } else {
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      try { root.render(<App />); } catch(e) { document.getElementById('root').innerHTML = '<div style="padding:20px;color:#dc2626;background:#fef2f2;border-radius:12px;margin:20px;max-width:600px"><b>Ошибка React:</b><br><pre style="white-space:pre-wrap">' + e.message + '</pre></div>'; }
+    }
   </script>
   <script>
     // Глобальный обработчик ошибок — показывает проблему на экране
