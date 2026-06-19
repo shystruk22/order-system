@@ -394,6 +394,17 @@
         setWarehouseMarkup(savedWarehouseMarkup);
         setVatRate(savedVatRate);
         setMounted(true);
+
+        // Автопереключение на вкладку с данными если они есть
+        if (savedProducts.length > 0) {
+          if (Object.keys(savedMatrix).length > 0) {
+            setTab('matrix');
+          } else if (savedResults.length > 0) {
+            setTab('results');
+          } else if (Object.keys(savedRcStocks).length > 0) {
+            setTab('rc');
+          }
+        }
         };
         initLoad();
       }, []);
