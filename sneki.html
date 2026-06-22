@@ -586,7 +586,7 @@ html, body { height: auto !important; }
             let daysPresent = 0, totalDays = 0;
             for (let col = 2; col <= lastCol; col++) {
               const val = r[col];
-              if (val !== undefined && val !== null && val !== '') { totalDays++; if ((parseFloat(String(val)) || 0) > 0) daysPresent++; }
+              if (val !== undefined && val !== null && val !== '') { totalDays++; daysPresent++; }
             }
             items.push({ tt: curTT, code: normCode(code), productName: c0, currentStock: parseFloat(String(r[lastCol])) || 0, daysPresent, totalDays });
           }
