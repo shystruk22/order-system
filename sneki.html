@@ -901,7 +901,9 @@ html, body { height: auto !important; }
               // Нет на точке (нет данных остатков или остаток = 0) — минимальный заказ
               if (!stockData || stockData.currentStock <= 0) {
                 const minOrder = p.packaging === 'КГ' ? 0.5 : 2;
-                res.push({ tt: store.tt, code, nomenclature: p.nomenclature, group: p.group || '', currentStock: 0, sales: salesQty, daysPresent: 0, shelf, order: minOrder, packaging: p.packaging, orderStatus: `заказ ${minOrder}`, rcStock, manualEdit: true, avgSalesPerDay: 0 });
+                const days = stockData?.daysPresent || 0;
+                const avg = days > 0 ? salesQty / days : 0;
+                res.push({ tt: store.tt, code, nomenclature: p.nomenclature, group: p.group || '', currentStock: stockData?.currentStock || 0, sales: salesQty, daysPresent: days, shelf, order: minOrder, packaging: p.packaging, orderStatus: `заказ ${minOrder}`, rcStock, manualEdit: true, avgSalesPerDay: avg });
                 return;
               }
 
