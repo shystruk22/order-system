@@ -583,16 +583,12 @@ html, body { height: auto !important; }
             foundTTs.add(curTT);
           }
           else if (isProductCode && curTT && c0) {
-            let firstCol = -1, lastDataCol = -1;
+            let daysPresent = 0, totalDays = 0;
             for (let col = 2; col <= lastCol; col++) {
               const val = r[col];
-              if (val !== undefined && val !== null && val !== '') {
-                if (firstCol === -1) firstCol = col;
-                lastDataCol = col;
-              }
+              if (val !== undefined && val !== null && val !== '') { totalDays++; if ((parseFloat(String(val)) || 0) > 0) daysPresent++; }
             }
-            const daysPresent = firstCol !== -1 ? (lastDataCol - firstCol + 1) : 0;
-            items.push({ tt: curTT, code: normCode(code), productName: c0, currentStock: parseFloat(String(r[lastCol])) || 0, daysPresent, totalDays: daysPresent });
+            items.push({ tt: curTT, code: normCode(code), productName: c0, currentStock: parseFloat(String(r[lastCol])) || 0, daysPresent, totalDays });
           }
         }
         
