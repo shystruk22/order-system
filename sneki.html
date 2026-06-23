@@ -826,7 +826,7 @@ html, body { height: auto !important; }
       }, []);
 
       // Calculate order
-      const calcOrder = useCallback((packaging, stock, avgDay, period, shelf, quant = 0.5) => {
+      const calcOrder = useCallback((packaging, stock, avgDay, period, shelf, quant = 1) => {
         // shelf = null когда useShelf=false (не учитывать полку)
         // shelf = число когда useShelf=true (учитывать полку)
         const minStock = shelf != null ? shelf : 0;
@@ -834,14 +834,11 @@ html, body { height: auto !important; }
         if (prelim > 1) return 0;
         if (prelim < 0) { 
           const need = Math.abs(prelim); 
-          if (packaging === 'КГ') {
-            // Округляем до кванта из группы
-            return Math.ceil(need / quant) * quant;
-          }
-          return Math.ceil(need); 
+          // Округляем до кванта для всех товаров (КГ и ШТ)
+          return Math.ceil(need / quant) * quant;
         }
         if (packaging === 'КГ') return prelim <= 0.6 ? quant : 0;
-        return 1;
+        return quant;
       }, []);
 
       // Run calculation
@@ -918,12 +915,13 @@ html, body { height: auto !important; }
 
               // Товар в матрице — рассчитываем заказ независимо от наличия на РЦ
               const avgSales = stockData?.daysPresent > 0 ? salesQty / stockData.daysPresent : 0;
-              // Получаем квант из группы для КГ товаров
-              const groupQuant = p.packaging === 'КГ' ? (groupQuants[p.group || ''] || 0.5) : 1;
+              // Получаем квант из группы для всех товаров (КГ и ШТ)
+              const groupQuant = groupQuants[p.group || ''] || (p.packaging === 'КГ' ? 0.5 : 1);
               
               // Нет на точке (нет данных остатков или остаток = 0) — минимальный заказ
               if (!stockData || stockData.currentStock <= 0) {
-                const minOrder = p.packaging === 'КГ' ? 0.5 : 2;
+                const minOrderQuant = groupQuants[p.group || ''] || (p.packaging === 'КГ' ? 0.5 : 1);
+                const minOrder = minOrderQuant;
                 const days = stockData?.daysPresent || 0;
                 const avg = days > 0 ? salesQty / days : 0;
                 res.push({ tt: store.tt, code, nomenclature: p.nomenclature, group: p.group || '', currentStock: stockData?.currentStock || 0, sales: salesQty, daysPresent: days, shelf, order: minOrder, packaging: p.packaging, orderStatus: `заказ ${minOrder}`, rcStock, manualEdit: true, avgSalesPerDay: avg });
@@ -1416,9 +1414,9 @@ html, body { height: auto !important; }
           setResults(prev => { 
             const updated = prev.map(r => { 
               if (r.orderStatus === 'не в матрице') return r; 
-              // Получаем квант для КГ товаров
+              // Получаем квант из группы для всех товаров (КГ и ШТ)
               const product = matrix[r.code];
-              const groupQuant = r.packaging === 'КГ' ? (groupQuants[r.group || ''] || 0.5) : 1;
+              const groupQuant = groupQuants[r.group || ''] || (r.packaging === 'КГ' ? 0.5 : 1);
               // r.shelf уже содержит null если useShelf=false
               const newOrder = calcOrder(r.packaging, r.currentStock, r.avgSalesPerDay, period, r.shelf, groupQuant); 
               return { ...r, order: newOrder, orderStatus: newOrder > 0 ? `заказ ${newOrder}` : 'достаточно', manualEdit: false }; 
@@ -1872,7 +1870,7 @@ html, body { height: auto !important; }
                                   min="0.1"
                                   className="input w-14 text-xs py-0.5 px-1"
                                 />
-                                <span className="text-xs text-gray-500">кг</span>
+                                <span className="text-xs text-gray-500">шт/кг</span>
                               </span>
                             </td>
                           </tr>
@@ -2151,7 +2149,7 @@ html, body { height: auto !important; }
                   </div>
                 </div>
                 <div className="bg-white rounded-lg border border-gray-200 p-2">
-                  <div className="table-container">
+                  <div className="table-container" style={{maxHeight: 'calc(100vh - 320px)'}}>
                     <table className="table-modern">
                       <thead>
                         <tr>
