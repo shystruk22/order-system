@@ -2179,7 +2179,7 @@ html, body { height: auto !important; }
                                 <td className="text-right cursor-pointer hover:bg-blue-100 underline decoration-dotted text-blue-700" onClick={() => { setSelectedResult(r); setShowDetailModal(true); }}>{r.sales.toFixed(2)}</td>
                                 <td className="text-center text-xs text-gray-600">{r.daysPresent || '-'}</td>
                                 <td className="text-right">{r.shelf ?? ''}</td>
-                                <td className="bg-emerald-100"><input type="number" value={r.order} onBlur={e => updateResultOrder(r.tt, r.code, e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.target.blur(); } }} inputMode="decimal" className="input w-20 text-right font-bold focus:ring-2 focus:ring-emerald-400" min="0" step={r.packaging === 'КГ' ? '0.5' : '1'} /></td>
+                                <td className="bg-emerald-100"><input type="number" defaultValue={r.order} onBlur={e => updateResultOrder(r.tt, r.code, e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.target.blur(); } }} inputMode="decimal" className="input w-20 text-right font-bold focus:ring-2 focus:ring-emerald-400" min="0" step={r.packaging === 'КГ' ? '0.5' : '1'} /></td>
                                 <td className="text-center">{r.packaging}</td>
                                 <td className={`text-center text-xs font-medium px-2 py-1 rounded ${r.orderStatus === 'не в матрице' ? 'bg-rose-100 text-rose-700' : r.orderStatus === 'достаточно' ? 'bg-gray-100 text-gray-600' : 'bg-emerald-100 text-emerald-700'}`}>{r.orderStatus}</td>
                                 <td className={`text-right font-medium ${r.rcStock > 0 ? 'text-emerald-600' : 'text-rose-500'}`}>{r.rcStock}</td>
