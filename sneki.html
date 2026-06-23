@@ -593,6 +593,9 @@ html, body { height: auto !important; }
         }
         
         console.log(`Парсинг остатков: ${items.length} записей, ${foundTTs.size} ТТ`);
+        console.log('TT из файла → TT из матрицы:', [...foundTTs].map(tt => ({fileTT: tt, resolved: tt})));
+        // Логируем первые 3 товара для проверки
+        if (items.length > 0) console.log('Пример товаров:', items.slice(0, 3).map(i => ({tt: i.tt, code: i.code, days: i.daysPresent, stock: i.currentStock})));
         return { items, foundTTs };
       }, [matchStoreTT]);
 
@@ -875,6 +878,13 @@ html, body { height: auto !important; }
 
           const stockMap = new Map();
           stocks.forEach(s => { stockMap.set(`${resolveTT(s.tt)}_${s.code}`, s); });
+          // Логируем пример ключей для отладки
+          const stockKeys = [...stockMap.keys()].slice(0, 5);
+          console.log('[CALC] stockMap пример ключей:', stockKeys);
+          console.log('[CALC] stores TT:', stores.map(s => s.tt).slice(0, 5));
+          // Также строим карту по коду (для fallback поиска)
+          const stockByCode = new Map();
+          stocks.forEach(s => { const arr = stockByCode.get(s.code) || []; arr.push(s); stockByCode.set(s.code, arr); });
           const salesMap = new Map();
           sales.forEach(s => { const key = `${resolveTT(s.tt)}_${s.code}`; salesMap.set(key, (salesMap.get(key) || 0) + s.quantity); });
           const res = [];
@@ -882,7 +892,20 @@ html, body { height: auto !important; }
             Object.entries(matrix).forEach(([code, p]) => {
               const inMatrix = p[store.tt] === 'ДА';
               const key = `${store.tt}_${code}`;
-              const stockData = stockMap.get(key);
+              let stockData = stockMap.get(key);
+              // Fallback: если не нашли по точному ключу, ищем по коду + TT substring match
+              if (!stockData) {
+                const candidates = stockByCode.get(code);
+                if (candidates && candidates.length === 1) { stockData = candidates[0]; }
+                else if (candidates && candidates.length > 1) {
+                  const stLower = store.tt.toLowerCase();
+                  stockData = candidates.find(c => { const cTT = (c.tt || '').toLowerCase(); return cTT.includes(stLower) || stLower.includes(cTT); });
+                  if (!stockData) stockData = candidates.find(c => { const cTT = (c.tt || '').toLowerCase(); const sTT = stLower; return [...sTT.split(/\s+/)].some(w => w.length > 2 && cTT.includes(w)); });
+                }
+                if (stockData && !stockMap.get(key)) {
+                  console.log(`[STOCK FALLBACK] key="${key}" matched to tt="${stockData.tt}" code=${code} daysPresent=${stockData.daysPresent}`);
+                }
+              }
               const rcStock = rcStocks[code] || 0;
               const shelfVal = shelfValues[key];
               const shelf = useShelf ? (shelfVal !== undefined ? shelfVal : (p.packaging === 'КГ' ? 1 : 4)) : null;
