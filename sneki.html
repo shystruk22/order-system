@@ -1886,7 +1886,7 @@ html, body { height: auto !important; }
                               </select></td>
                               <td className="sticky-col-2 bg-white">{p.nomenclature}</td>
                               <td className="font-mono text-sm">{p.code}</td>
-                              <td className="text-center">{p.packaging}</td>
+                              <td className="text-center"><span onClick={(e) => { e.stopPropagation(); const newPkg = p.packaging === 'КГ' ? 'ШТ' : 'КГ'; setMatrix(prev => ({ ...prev, [p.code]: { ...prev[p.code], packaging: newPkg } })); setProducts(prev => prev.map(prod => prod.code === p.code ? { ...prod, packaging: newPkg } : prod)); }} className={`inline-block cursor-pointer font-medium text-xs px-2 py-0.5 rounded transition-colors ${p.packaging === 'КГ' ? 'bg-blue-100 text-blue-800 hover:bg-blue-200' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`} title="Нажмите для смены">{p.packaging}</span></td>
                               <td className="text-center font-mono text-xs">{p.weightCode || ''}</td>
                               {stores.map(s => <td key={s.tt} onClick={() => toggleMatrix(p.code, s.tt)} className={`text-center cursor-pointer font-medium transition-colors ${p[s.tt] === 'ДА' ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200' : 'bg-rose-50 text-rose-600 hover:bg-rose-100'}`}>{p[s.tt] === 'ДА' ? 'Да' : 'Нет'}</td>)}
                               <td className="text-center"><button onClick={() => removeProductFromMatrix(p.code)} className="text-red-500 hover:text-red-700 p-1" title="Удалить из матрицы"><TrashIcon /></button></td>
