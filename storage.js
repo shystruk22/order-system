@@ -48,7 +48,31 @@
             }
         });
 
-        if (response.status === 401) throw new Error('Токен Яндекс.Диска недействителен');
+        if (response.status === 401) {
+            // Пробуем обновить токен через refresh_token
+            if (window.refreshYandexToken) {
+                const refreshed = await window.refreshYandexToken();
+                if (refreshed) {
+                    // Повторяем запрос с новым токеном
+                    const newToken = getToken();
+                    const retry = await fetch(url, {
+                        ...opts,
+                        headers: {
+                            'Authorization': 'OAuth ' + newToken,
+                            ...(opts.headers || {})
+                        }
+                    });
+                    if (retry.status === 401) throw new Error('Токен Яндекс.Диска недействителен (после обновления)');
+                    if (retry.status === 403) throw new Error('Нет доступа к Яндекс.Диску');
+                    if (!retry.ok) {
+                        const errText = await retry.text().catch(() => '');
+                        throw new Error(`Ошибка API (${retry.status}): ${errText}`);
+                    }
+                    return retry;
+                }
+            }
+            throw new Error('Токен Яндекс.Диска недействителен. Нажмите Shift+☁️ для нового токена.');
+        }
         if (response.status === 403) throw new Error('Нет доступа к Яндекс.Диску');
         if (!response.ok) {
             const errText = await response.text().catch(() => '');

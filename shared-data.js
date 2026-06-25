@@ -187,7 +187,7 @@
     SharedData._callbacks = [];
     SharedData._lastTimestamp = SharedData.getTimestamp();
 
-    SharedData.onChange(callback) {
+    SharedData.onChange = function(callback) {
         SharedData._callbacks.push(callback);
     };
 
