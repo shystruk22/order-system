@@ -149,7 +149,7 @@ html, body { height: auto !important; }
             position: fixed;
             inset: 0;
             background: rgba(0,0,0,0.5);
-            z-index: 100;
+            z-index: 1000;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -248,7 +248,7 @@ html, body { height: auto !important; }
         <div class="settings-content">
             <div class="flex items-center justify-between mb-4">
                 <h2 class="text-lg font-bold text-gray-900">⚙️ Настройки ИИ</h2>
-                <button onclick="closeSettings()" class="text-gray-400 hover:text-gray-600">
+                <button onclick="event.stopPropagation();closeSettings()" class="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-100" title="Закрыть">
                     <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                 </button>
             </div>
@@ -747,7 +747,7 @@ ${ctx}
             updateModelLabel();
 
             // Показать подтверждение
-            addMessage('ai', '✅ Настройки сохранены. Модель: **' + (settings.model || 'не указана') + '**');
+            try { addMessage('ai', '✅ Настройки сохранены. Модель: **' + (settings.model || 'не указана') + '**'); } catch(e) {}
         }
 
         function updateModelLabel() {
@@ -762,6 +762,9 @@ ${ctx}
         }
 
         // === Инициализация ===
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') closeSettings();
+        });
         function init() {
             updateModelLabel();
 
