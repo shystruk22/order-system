@@ -3875,8 +3875,8 @@ html, body { height: auto !important; }
                             <input type="file" id="wishesImportInput" accept=".xlsx,.xls,.csv" onchange="importStoreWishes(this)" class="hidden">
                             <button onclick="event.stopPropagation();document.getElementById('wishesImportInput').click()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium ${storeWishes.length > 0 ? 'text-violet-700 bg-violet-100 border border-violet-300' : 'text-gray-600 bg-gray-50 border border-gray-200'} rounded-lg hover:bg-violet-200 transition-colors" title="Загрузить файл пожеланий магазинов">📋 Пожелания${storeWishes.length > 0 ? ' (' + storeWishes.length + ')' : ''}</button>
                             ${storeWishes.length > 0 ? '<button onclick="event.stopPropagation();clearStoreWishes()" class="btn inline-flex items-center gap-1.5 px-2 py-1.5 text-[10px] font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100" title="Очистить пожелания">✕</button>' : ''}
-                            <button onclick="placeOrders()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700">${icons.order} Сформировать заказ</button>
-                            <button onclick="exportOrder()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">${icons.export} Экспорт</button>
+                            <button onclick="placeOrders()" class="btn inline-flex items-center gap-1.5 px-4 py-2 text-[13px] font-medium text-white bg-emerald-500 rounded-md hover:bg-emerald-600">${icons.order} Сформировать заказ</button>
+                            <button onclick="exportOrder()" class="btn inline-flex items-center gap-1.5 px-4 py-2 text-[13px] font-medium text-white bg-blue-500 rounded-md hover:bg-blue-600">${icons.export} Экспорт</button>
                             <button onclick="debugOrderEditability()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-orange-700 bg-orange-50 border border-orange-200 rounded-lg hover:bg-orange-100" title="Показать почему ячейки заблокированы">🔍 Диагностика</button>
                         </div>
                     </div>
@@ -4888,9 +4888,9 @@ html, body { height: auto !important; }
                             '<div class="bg-violet-100 text-violet-800 rounded-md px-3 py-1.5"><div class="text-[10px] opacity-70">\u0421\u0423\u041C\u041C\u0410</div><div class="text-lg font-bold">' + stats.sum.toFixed(0) + ' \u20BD</div></div>' +
                         '</div>' +
                         '<div class="flex gap-2">' +
-                            '<button onclick="placeOrders()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700">' + icons.order + ' \u0421\u0444\u043E\u0440\u043C\u0438\u0440\u043E\u0432\u0430\u0442\u044C \u0437\u0430\u043A\u0430\u0437</button>' +
-                            '<button onclick="exportOrder()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">' + icons.export + ' \u042D\u043A\u0441\u043F\u043E\u0440\u0442</button>' +
-                            '<button onclick="clearSavedOrder()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-600 bg-gray-100 border border-gray-200 rounded-lg hover:bg-gray-200">' + icons.refresh + ' \u041D\u043E\u0432\u044B\u0439 \u0440\u0430\u0441\u0447\u0451\u0442</button>' +
+                            '<button onclick="placeOrders()" class="btn inline-flex items-center gap-1.5 px-4 py-2 text-[13px] font-medium text-white bg-emerald-500 rounded-md hover:bg-emerald-600">' + icons.order + ' \u0421\u0444\u043E\u0440\u043C\u0438\u0440\u043E\u0432\u0430\u0442\u044C \u0437\u0430\u043A\u0430\u0437</button>' +
+                            '<button onclick="exportOrder()" class="btn inline-flex items-center gap-1.5 px-4 py-2 text-[13px] font-medium text-white bg-blue-500 rounded-md hover:bg-blue-600">' + icons.export + ' \u042D\u043A\u0441\u043F\u043E\u0440\u0442</button>' +
+                            '<button onclick="clearSavedOrder()" class="btn inline-flex items-center gap-1.5 px-4 py-2 text-[13px] font-medium text-gray-600 bg-gray-100 border border-gray-200 rounded-md hover:bg-gray-200">' + icons.refresh + ' \u041D\u043E\u0432\u044B\u0439 \u0440\u0430\u0441\u0447\u0451\u0442</button>' +
                         '</div>' +
                     '</div>' +
                 '</div>' +
