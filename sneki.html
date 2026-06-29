@@ -701,23 +701,50 @@ html, body { height: auto !important; }
           let code = '', name = parts[0], stock = 0;
           
           if (parts.length >= 3) {
-            // Ищем числовые колонки (код = целое число, остаток = число с дробью)
-            let codeCol = -1, stockCol = -1;
+            // Шаг 1: находим колонку с кодом — первое целое число >= 3 цифр (пропускаем «КГ», «ШТ» и прочие единицы)
+            let codeCol = -1;
             for (let i = 1; i < parts.length; i++) {
               const v = String(parts[i]).trim();
-              if (/^\d+$/.test(v) && codeCol < 0) codeCol = i;  // первое целое число = код
-            }
-            // Остаток = последнее число (целое или дробное) после кода
-            for (let i = parts.length - 1; i > codeCol; i--) {
-              const v = parseFloat(String(parts[i]).replace(',', '.').replace(/\s/g, ''));
-              if (!isNaN(v) && v > 0) { stockCol = i; stock = v; break; }
+              if (/^\d{3,}$/.test(v)) { codeCol = i; break; }
             }
             if (codeCol >= 0) code = normCode(parts[codeCol]);
-            // Fallback: если код не найден, ищем любое число >= 3 цифр
+            // Fallback: если код не найден, ищем двузначные и более
             if (!code) {
-              for (let i = 0; i < parts.length; i++) {
+              for (let i = 1; i < parts.length; i++) {
                 const v = String(parts[i]).trim();
-                if (/^\d{3,}$/.test(v)) { code = normCode(v); break; }
+                if (/^\d{1,}$/.test(v)) { code = normCode(v); break; }
+              }
+            }
+            // Шаг 2: находим колонку с остатком — первое ЧИСЛО после кода (включая 0)
+            // Ищем вперёд от codeCol, пропускаем единицы измерения (КГ, ШТ и т.д.)
+            let stockCol = -1;
+            for (let i = codeCol + 1; i < parts.length; i++) {
+              const v = String(parts[i]).trim();
+              // Пропускаем единицы измерения
+              if (/^(КГ|кг|ШТ|шт|шт\.|уп|УП)$/.test(v)) continue;
+              // Число (включая 0, дробное, с запятой)
+              const num = parseFloat(v.replace(',', '.').replace(/\s/g, ''));
+              if (!isNaN(num) && /^-?\d/.test(v)) {
+                // Проверяем что это НЕ дубликат кода (т.е. не совпадает с кодом товара)
+                if (v.replace(/^0+/, '') !== code.replace(/^0+/, '')) {
+                  stock = num;
+                  stockCol = i;
+                  break;
+                }
+              }
+            }
+            // Если остаток не найден после кода, пробуем первый числовой столбец ДО кода
+            if (stockCol < 0) {
+              for (let i = 1; i < codeCol; i++) {
+                const v = String(parts[i]).trim();
+                if (/^(КГ|кг|ШТ|шт|шт\.|уп|УП)$/.test(v)) continue;
+                const num = parseFloat(v.replace(',', '.').replace(/\s/g, ''));
+                if (!isNaN(num) && /^-?\d/.test(v)) {
+                  if (v.replace(/^0+/, '') !== code.replace(/^0+/, '')) {
+                    stock = num;
+                    break;
+                  }
+                }
               }
             }
           } else if (parts.length === 2) {
@@ -731,7 +758,8 @@ html, body { height: auto !important; }
             }
           }
           
-          if (code && code !== '0' && stock > 0) {
+          // Сохраняем ВСЕ найденные товары (включая с остатком 0)
+          if (code && code !== '0') {
             newRc[code] = stock;
             count++;
             if (!matrix[code]) {
@@ -2478,8 +2506,9 @@ html, body { height: auto !important; }
                   <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2"><WarehouseIcon />Остатки на РЦ</h3>
                   <button onClick={() => setShowRcModal(false)} className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100"><CloseIcon /></button>
                 </div>
-                <p className="text-sm text-gray-500 mb-3">Формат: Наименование Код Остаток (по строке)</p>
-                <textarea value={rcInputData} onChange={e => setRcInputData(e.target.value)} placeholder="Сникерс 20986 50" className="w-full h-40 px-3 py-2 border border-gray-200 rounded-md font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500" />
+                <p className="text-sm text-gray-500 mb-1">Вставьте данные из Excel (3+ колонки: Наименование, Код, Остаток)</p>
+                <p className="text-xs text-gray-400 mb-3">Поддерживается формат: Наименование | Код | Ед.изм | Остаток | Цены...  — система найдёт код и остаток автоматически. Нулевые остатки сохраняются как 0.</p>
+                <textarea value={rcInputData} onChange={e => setRcInputData(e.target.value)} placeholder="[Группа]Наименование\t13718\tКГ\t0\t10.56\t12.57" className="w-full h-40 px-3 py-2 border border-gray-200 rounded-md font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500" />
                 <div className="flex gap-2 mt-4">
                   <button onClick={() => setShowRcModal(false)} className="btn btn-secondary flex-1">Отмена</button>
                   <button onClick={parseRcInput} className="btn btn-primary flex-1">OK</button>
