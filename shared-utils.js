@@ -237,12 +237,6 @@
         const items = [];
         const foundTTs = new Set();
         let curTT = '';
-        let lastCol = 0;
-
-        // Находим максимальную колонку
-        for (let i = 0; i < json.length; i++) {
-            if (json[i]) lastCol = Math.max(lastCol, json[i].length - 1);
-        }
 
         for (let i = 3; i < json.length; i++) {
             const r = json[i];
@@ -258,10 +252,25 @@
                 curTT = matchStoreTT(c0, storeNames);
                 foundTTs.add(curTT);
             } else if (isProductCode && curTT && c0) {
+                // Ищем текущий остаток — последний ЧИСЛОВОЙ столбец в этой строке (идём с конца)
+                let currentStock = 0;
+                let lastDataCol = 2; // последний столбец с данными (для daysPresent)
+                for (let col = r.length - 1; col >= 2; col--) {
+                    const val = r[col];
+                    if (val !== undefined && val !== null && val !== '') {
+                        const num = parseFloat(String(val));
+                        if (!isNaN(num)) {
+                            currentStock = num;
+                            lastDataCol = col;
+                            break;
+                        }
+                    }
+                }
+
                 // Считаем daysPresent — количество дней где остаток > 0
                 let daysPresent = 0;
                 let totalDays = 0;
-                for (let col = 2; col <= lastCol; col++) {
+                for (let col = 2; col <= lastDataCol; col++) {
                     const val = r[col];
                     if (val !== undefined && val !== null && val !== '') {
                         totalDays++;
@@ -272,7 +281,7 @@
                     tt: curTT,
                     code: normCode(code),
                     productName: c0,
-                    currentStock: parseFloat(String(r[lastCol])) || 0,
+                    currentStock: currentStock,
                     daysPresent,
                     totalDays
                 });
