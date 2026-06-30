@@ -387,7 +387,20 @@ html, body { height: auto !important; }
         setStores(savedStores);
         setSales(savedSales);
         setStocks(savedStocks);
-        setRcStocks(savedRcStocks);
+        // Валидация rcStocks: если остаток = дубликат кода (старый баг) → 0
+        const cleanedRcStocks = {};
+        Object.entries(savedRcStocks).forEach(([code, val]) => {
+          const n = parseFloat(val);
+          if (isNaN(n) || n === code || n === parseInt(code) || String(n).trim() === String(code).trim()) {
+            cleanedRcStocks[code] = 0;
+          } else {
+            cleanedRcStocks[code] = n;
+          }
+        });
+        if (Object.keys(cleanedRcStocks).some(k => cleanedRcStocks[k] !== savedRcStocks[k])) {
+          save(KEYS.RC_STOCKS, cleanedRcStocks);
+        }
+        setRcStocks(cleanedRcStocks);
         setShelfValues(savedShelfValues);
         setQuants(savedQuants);
         setGroupMarkups(savedGroupMarkups);
