@@ -494,6 +494,8 @@ html, body { height: auto !important; }
                 if (e.key === KEYS.STORES) loadStoresFromHTML();
                 if (e.key === SharedUtils.STORAGE_KEYS.PRODUCTS) {
                     // Другая вкладка изменила ассортимент — перезагрузить
+                    // НЕ подтягиваем товары от sneki — это отдельный каталог
+                    if (window.SharedData && SharedData.getSource() === 'sneki') return;
                     try {
                         const arr = SharedUtils.load(SharedUtils.STORAGE_KEYS.PRODUCTS, null);
                         if (Array.isArray(arr) && arr.length > 0) {
@@ -513,6 +515,8 @@ html, body { height: auto !important; }
                 }
                 if (e.key === SharedUtils.STORAGE_KEYS.MATRIX || e.key === 'db_matrix_marks_v1') {
                     // Другая вкладка изменила матрицу — перезагрузить
+                    // НЕ подтягиваем матрицу от sneki — отдельный каталог
+                    if (window.SharedData && SharedData.getSource() === 'sneki') return;
                     try {
                         const newMarks = SharedUtils.load(SharedUtils.STORAGE_KEYS.MATRIX, null);
                         if (newMarks && Object.keys(newMarks).length > 0) {
