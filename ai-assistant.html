@@ -505,8 +505,9 @@ ${ctx}
             }
 
             // CORS proxy — нужен для запросов из браузера к DeepSeek/OpenAI
+            // OpenRouter и Anthropic работают без прокси
             const CORS_PROXY = 'https://corsproxy.io/?';
-            const useProxy = document.getElementById('useCorsProxy').checked;
+            const useProxy = document.getElementById('useCorsProxy').checked && provider !== 'openrouter' && provider !== 'anthropic';
 
             // OpenAI / DeepSeek / OpenRouter / Custom — единый формат
             let baseUrl;
@@ -522,7 +523,19 @@ ${ctx}
                 baseUrl = 'https://api.openai.com/v1';
             }
 
-            const endpoint = (useProxy ? CORS_PROXY + encodeURIComponent(baseUrl + '/chat/completions') : baseUrl + '/chat/completions');
+            const targetUrl = baseUrl + '/chat/completions';
+            const reqBody = JSON.stringify({
+                model: settings.model || (provider === 'deepseek' ? 'deepseek-chat' : 'gpt-4o-mini'),
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    ...historySlice
+                ],
+                temperature: 0.3,
+                max_tokens: 4000
+            });
+
+            let response;
+            const endpoint = (useProxy ? CORS_PROXY + encodeURIComponent(targetUrl) : targetUrl);
 
             const headers = {
                 'Content-Type': 'application/json',
@@ -534,19 +547,15 @@ ${ctx}
                 headers['X-Title'] = 'Order System AI Assistant';
             }
 
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers,
-                body: JSON.stringify({
-                    model: settings.model || (provider === 'deepseek' ? 'deepseek-chat' : 'gpt-4o-mini'),
-                    messages: [
-                        { role: 'system', content: systemPrompt },
-                        ...historySlice
-                    ],
-                    temperature: 0.3,
-                    max_tokens: 4000
-                })
-            });
+            try {
+                response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers,
+                    body: reqBody
+                });
+            } catch(e) {
+                throw new Error('Сеть недоступна. Если используете DeepSeek/OpenAI — включите CORS-прокси в настройках ⚙️.\n\nРекомендуемый вариант: используйте **OpenRouter** — он работает без прокси.');
+            }
 
             if (!response.ok) {
                 const err = await response.json().catch(() => ({}));
