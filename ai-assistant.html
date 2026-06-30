@@ -260,6 +260,7 @@ html, body { height: auto !important; }
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">API провайдер</label>
                     <select id="apiProvider" class="model-select" onchange="onProviderChange()">
+                        <option value="zai">Z.AI</option>
                         <option value="deepseek">DeepSeek</option>
                         <option value="openai">OpenAI (GPT)</option>
                         <option value="anthropic">Anthropic (Claude)</option>
@@ -506,6 +507,8 @@ ${ctx}
             let baseUrl;
             if (provider === 'custom') {
                 baseUrl = (settings.customEndpoint || '').replace('/chat/completions', '');
+            } else if (provider === 'zai') {
+                baseUrl = 'https://api.z.ai/v1';
             } else if (provider === 'deepseek') {
                 baseUrl = 'https://api.deepseek.com';
             } else if (provider === 'openrouter') {
@@ -726,7 +729,9 @@ ${ctx}
                 customGroup.classList.add('hidden');
             }
 
-            if (provider === 'deepseek') {
+            if (provider === 'zai') {
+                modelInput.value = settings.model || 'glm-4-plus';
+            } else if (provider === 'deepseek') {
                 modelInput.value = settings.model || 'deepseek-chat';
             } else if (provider === 'openai') {
                 modelInput.value = settings.model || 'gpt-4o-mini';
