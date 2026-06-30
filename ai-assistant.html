@@ -150,10 +150,13 @@ html, body { height: auto !important; }
             inset: 0;
             background: rgba(0,0,0,0.5);
             z-index: 1000;
-            display: flex;
+            display: none;
             align-items: center;
             justify-content: center;
             padding: 1rem;
+        }
+        .settings-panel.visible {
+            display: flex;
         }
 
         .settings-content {
@@ -244,7 +247,7 @@ html, body { height: auto !important; }
     </div>
 
     <!-- Settings Modal -->
-    <div class="settings-panel hidden" id="settingsPanel" onclick="if(event.target===this)closeSettings()">
+    <div class="settings-panel" id="settingsPanel" onclick="if(event.target===this)closeSettings()">
         <div class="settings-content">
             <div class="flex items-center justify-between mb-4">
                 <h2 class="text-lg font-bold text-gray-900">⚙️ Настройки ИИ</h2>
@@ -696,7 +699,7 @@ ${ctx}
 
         // === Настройки ===
         function openSettings() {
-            document.getElementById('settingsPanel').classList.remove('hidden');
+            document.getElementById('settingsPanel').classList.add('visible');
             document.getElementById('apiProvider').value = settings.provider || 'openai';
             document.getElementById('apiKey').value = settings.apiKey || '';
             document.getElementById('modelName').value = settings.model || 'gpt-4o-mini';
@@ -709,7 +712,7 @@ ${ctx}
         }
 
         function closeSettings() {
-            document.getElementById('settingsPanel').classList.add('hidden');
+            document.getElementById('settingsPanel').classList.remove('visible');
         }
 
         function onProviderChange() {
