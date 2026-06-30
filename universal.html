@@ -3238,7 +3238,7 @@ html, body { height: auto !important; }
                     const json = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' });
                     if (type === 'sales') {
                         // Используем общий парсер (формат: код → кол-во, как в Matrix/Sneki)
-                        const result = SharedUtils.parseSales(json);
+                        const result = SharedUtils.parseSales(json, stores.map(s => s.tt));
                         sales = result.items; // [{tt, code, quantity}]
                         save(KEYS.SALES, sales);
                         alert(`Загружено ${sales.length} продаж, найдено ${result.foundTTs.length} ТТ`);
@@ -3257,45 +3257,22 @@ html, body { height: auto !important; }
             input.value = '';
         }
 
-        // Парсинг ОСТАТКОВ — локальный
+        // Парсинг ОСТАТКОВ — локальный (используем SharedUtils для мэтчинга TT)
         function parseStocksLocal(json) {
-            let lastCol = 0;
-            for (let i = 0; i < json.length; i++) if (json[i]) lastCol = Math.max(lastCol, json[i].length - 1);
+            const storeNames = stores.map(s => s.tt);
+            const parsed = SharedUtils.parseStocks(json, storeNames);
+            console.log(`Парсинг остатков: SharedUtils=${parsed.items.length}, TT: ${parsed.foundTTs.join(', ')}`);
 
-            const items = [];
-            const foundTTs = new Set();
-            let curTT = '';
-
-            for (let i = 3; i < json.length; i++) {
-                const r = json[i];
-                if (!r || r.length < 3) continue;
-                
-                const c0 = String(r[0] || '').trim();
-                const code = String(r[1] || '').trim();
-                
-                const isTT = /склад|магазин|основной/i.test(c0) && !/^\d/.test(code);
-                const isProductCode = /^\d/.test(code) || code.length >= 5;
-                
-                if (isTT) {
-                    curTT = c0;
-                    foundTTs.add(curTT);
-                } else if (isProductCode && curTT && c0) {
-                    const normC = normCode(code);
-                    const currentStock = parseFloat(String(r[lastCol])) || 0;
-                    
-                    let daysPresent = 0, totalDays = 0;
-                    for (let col = 2; col <= lastCol; col++) {
-                        const val = r[col];
-                        if (val !== undefined && val !== null && val !== '') {
-                            totalDays++;
-                            if ((parseFloat(String(val)) || 0) > 0) daysPresent++;
-                        }
-                    }
-                    
-                    items.push({ tt: curTT, code: normC, name: c0, currentStock, daysPresent, totalDays });
-                }
-            }
-            return items;
+            // SharedUtils.parseStocks возвращает items с {tt, code, productName, currentStock, daysPresent, totalDays}
+            // Конвертируем в формат universal: {tt, code, name, currentStock, daysPresent, totalDays}
+            return parsed.items.map(item => ({
+                tt: item.tt,
+                code: item.code,
+                name: item.productName || '',
+                currentStock: item.currentStock,
+                daysPresent: item.daysPresent,
+                totalDays: item.totalDays
+            }));
         }
 
         function exportOrder() {
