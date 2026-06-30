@@ -495,6 +495,11 @@ ${ctx}
 
             const provider = settings.provider || 'openai';
 
+            if (provider === 'zai') {
+                addMessage('ai', '⚠️ Z.AI ключ работает только через сервер (Node.js SDK), а не напрямую из браузера.\n\nИспользуйте ваш ключ через **OpenRouter**:\n1. API провайдер: **OpenRouter**\n2. API Ключ: ваш ключ OpenRouter\n3. Модель: `deepseek/deepseek-chat` или `openai/gpt-4o-mini`\n\nИли зарегистрируйтесь на [openrouter.ai](https://openrouter.ai) для получения ключа.');
+                return;
+            }
+
             if (provider === 'anthropic') {
                 return callAnthropic(systemPrompt, historySlice);
             }
