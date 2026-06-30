@@ -715,36 +715,26 @@ html, body { height: auto !important; }
                 if (/^\d{1,}$/.test(v)) { code = normCode(v); break; }
               }
             }
-            // Шаг 2: находим колонку с остатком — первое ЧИСЛО после кода (включая 0)
-            // Ищем вперёд от codeCol, пропускаем единицы измерения (КГ, ШТ и т.д.)
+            // Шаг 2: берём остаток ПО ПОЗИЦИИ — колонка сразу после единицы измерения
+            // Формат: ... Код | Ед.изм | Остаток | Цены ...
+            // Если ед.изм нет — остаток в следующей колонке после кода
+            const isUnit = (v) => /^(КГ|кг|ШТ|шт|шт\.|уп|УП)$/.test(v);
             let stockCol = -1;
-            for (let i = codeCol + 1; i < parts.length; i++) {
-              const v = String(parts[i]).trim();
-              // Пропускаем единицы измерения
-              if (/^(КГ|кг|ШТ|шт|шт\.|уп|УП)$/.test(v)) continue;
-              // Число (включая 0, дробное, с запятой)
-              const num = parseFloat(v.replace(',', '.').replace(/\s/g, ''));
-              if (!isNaN(num) && /^-?\d/.test(v)) {
-                // Проверяем что это НЕ дубликат кода (т.е. не совпадает с кодом товара)
-                if (v.replace(/^0+/, '') !== code.replace(/^0+/, '')) {
-                  stock = num;
-                  stockCol = i;
-                  break;
-                }
+            if (codeCol >= 0 && codeCol + 1 < parts.length) {
+              if (isUnit(String(parts[codeCol + 1]).trim()) && codeCol + 2 < parts.length) {
+                stockCol = codeCol + 2; // Код → Ед.изм → Остаток
+              } else if (!isUnit(String(parts[codeCol + 1]).trim())) {
+                stockCol = codeCol + 1; // Код → Остаток (без ед.изм)
               }
             }
-            // Если остаток не найден после кода, пробуем первый числовой столбец ДО кода
-            if (stockCol < 0) {
-              for (let i = 1; i < codeCol; i++) {
-                const v = String(parts[i]).trim();
-                if (/^(КГ|кг|ШТ|шт|шт\.|уп|УП)$/.test(v)) continue;
-                const num = parseFloat(v.replace(',', '.').replace(/\s/g, ''));
-                if (!isNaN(num) && /^-?\d/.test(v)) {
-                  if (v.replace(/^0+/, '') !== code.replace(/^0+/, '')) {
-                    stock = num;
-                    break;
-                  }
-                }
+            if (stockCol >= 0) {
+              const sv = String(parts[stockCol]).trim();
+              // Пусто, «нет», нечисловое, или дубликат кода → остаток = 0
+              const num = parseFloat(sv.replace(',', '.').replace(/\s/g, ''));
+              if (!sv || /^нет$/i.test(sv) || isNaN(num) || sv.replace(/^0+/, '') === code.replace(/^0+/, '')) {
+                stock = 0;
+              } else {
+                stock = num;
               }
             }
           } else if (parts.length === 2) {
