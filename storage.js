@@ -229,6 +229,7 @@
             showStatus('✅ Данные загружены из облака', 'success');
             return true;
         } catch (e) {
+            if (e.message === 'TOKEN_INVALID') throw e; // Пробрасываем наверх для обработки в init()
             if (e.message.includes('404') || e.message.includes('Не найден')) {
                 showStatus('☁️ Файл не найден на Диске — используем локальные данные', 'info');
             } else {
@@ -405,6 +406,7 @@
             lastSyncError = null;
             return true;
         } catch (e) {
+            if (e.message === 'TOKEN_INVALID') throw e; // Пробрасываем наверх
             showStatus('❌ Ошибка сохранения: ' + e.message, 'error');
             lastSyncError = e.message;
             return false;
