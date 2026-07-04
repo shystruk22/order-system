@@ -48,6 +48,12 @@
             }
         });
 
+        if (response.status === 403) {
+            // 403 = токен от другого приложения, нужно полностью перелогиниться
+            console.warn('[Storage] 403 Forbidden — токен от другого приложения. Сбрасываем.');
+            if (window.clearYandexToken) window.clearYandexToken();
+            throw new Error('TOKEN_INVALID');
+        }
         if (response.status === 401) {
             // Пробуем обновить токен через refresh_token
             if (window.refreshYandexToken) {
@@ -55,6 +61,7 @@
                 if (refreshed) {
                     // Повторяем запрос с новым токеном
                     const newToken = getToken();
+                    if (!newToken) throw new Error('Токен Яндекс.Диска недействителен (не удалось обновить)');
                     const retry = await fetch(url, {
                         ...opts,
                         headers: {
@@ -63,7 +70,10 @@
                         }
                     });
                     if (retry.status === 401) throw new Error('Токен Яндекс.Диска недействителен (после обновления)');
-                    if (retry.status === 403) throw new Error('Нет доступа к Яндекс.Диску');
+                    if (retry.status === 403) {
+                        if (window.clearYandexToken) window.clearYandexToken();
+                        throw new Error('TOKEN_INVALID');
+                    }
                     if (!retry.ok) {
                         const errText = await retry.text().catch(() => '');
                         throw new Error(`Ошибка API (${retry.status}): ${errText}`);
@@ -71,9 +81,10 @@
                     return retry;
                 }
             }
-            throw new Error('Токен Яндекс.Диска недействителен. Нажмите Shift+☁️ для нового токена.');
+            // Не удалось обновить — сбрасываем
+            if (window.clearYandexToken) window.clearYandexToken();
+            throw new Error('TOKEN_INVALID');
         }
-        if (response.status === 403) throw new Error('Нет доступа к Яндекс.Диску');
         if (!response.ok) {
             const errText = await response.text().catch(() => '');
             throw new Error(`Ошибка API (${response.status}): ${errText}`);
@@ -580,7 +591,11 @@
                 document.getElementById('oauthStatus').innerHTML = '<span style="color:#dc2626">Сначала введите Client ID</span>';
                 return;
             }
-            window.open('https://oauth.yandex.ru/authorize?response_type=code&client_id=' + encodeURIComponent(cid), '_blank');
+            const redirectUri = window.YANDEX_REDIRECT_URI || 'https://oauth.yandex.ru/verification_code';
+            const authUrl = 'https://oauth.yandex.ru/authorize?response_type=code'
+                + '&client_id=' + encodeURIComponent(cid)
+                + '&redirect_uri=' + encodeURIComponent(redirectUri);
+            window.open(authUrl, '_blank');
             document.getElementById('oauthStatus').innerHTML = '<span style="color:#2563eb">Авторизуйтесь в открывшемся окне и скопируйте код</span>';
         };
 
@@ -723,9 +738,9 @@
         try {
             const token = getToken();
             if (!token) {
-                console.warn('[Storage] Токен Яндекс.Диска не найден. Нажмите "Облако" для ввода токена.');
+                console.warn('[Storage] Токен Яндекс.Диска не найден. Нажмите "Облако" для авторизации.');
                 showSyncButton();
-                showStatus('⚠️ Нажмите "Облако" для ввода токена Яндекс.Диска', 'info');
+                showStatus('⚠️ Нажмите "Облако" для авторизации Яндекс.Диска', 'info');
                 isReady = true;
                 window.dispatchEvent(new CustomEvent('cloudStorageReady'));
                 return;
@@ -741,7 +756,22 @@
                 btn.disabled = true;
             }
 
-            await downloadFromDisk();
+            try {
+                await downloadFromDisk();
+            } catch (e) {
+                if (e.message === 'TOKEN_INVALID') {
+                    console.warn('[Storage] Токен недействителен — показываем форму авторизации');
+                    showOAuthModal();
+                    if (btn) {
+                        btn.disabled = false;
+                        btn.innerHTML = '☁️';
+                    }
+                    isReady = true;
+                    window.dispatchEvent(new CustomEvent('cloudStorageReady'));
+                    return;
+                }
+                throw e;
+            }
 
             // Настраиваем слушатели
             setupSyncListeners();

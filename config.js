@@ -9,6 +9,7 @@
     // Новые кредо приложения
     const DEFAULT_CLIENT_ID = '03b8476330a34436adbc8758809e4071';
     const DEFAULT_CLIENT_SECRET = '5527b53190fb4a3781563f70a9a46d3d';
+    const DEFAULT_REDIRECT_URI = 'https://oauth.yandex.ru/verification_code';
 
     // Читаем из localStorage, если нет — подставляем дефолтные
     let token = localStorage.getItem(TOKEN_KEY) || '';
@@ -17,9 +18,30 @@
     window.YANDEX_TOKEN = token;
     window.YANDEX_CLIENT_ID = clientId;
     window.YANDEX_CLIENT_SECRET = clientSecret;
+    window.YANDEX_REDIRECT_URI = DEFAULT_REDIRECT_URI;
 
     if (token) {
-        console.log('[config] Токен загружен из localStorage');
+        // Проверяем что токен привязан к текущему приложению (креды совпадают)
+        const savedId = localStorage.getItem(CLIENT_ID_KEY);
+        const savedSecret = localStorage.getItem(CLIENT_SECRET_KEY);
+        if (!savedId || savedId !== DEFAULT_CLIENT_ID || !savedSecret || savedSecret !== DEFAULT_CLIENT_SECRET) {
+            // Токен от старого приложения — сбрасываем
+            console.warn('[config] Токен от другого приложения — сбрасываем');
+            token = '';
+            localStorage.removeItem(TOKEN_KEY);
+            localStorage.removeItem('yandex_refresh_token');
+            window.YANDEX_TOKEN = '';
+            // Записываем новые креды
+            localStorage.setItem(CLIENT_ID_KEY, DEFAULT_CLIENT_ID);
+            localStorage.setItem(CLIENT_SECRET_KEY, DEFAULT_CLIENT_SECRET);
+            clientId = DEFAULT_CLIENT_ID;
+            clientSecret = DEFAULT_CLIENT_SECRET;
+            window.YANDEX_CLIENT_ID = clientId;
+            window.YANDEX_CLIENT_SECRET = clientSecret;
+            console.log('[config] Старый токен сброшен. Нажмите кнопку "Облако" для новой авторизации.');
+        } else {
+            console.log('[config] Токен загружен из localStorage');
+        }
     } else {
         console.log('[config] Токен не найден. Нажмите кнопку "Облако" для авторизации через Яндекс.');
     }
@@ -78,6 +100,13 @@
         if (data.access_token) {
             window.setYandexCredentials(id, secret);
             window.setYandexToken(data.access_token);
+            // Сохраняем refresh_token для обновления
+            if (data.refresh_token) {
+                localStorage.setItem('yandex_refresh_token', data.refresh_token);
+            }
+            if (data.expires_in) {
+                localStorage.setItem('yandex_token_expires', String(Date.now() + data.expires_in * 1000));
+            }
             return data.access_token;
         }
 
@@ -118,15 +147,17 @@
         return false;
     };
 
-    // Очистка всех данных
+    // Очистка токена (креды оставляем — они теперь дефолтные и правильные)
     window.clearYandexToken = function() {
         localStorage.removeItem(TOKEN_KEY);
-        localStorage.removeItem(CLIENT_ID_KEY);
-        localStorage.removeItem(CLIENT_SECRET_KEY);
         localStorage.removeItem('yandex_refresh_token');
+        localStorage.removeItem('yandex_token_expires');
         window.YANDEX_TOKEN = '';
-        window.YANDEX_CLIENT_ID = '';
-        window.YANDEX_CLIENT_SECRET = '';
-        console.log('[config] Все данные Яндекс удалены');
+        // Восстанавливаем дефолтные креды
+        localStorage.setItem(CLIENT_ID_KEY, DEFAULT_CLIENT_ID);
+        localStorage.setItem(CLIENT_SECRET_KEY, DEFAULT_CLIENT_SECRET);
+        window.YANDEX_CLIENT_ID = DEFAULT_CLIENT_ID;
+        window.YANDEX_CLIENT_SECRET = DEFAULT_CLIENT_SECRET;
+        console.log('[config] Токен сброшен. Креды приложения сохранены.');
     };
 })();
