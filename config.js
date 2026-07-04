@@ -6,10 +6,14 @@
     const CLIENT_ID_KEY = 'yandex_client_id';
     const CLIENT_SECRET_KEY = 'yandex_client_secret';
 
-    // Читаем из localStorage
+    // Новые кредо приложения
+    const DEFAULT_CLIENT_ID = '03b8476330a34436adbc8758809e4071';
+    const DEFAULT_CLIENT_SECRET = '5527b53190fb4a3781563f70a9a46d3d';
+
+    // Читаем из localStorage, если нет — подставляем дефолтные
     let token = localStorage.getItem(TOKEN_KEY) || '';
-    let clientId = localStorage.getItem(CLIENT_ID_KEY) || '';
-    let clientSecret = localStorage.getItem(CLIENT_SECRET_KEY) || '';
+    let clientId = localStorage.getItem(CLIENT_ID_KEY) || DEFAULT_CLIENT_ID;
+    let clientSecret = localStorage.getItem(CLIENT_SECRET_KEY) || DEFAULT_CLIENT_SECRET;
     window.YANDEX_TOKEN = token;
     window.YANDEX_CLIENT_ID = clientId;
     window.YANDEX_CLIENT_SECRET = clientSecret;
@@ -17,7 +21,7 @@
     if (token) {
         console.log('[config] Токен загружен из localStorage');
     } else {
-        console.log('[config] Токен не найден. Нажмите кнопку "Облако" внизу страницы для настройки.');
+        console.log('[config] Токен не найден. Нажмите кнопку "Облако" для авторизации через Яндекс.');
     }
 
     // Сохранение токена
