@@ -1680,7 +1680,7 @@ html, body { height: auto !important; }
 
             Object.values(matrix).forEach(p => {
                 const shP = p.shelfPrice || 0;
-                let maxInP = getSupplierMaxPrice(p.code);
+                let maxInP = getSupplierMaxPrice(normCode(p.code));
                 if (!maxInP) {
                     const inP = p.inPrice || 0;
                     if (inP > 0 && inP < shP) maxInP = inP;
@@ -1788,7 +1788,7 @@ html, body { height: auto !important; }
                 let grPricedCount = 0;
                 items.forEach(p => {
                     const shP = p.shelfPrice || 0;
-                    let maxInP = getSupplierMaxPrice(p.code);
+                    let maxInP = getSupplierMaxPrice(normCode(p.code));
                     if (!maxInP) {
                         const inP = p.inPrice || 0;
                         if (inP > 0 && inP < shP) maxInP = inP;
@@ -1852,8 +1852,9 @@ html, body { height: auto !important; }
                         if (income < 0) incomeClass = 'text-red-600 font-semibold';
                         else if (income > 0) incomeClass = 'text-emerald-600';
 
-                        // Определяем, есть ли другие поставщики с такой же ценой (отметка макс.)
+                        // Определяем максимальную цену среди поставщиков
                         const priceVals = Object.values(sp).filter(v => v > 0);
+                        const uniqueMax = priceVals.length > 1 ? priceVals.filter(v => v === maxInP).length === 1 : false;
 
                         html += `<tr class="hover:bg-gray-50">
                             <td class="text-xs text-gray-600">${esc(p.group || '')}</td>
@@ -1862,9 +1863,9 @@ html, body { height: auto !important; }
                             <td class="text-center text-gray-500">${p.packaging || 'ШТ'}</td>
                             ${supplierNames.map(s => {
                                 const val = sp[s] || 0;
-                                const isMax = val > 0 && val === maxInP && priceVals.filter(v => v === val).length <= 1;
-                                const cellClass = isMax ? 'text-amber-700 font-semibold bg-amber-50' : '';
-                                return `<td class="text-right"><input type="number" step="0.01" value="${val}" data-sprice="${esc(nc)}_${esc(s)}" onchange="updateSupplierPrice('${esc(nc)}','${esc(s)}', parseFloat(this.value)||0)" onblur="updateSupplierPrice('${esc(nc)}','${esc(s)}', parseFloat(this.value)||0)" class="input w-20 text-right text-xs ${cellClass}" title="Цена от ${esc(s)}"></td>`;
+                                const isMax = val > 0 && val === maxInP && uniqueMax;
+                                const cellStyle = isMax ? 'border: 2px solid #fca5a5; background: #fef2f2;' : '';
+                                return `<td class="text-right"><input type="number" step="0.01" value="${val}" data-sprice="${esc(nc)}_${esc(s)}" onchange="updateSupplierPrice('${esc(nc)}','${esc(s)}', parseFloat(this.value)||0)" onblur="updateSupplierPrice('${esc(nc)}','${esc(s)}', parseFloat(this.value)||0)" class="input w-20 text-right text-xs" style="${cellStyle}" title="Цена от ${esc(s)}"></td>`;
                             }).join('')}
                             <td class="text-right text-xs font-bold text-amber-700 bg-amber-50" data-max-price="${esc(nc)}">${maxInP > 0 ? maxInP.toFixed(2) : '—'}</td>
                             <td class="text-right"><input type="number" step="0.01" value="${shP}" onchange="updatePrice('${esc(code)}', 'shelfPrice', parseFloat(this.value)||0)" class="input w-20 text-right text-xs"></td>
@@ -1982,15 +1983,16 @@ html, body { height: auto !important; }
 
             // Обновляем стиль у ячеек цен поставщиков (подсветка максимальной цены)
             const priceVals = Object.values(sp).filter(v => v > 0);
+            const uniqueMax = priceVals.length > 1 ? priceVals.filter(v => v === maxInP).length === 1 : false;
             supplierNames.forEach(s => {
                 const input = document.querySelector(`[data-sprice="${CSS.escape(code)}_${CSS.escape(s)}"]`);
                 if (!input) return;
                 const val = sp[s] || 0;
-                const isMax = val > 0 && val === maxInP && priceVals.filter(v => v === val).length <= 1;
+                const isMax = val > 0 && val === maxInP && uniqueMax;
                 if (isMax) {
-                    input.classList.add('text-amber-700', 'font-semibold', 'bg-amber-50');
+                    input.style.cssText = 'border: 2px solid #fca5a5; background: #fef2f2;';
                 } else {
-                    input.classList.remove('text-amber-700', 'font-semibold', 'bg-amber-50');
+                    input.style.cssText = '';
                 }
             });
         }
@@ -2056,7 +2058,7 @@ html, body { height: auto !important; }
             let updated = 0;
             Object.values(matrix).forEach(p => {
                 const shP = p.shelfPrice || 0;
-                let maxInP = getSupplierMaxPrice(p.code);
+                let maxInP = getSupplierMaxPrice(normCode(p.code));
                 if (!maxInP) {
                     const inP = p.inPrice || 0;
                     if (inP > 0 && inP < shP) maxInP = inP;
@@ -2083,9 +2085,9 @@ html, body { height: auto !important; }
 
             const headers = ['Группа', 'Наименование', 'Код', 'Упак.', ...supplierNames.map(s => 'Цена ' + s), 'Макс. вх.', 'Цена полки', 'Доход', 'Наценка %', 'Маржа %'];
             const data = items.map(p => {
-                const sp = supplierPrices[p.code] || {};
+                const sp = supplierPrices[normCode(p.code)] || {};
                 const shP = p.shelfPrice || 0;
-                let maxInP = getSupplierMaxPrice(p.code);
+                let maxInP = getSupplierMaxPrice(normCode(p.code));
                 if (!maxInP) {
                     const inP = p.inPrice || 0;
                     if (inP > 0 && inP < shP) maxInP = inP;
