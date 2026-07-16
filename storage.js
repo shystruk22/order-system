@@ -174,8 +174,17 @@
                 // Universal — своя копия ассортимента, матрицы, продаж и остатков
                 set('univ_products_v1', stores.univ_products);
                 set('univ_matrix_v1', stores.univ_matrix);
-                set('univ_own_sales_v1', stores.univ_own_sales);
-                set('univ_own_stocks_v1', stores.univ_own_stocks);
+                // НЕ перезатираем univ_own_sales_v1 и univ_own_stocks_v1 из облака —
+                // это рабочие данные текущей сессии (загружаются из файлов пользователем).
+                // Перезатирание вызывает баг: пользователь загрузил новые продажи/остатки,
+                // ушёл со страницы, вернулся — данные сброшены старыми из облака.
+                // Если локально пусто — подтягиваем из облака (первый запуск на устройстве)
+                if (!localStorage.getItem('univ_own_sales_v1')) {
+                    set('univ_own_sales_v1', stores.univ_own_sales);
+                }
+                if (!localStorage.getItem('univ_own_stocks_v1')) {
+                    set('univ_own_stocks_v1', stores.univ_own_stocks);
+                }
                 set('univ_saved_versions_v1', stores.univ_saved_versions);
 
                 // Специфичные для fridges (только планограммы + аналитика)
