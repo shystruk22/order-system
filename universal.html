@@ -734,16 +734,16 @@ html, body { height: auto !important; }
                         <!-- Строка 2: Кнопки -->
                         <div class="flex items-center gap-3">
                             ${canOrder ? `
-                            <button onclick="tab='order';searchResults='';render();setTimeout(()=>{const el=document.getElementById('orderSearchInput');if(el)el.focus();},50)" class="py-2 px-4 text-[13px] font-medium text-white bg-emerald-500 rounded-md hover:bg-emerald-600 transition-colors inline-flex items-center gap-2 cursor-pointer">
+                            <button onclick="tab='order';searchResults='';render();setTimeout(()=>{const el=document.getElementById('orderSearchInput');if(el)el.focus();},50)" class="flex-1 max-w-xs py-2.5 text-sm font-bold text-white bg-gradient-to-r from-green-600 to-emerald-600 rounded-lg hover:from-green-700 hover:to-emerald-700 shadow-md hover:shadow-lg transition-all inline-flex items-center justify-center gap-2 cursor-pointer">
                                 ${icons.order} Сформировать заказ
                                 <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
                             </button>
                             ` : `
-                            <div class="py-2 px-4 text-[13px] font-medium text-gray-400 bg-gray-100 rounded-md border border-gray-200 text-center inline-flex items-center gap-2">
+                            <div class="flex-1 max-w-xs py-2.5 text-sm font-medium text-gray-400 bg-gray-100 rounded-lg border border-gray-200 text-center">
                                 ${icons.order} Сформировать заказ
                             </div>
                             `}
-                            <button onclick="if(confirm('Очистить все данные?'))clearAll()" class="py-2 px-4 text-[13px] font-medium text-red-600 bg-white border border-red-200 rounded-md hover:bg-red-50 transition-colors inline-flex items-center gap-2">
+                            <button onclick="if(confirm('Очистить все данные?'))clearAll()" class="flex-1 max-w-xs py-2.5 text-sm font-medium text-red-600 bg-white border border-red-200 rounded-lg hover:bg-red-50 transition-colors inline-flex items-center justify-center gap-2">
                                 ${icons.trash} Очистить
                             </button>
                         </div>
@@ -2396,11 +2396,11 @@ html, body { height: auto !important; }
                             <div class="bg-violet-100 text-violet-800 rounded-md px-3 py-1.5 cursor-pointer hover:bg-violet-200 transition-colors" onclick="showOrderSumsByStore(this)" title="Нажмите для сумм по магазинам"><div class="text-[10px] opacity-70">СУММА</div><div class="text-lg font-bold">${stats.sum.toFixed(0)} ₽</div></div>
                         </div>
                         <div class="flex flex-wrap gap-2">
-                            ${savedOrdersList.length > 0 ? '<button onclick="showSavedOrdersList()" class="btn inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-violet-700 bg-violet-50 border border-violet-200 rounded-md hover:bg-violet-100">' + icons.order + ' Мои заказы (' + savedOrdersList.length + ')</button>' : ''}
+                            ${savedOrdersList.length > 0 ? '<button onclick="showSavedOrdersList()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-violet-700 bg-violet-50 border border-violet-200 rounded-lg hover:bg-violet-100">' + icons.order + ' Мои заказы (' + savedOrdersList.length + ')</button>' : ''}
                             ${viewingOrderIdx !== null && savedOrdersList[viewingOrderIdx] ? '<div class="bg-violet-50 border border-violet-200 text-violet-800 rounded-md px-3 py-1.5 text-xs">Просмотр: <b>' + esc(savedOrdersList[viewingOrderIdx].name) + '</b> от ' + esc(savedOrdersList[viewingOrderIdx].date) + '</div>' : ''}
-                            <button onclick="placeOrders()" class="btn inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-emerald-500 rounded-md hover:bg-emerald-600">${icons.order} Сформировать заказ</button>
-                            <button onclick="clearSavedOrder()" class="btn inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-gray-600 bg-gray-100 border border-gray-200 rounded-md hover:bg-gray-200">${icons.refresh} Сбросить</button>
-                            <button onclick="exportOrder()" class="btn inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-blue-500 rounded-md hover:bg-blue-600">${icons.export} Экспорт</button>
+                            <button onclick="placeOrders()" class="btn inline-flex items-center gap-1.5 px-4 py-2 text-[13px] font-medium text-white bg-emerald-500 rounded-md hover:bg-emerald-600">${icons.order} Сформировать заказ</button>
+                            <button onclick="clearSavedOrder()" class="btn inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100">${icons.refresh} Сбросить</button>
+                            <button onclick="exportOrder()" class="btn inline-flex items-center gap-1.5 px-4 py-2 text-[13px] font-medium text-white bg-blue-500 rounded-md hover:bg-blue-600">${icons.export} Экспорт</button>
                         </div>
                     </div>
                 </div>
