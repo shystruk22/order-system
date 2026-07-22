@@ -1045,14 +1045,27 @@ html, body { height: auto !important; }
       const exportMatrix = useCallback(() => {
         if (Object.keys(matrix).length === 0) { alert('Нет матрицы!'); return; }
         const storeList = stores.map(s => s.tt);
-        // Единый формат: Наименование товара / Код товара / ТТ1 / ТТ2 / ...
-        const headers = ['Наименование товара', 'Код товара', ...storeList];
-        const data = Object.entries(matrix).map(([code, p]) => [
+        // Единый формат: Категория / Наименование товара / Код товара / ТТ1 / ТТ2 / ...
+        const headers = ['Категория', 'Наименование товара', 'Код товара', ...storeList];
+        // Сортируем по категории, затем по наименованию
+        const sorted = Object.entries(matrix)
+          .map(([code, p]) => ({ code, ...p }))
+          .sort((a, b) => {
+            const ga = (a.group || '').toLowerCase();
+            const gb = (b.group || '').toLowerCase();
+            if (ga < gb) return -1;
+            if (ga > gb) return 1;
+            const na = (a.nomenclature || '').toLowerCase();
+            const nb = (b.nomenclature || '').toLowerCase();
+            return na.localeCompare(nb, 'ru');
+          });
+        const data = sorted.map(p => [
+          p.group || '',
           p.nomenclature || '',
-          code,
+          p.code,
           ...storeList.map(tt => p[tt] === 'ДА' ? 'ДА' : 'НЕТ')
         ]);
-        const ws = createStyledSheet(data, headers, [0]);
+        const ws = createStyledSheet(data, headers, [0, 1]);
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, 'Матрица');
         XLSX.writeFile(wb, `матрица_${new Date().toISOString().slice(0, 10)}.xlsx`);
