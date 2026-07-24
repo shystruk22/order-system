@@ -864,15 +864,10 @@ html, body { height: auto !important; }
         // shelf = null когда useShelf=false (не учитывать полку)
         // shelf = число когда useShelf=true (учитывать полку)
         const minStock = shelf != null ? shelf : 0;
-        const prelim = stock - (avgDay * period) - minStock;
-        if (prelim > 1) return 0;
-        if (prelim < 0) { 
-          const need = Math.abs(prelim); 
-          // Округляем до кванта для всех товаров (КГ и ШТ)
-          return Math.ceil(need / quant) * quant;
-        }
-        if (packaging === 'КГ') return prelim <= 0.6 ? quant : 0;
-        return quant;
+        const need = minStock + (avgDay * period) - stock;
+        if (need <= 0) return 0;
+        // Округляем до кванта для всех товаров (КГ и ШТ)
+        return Math.ceil(need / quant) * quant;
       }, []);
 
       // Run calculation
@@ -2677,14 +2672,13 @@ html, body { height: auto !important; }
                       const avgSales = selectedResult.avgSalesPerDay || 0;
                       const stock = selectedResult.currentStock;
                       const shelf = selectedResult.shelf || 0;
-                      const prelim = stock - (avgSales * period) - shelf;
+                      const need = (shelf || 0) + (avgSales * period) - stock;
                       return (
                         <div className="mt-2 p-2 bg-white/60 rounded text-[10px] text-gray-600 font-mono">
-                          <div>Остаток - (Ср.прод × Период) - Полка = Предв.</div>
-                          <div>{stock.toFixed(2)} - ({avgSales.toFixed(3)} × {period}) - {shelf} = {prelim.toFixed(2)}</div>
-                          {prelim > 1 && <div className="text-emerald-600">Предв. &gt; 1 → заказ = 0</div>}
-                          {prelim < 0 && <div className="text-amber-600">Предв. &lt; 0 → заказ = |{Math.abs(prelim).toFixed(2)}| ≈ {selectedResult.order}</div>}
-                          {prelim >= 0 && prelim <= 1 && <div className="text-blue-600">0 ≤ Предв. ≤ 1 → заказ = 1</div>}
+                          <div>Полка + (Ср.прод × Период) - Остаток = К заказу</div>
+                          <div>{shelf} + ({avgSales.toFixed(3)} × {period}) - {stock.toFixed(2)} = {need.toFixed(2)}</div>
+                          {need <= 0 && <div className="text-emerald-600">Остаток достаточный → заказ = 0</div>}
+                          {need > 0 && <div className="text-amber-600">Округл. до кванта → заказ = {selectedResult.order}</div>}
                         </div>
                       );
                     })()}
