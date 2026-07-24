@@ -947,13 +947,12 @@ html, body { height: auto !important; }
               // Получаем квант из группы для всех товаров (КГ и ШТ)
               const groupQuant = groupQuants[p.group || ''] || (p.packaging === 'КГ' ? 0.5 : 1);
               
-              // Нет на точке (нет данных остатков или остаток = 0) — минимальный заказ
+              // Нет на точке (нет данных остатков или остаток = 0) — считаем по общей формуле
               if (!stockData || stockData.currentStock <= 0) {
-                const minOrderQuant = groupQuants[p.group || ''] || (p.packaging === 'КГ' ? 0.5 : 1);
-                const minOrder = minOrderQuant;
                 const days = stockData?.daysPresent || 0;
                 const avg = days > 0 ? salesQty / days : 0;
-                res.push({ tt: store.tt, code, nomenclature: p.nomenclature, group: p.group || '', currentStock: stockData?.currentStock || 0, sales: salesQty, daysPresent: days, shelf, order: minOrder, packaging: p.packaging, orderStatus: `заказ ${minOrder}`, rcStock, manualEdit: true, avgSalesPerDay: avg });
+                const order = calcOrder(p.packaging, 0, avg, period, shelf, groupQuant);
+                res.push({ tt: store.tt, code, nomenclature: p.nomenclature, group: p.group || '', currentStock: stockData?.currentStock || 0, sales: salesQty, daysPresent: days, shelf, order, packaging: p.packaging, orderStatus: order > 0 ? `заказ ${order}` : 'достаточно', rcStock, manualEdit: false, avgSalesPerDay: avg });
                 return;
               }
 
