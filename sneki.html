@@ -67,6 +67,9 @@ html, body { height: auto !important; }
   <script type="text/babel">
     const { useState, useCallback, useMemo, useEffect, useRef } = React;
 
+    // ═══════════════════════════════════════════════════════════════════
+    // SECTION 1: КОНФИГУРАЦИЯ — ключи localStorage
+    // ═══════════════════════════════════════════════════════════════════
     const KEYS = {
       MATRIX: 'sneki_matrix_v2',
       PRODUCTS: 'sneki_products_v2',
@@ -87,6 +90,12 @@ html, body { height: auto !important; }
       GROUP_DAYS: 'sneki_groupDays_v2'
     };
 
+    // ═══════════════════════════════════════════════════════════════════
+    // SECTION 2: УТИЛИТЫ — загрузка/сохранение localStorage, нормализация кодов
+    //   load()  — чтение с авто-распаковкой LZString
+    //   save()  — запись с авто-сжатием если >500 символов
+    //   normCode() — удаление ведущих нулей, trim
+    // ═══════════════════════════════════════════════════════════════════
     const load = (key, defaultValue) => {
       try {
         const raw = localStorage.getItem(key);
@@ -116,6 +125,9 @@ html, body { height: auto !important; }
 
     const normCode = (code) => String(code || '').trim().replace(/^0+/, '') || '0';
 
+    // ═══════════════════════════════════════════════════════════════════
+    // SECTION 3: SVG ИКОНКИ — переиспользуемые компоненты для интерфейса
+    // ═══════════════════════════════════════════════════════════════════
     // Icons
     const ArrowLeftIcon = () => <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></svg>;
     const CookieIcon = () => <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="10" /><circle cx="8" cy="9" r="1.5" fill="currentColor" /><circle cx="15" cy="8" r="1.5" fill="currentColor" /></svg>;
@@ -142,6 +154,11 @@ html, body { height: auto !important; }
     const PlusIcon = () => <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>;
     const ScaleIcon = () => <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M16 6l3 12H5l3-12" /><path d="M12 6v12" /><circle cx="12" cy="6" r="2" /></svg>;
 
+    // ═══════════════════════════════════════════════════════════════════
+    // SECTION 4: КОМПОНЕНТ RCPriceCalc — калькулятор цены для распределительного центра
+    //   Входная цена + НДС → РЦ цена → Полка с наценкой
+    //   Встроенный экспорт в Excel с автошириной колонок
+    // ═══════════════════════════════════════════════════════════════════
     // Калькулятор цены для РЦ
     function RCPriceCalc({ warehouseMarkup, vatRate }) {
       const [inputPrice, setInputPrice] = useState('');
@@ -256,36 +273,45 @@ html, body { height: auto !important; }
         return ws;
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // ║  ГЛАВНЫЙ КОМПОНЕНТ App()
+    // ║  Содержит всё состояние приложения, логику расчёта и JSX-разметку
+    // ═══════════════════════════════════════════════════════════════════════════════
     function App() {
+      // ═══════════════════════════════════════════════════════════════
+      // STATE — Объявления состояния (useState)
+      // ═══════════════════════════════════════════════════════════════
+
       const [tab, setTab] = useState('upload');
       const [mounted, setMounted] = useState(false);
 
-      // Data states
-      const [products, setProducts] = useState([]);
-      const [matrix, setMatrix] = useState({});
-      const [stores, setStores] = useState([]);
-      const [sales, setSales] = useState([]);
-      const [stocks, setStocks] = useState([]);
-      const [rcStocks, setRcStocks] = useState({});
-      const [shelfValues, setShelfValues] = useState({});
-      const [quants, setQuants] = useState({});
-      const [groupMarkups, setGroupMarkups] = useState({});
-      const [groupQuants, setGroupQuants] = useState({});
-      const [manualPrices, setManualPrices] = useState({});
-      const [rcManualOrders, setRcManualOrders] = useState({});
-      const [groupDays, setGroupDays] = useState({});
+      // --- Основные данные ---
+      const [products, setProducts] = useState([]);      // Сырой ассортимент из файла
+      const [matrix, setMatrix] = useState({});          // Матрица: { код → { nomenclature, group, packaging, ТТ1: "Да"|"Нет", ... } }
+      const [stores, setStores] = useState([]);          // Список торговых точек [{ tt, tt2? }]
+      const [sales, setSales] = useState([]);            // Продажи: [{ tt, code, quantity }]
+      const [stocks, setStocks] = useState([]);           // Остатки: [{ tt, code, currentStock, daysPresent }]
+      const [rcStocks, setRcStocks] = useState({});       // Остатки РЦ: { код → количество }
+      const [shelfValues, setShelfValues] = useState({}); // Полочные значения: "код_ТТ" → число
+      const [quants, setQuants] = useState({});          // Кванты по группам
+      const [groupMarkups, setGroupMarkups] = useState({}); // Наценки по группам
+      const [groupQuants, setGroupQuants] = useState({});  // Кванты округления по группам
+      const [manualPrices, setManualPrices] = useState({}); // Ручные цены
+      const [rcManualOrders, setRcManualOrders] = useState({}); // Ручные заказы РЦ
+      const [groupDays, setGroupDays] = useState({});    // Дней потребности по группам (для РЦ)
 
-      // Results
-      const [results, setResults] = useState([]);
-      const [rcResults, setRcResults] = useState([]);
+      // --- Результаты расчёта ---
+      const [results, setResults] = useState([]);         // Результаты расчёта по ТТ
+      const [rcResults, setRcResults] = useState([]);    // Результаты расчёта для РЦ
 
-      // UI states
-      const [period, setPeriod] = useState(14);
-      const [useShelf, setUseShelf] = useState(true);
-      const [warehouseMarkup, setWarehouseMarkup] = useState(16.5);
-      const [vatRate, setVatRate] = useState(22);
+      // --- Настройки ---
+      const [period, setPeriod] = useState(14);          // Период расчёта (дней)
+      const [useShelf, setUseShelf] = useState(true);    // Учитывать полку в заказе
+      const [warehouseMarkup, setWarehouseMarkup] = useState(16.5); // Наценка РЦ (%)
+      const [vatRate, setVatRate] = useState(22);        // Ставка НДС (%)
       const [loading, setLoading] = useState(false);
 
+      // --- Поиск и фильтры ---
       const [searchMatrix, setSearchMatrix] = useState('');
       const [searchResults, setSearchResults] = useState('');
       const [searchPrices, setSearchPrices] = useState('');
@@ -298,6 +324,7 @@ html, body { height: auto !important; }
       const [collapsedGroups, setCollapsedGroups] = useState({});
       const [collapsedTT, setCollapsedTT] = useState({});
 
+      // --- Модальные окна ---
       const [showRcModal, setShowRcModal] = useState(false);
       const [showExportModal, setShowExportModal] = useState(false);
       const [showMassEditModal, setShowMassEditModal] = useState(false);
@@ -307,6 +334,8 @@ html, body { height: auto !important; }
       const [selectedResult, setSelectedResult] = useState(null);
       const [showProductDetailModal, setShowProductDetailModal] = useState(false);
       const [selectedProductAnalytics, setSelectedProductAnalytics] = useState(null);
+
+      // --- Аналитика ---
       const [searchAnalytics, setSearchAnalytics] = useState('');
       const [abcViewMode, setAbcViewMode] = useState('all'); // all, group, tt, group_tt
       const [rcInputData, setRcInputData] = useState('');
@@ -328,7 +357,12 @@ html, body { height: auto !important; }
 
       const fileInputRefs = { assortment: useRef(null), sales: useRef(null), stocks: useRef(null), matrix: useRef(null) };
 
-      // Load on mount — ждём завершения синхронизации с облаком
+      // ═══════════════════════════════════════════════════════════════
+      // EFFECTS — Хуки жизненного цикла
+      // ═══════════════════════════════════════════════════════════════
+
+      // --- Инициализация: загрузка данных из localStorage при монтировании ---
+      // Ждёт завершения синхронизации с облаком (storage.js)
       useEffect(() => {
         const initLoad = async () => {
           // Ждём пока storage.js завершит скачивание из облака
@@ -417,7 +451,7 @@ html, body { height: auto !important; }
         initLoad();
       }, []);
 
-      // Save on change
+      // --- Автосохранение: запись в localStorage при изменении состояния ---
       useEffect(() => { if (mounted && products.length) {
         save(KEYS.PRODUCTS, products);
         // Sync to SharedData for cross-tab real-time sync
@@ -439,7 +473,7 @@ html, body { height: auto !important; }
       useEffect(() => { if (mounted && rcResults.length > 0) save(KEYS.RC_RESULTS, rcResults); }, [rcResults, mounted]);
       useEffect(() => { if (mounted && Object.keys(groupDays).length) save(KEYS.GROUP_DAYS, groupDays); }, [groupDays, mounted]);
 
-      // Cross-tab sync: listen for product changes from other files (assortment.html, fish-order.html)
+      // --- Кросс-вкладочная синхронизация: обновление при изменениях из других файлов ---
       useEffect(() => {
         if (!window.SharedData) return;
         const handler = (info) => {
@@ -455,7 +489,11 @@ html, body { height: auto !important; }
         return () => { /* cleanup not needed for SharedData */ };
       }, [mounted]);
 
-      // Parse assortment file
+      // ═══════════════════════════════════════════════════════════════
+      // PARSING — Парсинг загружаемых файлов
+      // ═══════════════════════════════════════════════════════════════
+
+      // --- Парсинг файла ассортимента ---
       // Структура: Да | Группа | Код | Упаковка | Номенклатура | Код(повтор) | Код весовой | Вход пивной | Вход РЦ | Цена | Полка
       const parseAssortment = useCallback((json) => {
         const items = [];
@@ -494,7 +532,7 @@ html, body { height: auto !important; }
         return { items, newShelf, newQuants: {} };
       }, []);
 
-      // Мэтчинг TT из файла с stores — умный поиск по ключевым словам
+      // --- Мэтчинг TT: нечёткое сопоставление имён ТТ из файла с stores ---
       const matchStoreTT = useCallback((fileTTName) => {
         if (!fileTTName || !stores.length) return fileTTName;
         const lower = fileTTName.toLowerCase();
@@ -529,7 +567,7 @@ html, body { height: auto !important; }
         return fileTTName;
       }, [stores]);
 
-      // Parse sales file — формат: 2 столбца (код, кол-во), TT = строка-заголовок между блоками
+      // --- Парсинг файла продаж ---
       const parseSales = useCallback((json) => {
         const items = [];
         const foundTTs = new Set();
@@ -575,7 +613,7 @@ html, body { height: auto !important; }
         return { items, foundTTs };
       }, [matchStoreTT]);
 
-      // Parse stocks file
+      // --- Парсинг файла остатков ---
       const parseStocks = useCallback((json) => {
         const items = [];
         const foundTTs = new Set();
@@ -615,7 +653,7 @@ html, body { height: auto !important; }
         return { items, foundTTs };
       }, [matchStoreTT]);
 
-      // File upload handler
+      // --- Обработчик загрузки файлов: маршрутизация по типу ---
       const handleFile = useCallback((file, type) => {
         const reader = new FileReader();
         reader.onload = (e) => {
@@ -693,7 +731,7 @@ html, body { height: auto !important; }
         reader.readAsArrayBuffer(file);
       }, [stores, parseAssortment, parseSales, parseStocks]);
 
-      // Parse RC input
+      // --- Парсинг ввода остатков РЦ (из textarea, tab-separated) ---
       // Формат: Наименование \t Код \t Остаток (разделитель - табуляция)
       const parseRcInput = useCallback(() => {
         const lines = rcInputData.trim().split('\n');
@@ -788,7 +826,11 @@ html, body { height: auto !important; }
         } else { alert('Ошибка формата. Используйте: Наименование(таб)Код(таб)Остаток'); }
       }, [rcInputData, matrix, stores]);
 
-      // Create matrix
+      // ═══════════════════════════════════════════════════════════════
+      // MATRIX — Операции с матрицей (создание, переключение, удаление)
+      // ═══════════════════════════════════════════════════════════════
+
+      // --- Создание матрицы из ассортимента × stores ---
       const createMatrix = useCallback(() => {
         if (products.length === 0) { alert('Загрузите ассортимент!'); return; }
         const storeList = stores.map(s => s.tt);
@@ -820,12 +862,12 @@ html, body { height: auto !important; }
         alert(`Матрица создана: ${Object.keys(newMatrix).length} × ${storeList.length} ТТ`);
       }, [products, stores, sales]);
 
-      // Toggle matrix value
+      // --- Переключение ДА/НЕТ в ячейке матрицы ---
       const toggleMatrix = useCallback((code, tt) => {
         setMatrix(prev => ({ ...prev, [code]: { ...prev[code], [tt]: prev[code]?.[tt] === 'ДА' ? 'НЕТ' : 'ДА' } }));
       }, []);
 
-      // Remove product from matrix
+      // --- Удаление товара из матрицы ---
       const removeProductFromMatrix = useCallback((code) => {
         if (confirm(`Удалить товар "${matrix[code]?.nomenclature || code}" из матрицы?`)) {
           setMatrix(prev => {
@@ -837,7 +879,7 @@ html, body { height: auto !important; }
         }
       }, [matrix]);
 
-      // Update product field
+      // --- Обновление поля товара (группа, цена и т.д.) ---
       const updateProduct = useCallback((code, field, value) => {
         setMatrix(prev => {
           const updated = { ...prev, [code]: { ...prev[code] } };
@@ -850,7 +892,7 @@ html, body { height: auto !important; }
         });
       }, []);
 
-      // Update shelf value
+      // --- Обновление полочного значения для товара+ТТ ---
       const updateShelfValue = useCallback((code, tt, value) => {
         const key = `${code}_${tt}`;
         setShelfValues(prev => {
@@ -859,7 +901,11 @@ html, body { height: auto !important; }
         });
       }, []);
 
-      // Calculate order
+      // ═══════════════════════════════════════════════════════════════
+      // CALCULATION — Расчёт заказа (формула + основной движок)
+      // ═══════════════════════════════════════════════════════════════
+
+      // --- Формула расчёта: Полка + (Ср.прод × Период) - Остаток ---
       const calcOrder = useCallback((packaging, stock, avgDay, period, shelf, quant = 1) => {
         // shelf = null когда useShelf=false (не учитывать полку)
         // shelf = число когда useShelf=true (учитывать полку)
@@ -870,7 +916,7 @@ html, body { height: auto !important; }
         return Math.ceil(need / quant) * quant;
       }, []);
 
-      // Run calculation
+      // --- Основной расчёт: итерация товары × ТТ, мэтчинг, сборка результатов ---
       const runCalculation = useCallback(() => {
         if (!Object.keys(matrix).length) { alert('Создайте матрицу!'); return; }
         if (stocks.length === 0) { alert('Загрузите остатки!'); return; }
@@ -969,7 +1015,7 @@ html, body { height: auto !important; }
         }, 100);
       }, [matrix, stores, stocks, sales, rcStocks, period, useShelf, shelfValues, calcOrder, groupQuants]);
 
-      // Update result order
+      // --- Ручное редактирование заказа в результатах ---
       const updateResultOrder = useCallback((tt, code, newOrder) => {
         const order = parseFloat(newOrder) || 0;
         setResults(prev => {
@@ -980,7 +1026,7 @@ html, body { height: auto !important; }
         });
       }, []);
 
-      // Calculate RC
+      // --- Расчёт заказа для распределительного центра ---
       const calcRc = useCallback(() => {
         const totalSalesMap = new Map();
         sales.forEach(s => { totalSalesMap.set(s.code, (totalSalesMap.get(s.code) || 0) + s.quantity); });
@@ -1006,7 +1052,7 @@ html, body { height: auto !important; }
         save(KEYS.RC_RESULTS, res.sort((a, b) => (a.group || '').localeCompare(b.group || '', 'ru')));
       }, [matrix, sales, stocks, rcStocks, rcManualOrders, groupDays]);
 
-      // Update RC order
+      // --- Ручное редактирование заказа РЦ ---
       const updateRcOrder = useCallback((code, value) => {
         const order = parseFloat(value) || 0;
         setRcManualOrders(prev => {
@@ -1023,7 +1069,9 @@ html, body { height: auto !important; }
         });
       }, []);
 
-      // Export functions
+      // ═══════════════════════════════════════════════════════════════
+      // EXPORT/IMPORT — Экспорт и импорт данных в Excel
+      // ═══════════════════════════════════════════════════════════════
       const exportExcel = useCallback(() => {
         if (results.length === 0) { alert('Нет данных!'); return; }
         const headers = ['№ Маг.', 'ТТ', 'Наименование', 'Код', 'Остаток', 'Продажи', 'Дней', 'Полка', 'Заказ', 'Упак', 'Статус', 'Ост. РЦ'];
@@ -1279,7 +1327,11 @@ html, body { height: auto !important; }
         XLSX.writeFile(wb, `sneki_analytics_${new Date().toISOString().slice(0, 10)}.xlsx`);
       }, [sales, matrix, stocks, analyticsGroup, analyticsTT]);
 
-      // Reset — только продажи, остатки и остатки РЦ. Магазины, матрица, ассортимент и настройки остаются.
+      // ═══════════════════════════════════════════════════════════════
+      // UTILITY — Вспомогательные функции
+      // ═══════════════════════════════════════════════════════════════
+
+      // --- Сброс данных (продажи, остатки, РЦ) ---
       const resetAllData = useCallback(() => {
         if (!confirm('Сбросить продажи, остатки и остатки РЦ?\nМагазины, матрица и настройки останутся.')) return;
         [KEYS.SALES, KEYS.STOCKS, KEYS.RC_STOCKS, KEYS.RESULTS, KEYS.RC_RESULTS].forEach(key => localStorage.removeItem(key));
@@ -1287,7 +1339,7 @@ html, body { height: auto !important; }
         alert('Продажи, остатки и остатки РЦ очищены');
       }, []);
 
-      // Add new product
+      // --- Добавление нового товара ---
       const addNewProduct = useCallback(() => {
         if (!newProduct.code || !newProduct.nomenclature) {
           alert('Заполните код и наименование товара');
@@ -1318,7 +1370,7 @@ html, body { height: auto !important; }
         alert('Товар добавлен');
       }, [newProduct, matrix, stores]);
 
-      // Export weight table (КГ products)
+      // --- Экспорт весовой таблицы (только КГ товары) ---
       const exportWeightTable = useCallback(() => {
         const weightProducts = Object.values(matrix).filter(p => p.packaging === 'КГ');
         if (weightProducts.length === 0) {
@@ -1333,7 +1385,7 @@ html, body { height: auto !important; }
         XLSX.writeFile(wb, 'weight_products.xlsx');
       }, [matrix]);
 
-      // Import matrix from Excel
+      // --- Импорт матрицы из Excel ---
       const importMatrix = useCallback((file) => {
         const reader = new FileReader();
         reader.onload = (e) => {
@@ -1448,7 +1500,7 @@ html, body { height: auto !important; }
         reader.readAsArrayBuffer(file);
       }, [matrix, stores]);
 
-      // Mass update orders
+      // --- Массовое обновление заказов (умножение на коэффициент) ---
       const massUpdateOrders = useCallback((action, value) => {
         if (action === 'clear') { setResults(prev => { const updated = prev.map(r => ({ ...r, order: 0, orderStatus: 'достаточно', manualEdit: false })); save(KEYS.RESULTS, updated); return updated; }); }
         else if (action === 'recalc') { 
@@ -1469,7 +1521,9 @@ html, body { height: auto !important; }
         else if (action === 'multiply' && value) { setResults(prev => { const updated = prev.map(r => { if (r.order === 0) return r; const newOrder = Math.round(r.order * value * (r.packaging === 'КГ' ? 2 : 1)) / (r.packaging === 'КГ' ? 2 : 1); return { ...r, order: newOrder, orderStatus: `заказ ${newOrder}`, manualEdit: true }; }); save(KEYS.RESULTS, updated); return updated; }); }
       }, [calcOrder, period, matrix, groupQuants]);
 
-      // Get all groups
+      // ═══════════════════════════════════════════════════════════════
+      // COMPUTED (useMemo) — Вычисляемые/производные значения
+      // ═══════════════════════════════════════════════════════════════
       const allGroups = useMemo(() => { const g = new Set(); Object.values(matrix).forEach(p => { if (p.group) g.add(p.group); }); return Array.from(g).sort((a, b) => a.localeCompare(b, 'ru')); }, [matrix]);
 
       // Filtered results
@@ -1664,7 +1718,9 @@ html, body { height: auto !important; }
         };
       }, [sales, matrix, stocks, analyticsGroup, analyticsTT]);
 
-      // Render charts when tab is analytics
+      // ═══════════════════════════════════════════════════════════════
+      // CHARTS — Графики аналитики (Chart.js)
+      // ═══════════════════════════════════════════════════════════════
       useEffect(() => {
         if (tab !== 'analytics' || !hasMatrix) return;
 
@@ -1769,6 +1825,9 @@ html, body { height: auto !important; }
         };
       }, [tab, analyticsData, hasMatrix]);
 
+      // ═══════════════════════════════════════════════════════════════════════════════
+      // ║  JSX RETURN — Разметка интерфейса (вкладки, таблицы, модалки)
+      // ═══════════════════════════════════════════════════════════════════════════════
       const tabs = [
         { id: 'upload', label: 'Загрузка', icon: <UploadIcon /> },
         { id: 'matrix', label: 'Матрица', disabled: !hasMatrix, icon: <GridIcon /> },
@@ -1781,7 +1840,7 @@ html, body { height: auto !important; }
 
       return (
         <div className="bg-[#f5f7fa]">
-          {/* Header */}
+          {/* ═══ HEADER: навигация, вкладки, счётчики ═══ */}
           <div className="bg-white border-b border-gray-200">
             <div className="px-3 py-2">
               <div className="flex items-center gap-2">
@@ -1807,7 +1866,7 @@ html, body { height: auto !important; }
 
           {/* Content */}
           <div className="px-3 py-3">
-            {/* Upload Tab */}
+            {/* ═══ ВКЛАДКА «ЗАГРУЗКА»: загрузка файлов, создание матрицы, запуск расчёта ═══ */}
             {tab === 'upload' && (
               <div className="space-y-2">
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
@@ -1866,7 +1925,7 @@ html, body { height: auto !important; }
               </div>
             )}
 
-            {/* Matrix Tab */}
+            {/* ═══ ВКЛАДКА «МАТРИЦА»: таблица товаров × ТТ с переключениями ДА/НЕТ ═══ */}
             {tab === 'matrix' && (
               <div className="bg-white rounded-lg border border-gray-200 p-2">
                 <div className="flex justify-between items-center mb-2">
@@ -1951,7 +2010,7 @@ html, body { height: auto !important; }
               </div>
             )}
 
-            {/* Prices Tab */}
+            {/* ═══ ВКЛАДКА «ЦЕНЫ»: наценки, входящие/полочные цены, РЦ-калькулятор ═══ */}
             {tab === 'prices' && (
               <div className="space-y-2">
                 {/* Верхняя панель: два блока рядом */}
@@ -2103,7 +2162,7 @@ html, body { height: auto !important; }
               </div>
             )}
 
-            {/* Shelf Tab */}
+            {/* ═══ ВКЛАДКА «ПОЛКА»: полочные значения по товарам и ТТ ═══ */}
             {tab === 'shelf' && (
               <div className="bg-white rounded-lg border border-gray-200 p-2">
                 <div className="flex justify-between items-center mb-2">
@@ -2163,7 +2222,7 @@ html, body { height: auto !important; }
               </div>
             )}
 
-            {/* Results Tab */}
+            {/* ═══ ВКЛАДКА «РЕЗУЛЬТАТЫ»: заказ по ТТ с редактированием и экспортом ═══ */}
             {tab === 'results' && (
               <div className="space-y-2">
                 <div className="bg-white rounded-lg border border-gray-200 p-2">
@@ -2245,7 +2304,7 @@ html, body { height: auto !important; }
               </div>
             )}
 
-            {/* RC Tab */}
+            {/* ═══ ВКЛАДКА «РЦ»: заказ распределительного центра ═══ */}
             {tab === 'rc' && (
               <div className="space-y-2">
                 <div className="bg-white rounded-lg border border-gray-200 p-2">
@@ -2333,7 +2392,7 @@ html, body { height: auto !important; }
               </div>
             )}
 
-            {/* Analytics Tab */}
+            {/* ═══ ВКЛАДКА «АНАЛИТИКА»: графики, ABC-анализ, проблемные товары ═══ */}
             {tab === 'analytics' && (
               <div className="space-y-2">
                 {/* Фильтры */}
@@ -2508,7 +2567,9 @@ html, body { height: auto !important; }
             )}
           </div>
 
-          {/* Modals */}
+          {/* ═══════════════════════════════════════════════════════════════
+               МОДАЛЬНЫЕ ОКНА
+          ═══════════════════════════════════════════════════════════════ */}
           {showRcModal && (
             <div className="modal-overlay" onClick={() => setShowRcModal(false)}>
               <div className="modal-content" onClick={e => e.stopPropagation()}>
@@ -2625,7 +2686,7 @@ html, body { height: auto !important; }
             </div>
           )}
 
-          {/* Detail Modal - детализация расчёта */}
+          {/* МОДАЛКА: Детализация расчёта заказа (формула, промежуточные значения) */}
           {showDetailModal && selectedResult && (
             <div className="modal-overlay" onClick={() => setShowDetailModal(false)}>
               <div className="modal-content" onClick={e => e.stopPropagation()}>
@@ -2690,7 +2751,7 @@ html, body { height: auto !important; }
             </div>
           )}
 
-          {/* Sum Modal - детализация суммы по ТТ */}
+          {/* МОДАЛКА: Суммы заказа по торговым точкам */}
           {showSumModal && (
             <div className="modal-overlay" onClick={() => setShowSumModal(false)}>
               <div className="modal-content max-w-lg" onClick={e => e.stopPropagation()}>
@@ -2721,7 +2782,7 @@ html, body { height: auto !important; }
             </div>
           )}
 
-          {/* Product Detail Modal - продажи товара по ТТ */}
+          {/* МОДАЛКА: Продажи товара по ТТ (детальная аналитика) */}
           {showProductDetailModal && selectedProductAnalytics && (
             <div className="modal-overlay" onClick={() => setShowProductDetailModal(false)}>
               <div className="modal-content max-w-2xl" onClick={e => e.stopPropagation()}>
